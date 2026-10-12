@@ -1,6 +1,6 @@
 # jobscan
 
-A job-board scanner you run yourself. It finds about 4,000 company job boards on its own, keeps the postings that match your titles and locations, has an LLM tag each one, and writes a markdown digest of what's new.
+A job-board scanner you run yourself. It finds about 9,000 company job boards on its own, keeps the postings that match your titles and locations, has an LLM tag each one, and writes a markdown digest of what's new.
 
 Every tag quotes the posting, and jobscan checks the quote is really there; when it isn't, the tag is marked ⚠, not hidden.
 
@@ -34,13 +34,14 @@ jobscan schedule --at 08:00                            # then every day
 
 **Good at**
 - Roles at tech companies, especially startups and scale-ups, where the title gets you most of the way and the posting tells you the rest. I built it for my London Account Executive search; it works the same for any role you can name in a few titles.
-- Finding boards you didn't know about: it finds 111 of a hand-built list of 114 tech companies, plus about 3,900 more.
+- Finding boards you didn't know about: about 4,000 on Ashby and 4,800 on Greenhouse. Of my hand-built list it finds 111 of 114 Ashby boards and 33 of 37 Greenhouse ones.
 - Cheap: about $0.0005 a posting. The first run tags a backlog (my AE search: 233 postings, 47 minutes, $0.11; a PM search: 169, 7 minutes, $0.08); later runs take a minute or two.
 - Evidence: every tag quotes the ad; unchecked tags are marked ⓘ.
 - No dependencies: standard-library Python and one SQLite file.
 
 **Gaps**
-- Ashby boards only. Greenhouse and Lever come next; Workday and the like, which is most of big tech, are out of reach.
+- Ashby and Greenhouse boards only. Lever comes next; Workday and the like, which is most of big tech, are out of reach. Companies that embed Greenhouse in their own careers page (Fivetran, Wiz) need the boards file.
+- Heavy: a full run fetches about 215,000 postings in eight minutes, Greenhouse's alone roughly 2 GB of downloads, and the database grows to about 1.5 GB.
 - No funding stage or company age. The open-role count is a rough read on size.
 - Companies found by discovery show under their board name (`1password`, not `1Password`) unless you list them in a boards file.
 - Tags are validated on AE and PM postings only. `founding` is right about three times in four when it says yes.
@@ -91,7 +92,7 @@ For a second search, set `JOBSCAN_HOME` to another directory and run `init` ther
 
 ## Running it
 
-**Boards.** jobscan reads the three newest [Common Crawl](https://commoncrawl.org) crawls and keeps every Ashby board they captured, in about ten seconds. `run` refreshes the list every 30 days; `jobscan discover` forces it. A board that answers "not found" three runs in a row is dropped; boards you list are never dropped.
+**Boards.** jobscan reads the three newest [Common Crawl](https://commoncrawl.org) crawls and keeps every Ashby and Greenhouse board they captured, in about twenty seconds. `run` refreshes the list every 30 days, and when jobscan learns a new job site; `jobscan discover` forces it. A board that answers "not found" three runs in a row is dropped; boards you list are never dropped.
 
 **Digests.** `run` prints `profile <tab> new <tab> digest path` and writes `~/.jobscan/digests/<profile>/<date>.md`. A posting appears in one digest only; run again straight away and you get 0 new and no file. Postings the model fails on wait for the next run. Exit codes: 0 done, 1 some postings left untagged, 2 config problem. Logs: `~/.jobscan/runs.log`.
 
