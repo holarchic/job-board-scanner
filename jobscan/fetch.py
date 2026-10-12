@@ -12,11 +12,11 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 
-from jobscan import ashby
+from jobscan import ashby, greenhouse
 from jobscan.config import ConfigError
 from jobscan.records import Board, BoardError, Posting
 
-ADAPTERS = {ashby.ATS: ashby}
+ADAPTERS = {ashby.ATS: ashby, greenhouse.ATS: greenhouse}
 TIMEOUT = 20
 RETRY_PAUSES = (2, 10)  # seconds before the 2nd and 3rd tries
 RETRYABLE = {429, 500, 502, 503, 504}

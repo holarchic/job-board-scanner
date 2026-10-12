@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from jobscan import ashby, cli, crawl, digest, fetch, notify, scan, store, tag
+from jobscan import ashby, cli, crawl, digest, fetch, greenhouse, notify, scan, store, tag
 from jobscan.records import Board
 from tests.fakes import (
     FakeFiles,
@@ -21,6 +21,7 @@ from tests.fakes import (
     cdx_line,
     crawl_files,
     crawl_list,
+    greenhouse_job,
     model_reply,
     tags_quoting_the_posting,
 )
@@ -30,8 +31,8 @@ locations = ["London"]
 eligible_where = "the UK"
 tags = ["founding", "location_eligible", "segment", "language_required", "tech_company"]
 """
-# Keeps the discovered list non-empty and fresh without adding a board to read: `run` never crawls in these tests.
-SENTINEL = Board("ashby", "sentinel", "sentinel", "http://127.0.0.1:9/never")
+# Keep the discovered list fresh and covering every ATS without adding a board to read: `run` never crawls here.
+SENTINELS = [Board(ats, "sentinel", "sentinel", "http://127.0.0.1:9/never") for ats in fetch.ADAPTERS]
 
 
 class RunFixture(unittest.TestCase):
@@ -73,9 +74,9 @@ class RunFixture(unittest.TestCase):
         conn = store.open_db(self.home)
         try:
             boards = [Board("ashby", s, s, f"{self.ats.url}/posting-api/job-board/{s}") for s in slugs]
-            store.replace_discovered(conn, [*boards, SENTINEL], at or scan._now())
+            store.replace_discovered(conn, [*boards, *SENTINELS], at or scan._now())
             with conn:
-                conn.execute("UPDATE boards SET not_found = ? WHERE id = ?", (store.DEAD_AFTER, SENTINEL.id))
+                conn.execute("UPDATE boards SET not_found = ? WHERE slug = 'sentinel'", (store.DEAD_AFTER,))
         finally:
             conn.close()
 
@@ -171,6 +172,32 @@ class RunTest(RunFixture):
             code, _ = self.run_cli()
         self.assertEqual(code, 2)
         self.assertEqual(self.ats.requests, [])
+
+
+class GreenhouseRunTest(RunFixture):
+    def test_ashby_and_greenhouse_boards_in_one_digest(self):
+        (self.home / "boards.json").write_text(json.dumps({"companies": [
+            {"company": "Acme", "board_url": f"{self.ats.url}/posting-api/job-board/acme"},
+            {"company": "Globex", "board_url": f"{self.ats.url}/v1/boards/globex/jobs"},
+        ]}))
+        content = "&lt;p&gt;You'll be our &lt;strong&gt;first&lt;/strong&gt; Account Executive.&lt;/p&gt;"
+        self.ats.routes["/v1/boards/globex/jobs?content=true"] = (200, {"jobs": [
+            greenhouse_job(7, "Account Executive", "London, UK", content=content), greenhouse_job(8, "Engineer")]})
+
+        def quoting_the_description(payload):
+            tags = tags_quoting_the_posting(payload)
+            if "first Account Executive" in payload["messages"][0]["content"]:
+                tags["founding"] = {"value": "yes", "quote": "our first Account Executive"}
+            return model_reply(tags)
+
+        self.model.routes["/chat/completions"] = (200, quoting_the_description)
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "3"))
+        text = Path(path).read_text()
+        self.assertIn("## Globex — Account Executive · London, UK\n"
+                      "https://job-boards.greenhouse.io/acme/jobs/7 · Greenhouse · first seen", text)
+        self.assertIn('- founding: **yes** — "our first Account Executive"\n', text)  # verified: no ⚠
+        self.assertIn("· 2 open roles", text)
 
 
 class NotifyTest(RunFixture):
@@ -351,6 +378,9 @@ class BoardSourcesTest(RunFixture):
         self.assertEqual(self.run_cli()[1][1], "2")
 
 
+DISCOVERED = ["ashby:acme", "greenhouse:gh-acme", "greenhouse:gh-eu"]
+
+
 class DiscoveryRefreshTest(RunFixture):
     """`run` rediscovers boards itself when the list is empty or 30 days old, and carries on if it can't."""
 
@@ -360,12 +390,15 @@ class DiscoveryRefreshTest(RunFixture):
         self.cc = FakeFiles()
         self.addCleanup(self.cc.close)
         for target, name, value in [(crawl, "BASE", self.cc.url), (crawl, "RETRY_PAUSES", (0, 0, 0)),
-                                    (ashby, "API", f"{self.ats.url}/posting-api/job-board/")]:
+                                    (ashby, "API", f"{self.ats.url}/posting-api/job-board/"),
+                                    (greenhouse, "API", f"{self.ats.url}/v1/boards/")]:
             mock.patch.object(target, name, value).start()
         crawls = ("CC-MAIN-2026-39", "CC-MAIN-2026-34", "CC-MAIN-2026-30")
         self.cc.files.update(crawl_list(*crawls))
         for crawl_id in crawls:
             self.cc.files.update(crawl_files(crawl_id, [cdx_line("https://jobs.ashbyhq.com/acme/job-1"),
+                                                        cdx_line("https://job-boards.greenhouse.io/gh-acme"),
+                                                        cdx_line("https://job-boards.eu.greenhouse.io/gh-eu"),
                                                         cdx_line("https://www.example.com/")]))
         self.write_config(boards_file=False)
 
@@ -385,7 +418,7 @@ class DiscoveryRefreshTest(RunFixture):
         self.assertEqual((code, new), (0, "2"))
         self.assertIn("## acme — Enterprise Account Executive", Path(path).read_text())
         boards, at = self.discovered()
-        self.assertEqual(boards, ["ashby:acme"])
+        self.assertEqual(boards, DISCOVERED)
         self.assertGreater(at, datetime.fromisoformat(self.days_ago(1)))
 
     def test_fresh_list_is_not_rediscovered(self):
@@ -399,7 +432,7 @@ class DiscoveryRefreshTest(RunFixture):
             conn.execute("DELETE FROM boards")
         conn.close()
         self.assertEqual(self.run_cli()[1][1], "2")
-        self.assertEqual(self.discovered()[0], ["ashby:acme"])
+        self.assertEqual(self.discovered()[0], DISCOVERED)
 
     def test_unreadable_crawl_keeps_the_old_list_and_the_run_goes_on(self):
         stale = self.days_ago(31)
@@ -408,6 +441,24 @@ class DiscoveryRefreshTest(RunFixture):
         code, (_, new, _) = self.run_cli()
         self.assertEqual((code, new), (0, "2"))
         self.assertEqual(self.discovered(), (["ashby:acme"], datetime.fromisoformat(stale)))
+        self.assertIn("discover_failed", (self.home / "runs.log").read_text())
+
+    def test_a_newly_supported_ats_is_discovered_on_the_next_run(self):
+        self.seed_discovery("acme", at=self.days_ago(1))
+        conn = store.open_db(self.home)
+        with conn:
+            conn.execute("DELETE FROM boards WHERE ats = 'greenhouse'")  # as an install from before Greenhouse
+        conn.close()
+        self.assertEqual(self.run_cli()[0], 0)
+        self.assertEqual(self.discovered()[0], DISCOVERED)
+
+    def test_fresh_install_whose_crawl_fails_has_no_boards(self):
+        conn = store.open_db(self.home)
+        with conn:
+            conn.execute("DELETE FROM boards")
+        conn.close()
+        self.cc.fail["/cc-index/collections/CC-MAIN-2026-30/indexes/cluster.idx"] = [503] * 4
+        self.assertEqual(self.run_cli()[0], 2)
         self.assertIn("discover_failed", (self.home / "runs.log").read_text())
 
     def test_no_list_and_no_crawl_is_a_usage_error(self):

@@ -48,7 +48,7 @@ class AshbyBoardTest(unittest.TestCase):
                 {"company": "Acme", "board_url": "https://jobs.ashbyhq.com/acme"},
                 {"company": "Acme again", "board_url": "https://api.ashbyhq.com/posting-api/job-board/acme"},
                 {"company": "ACME", "board_url": "https://jobs.ashbyhq.com/ACME"},
-                {"company": "Other", "board_url": "https://boards.greenhouse.io/other"},
+                {"company": "Other", "board_url": "https://jobs.lever.co/other"},
                 {"company": None, "board_url": 7},
             ]}))
             boards, skipped = fetch.load_boards(path)

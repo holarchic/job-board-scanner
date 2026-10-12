@@ -141,6 +141,14 @@ def ashby_job(job_id, title, location="London", description=None, **extra):
             **extra}
 
 
+def greenhouse_job(job_id, title, location="London", content=None, offices=()):
+    """A Greenhouse Job Board API job as `?content=true` returns it: markup entity-escaped once."""
+    markup = content if content is not None else f"&lt;p&gt;{title} role. We sell software.&lt;/p&gt;"
+    return {"id": job_id, "title": title, "location": {"name": location},
+            "offices": [{"name": o} for o in offices], "content": markup,
+            "absolute_url": f"https://job-boards.greenhouse.io/acme/jobs/{job_id}"}
+
+
 def model_reply(tags: dict, cost: float = 0.0005):
     """An OpenRouter-shaped chat-completions response carrying `tags` as the message content."""
     return 200, {"choices": [{"message": {"content": json.dumps(tags)}}], "usage": {"cost": cost}}
