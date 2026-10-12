@@ -171,7 +171,10 @@ def replace_discovered(conn: sqlite3.Connection, boards: list[Board], now: str) 
 
 def discovered_at(conn: sqlite3.Connection) -> str | None:
     """When the discovered list was last replaced (every row carries that time), or None when it's empty."""
-    return conn.execute("SELECT MAX(discovered) FROM boards").fetchone()[0]
+    try:
+        return conn.execute("SELECT MAX(discovered) AS at FROM boards").fetchone()["at"]
+    except sqlite3.Error as e:
+        raise ConfigError(f"cannot read the board list ({type(e).__name__}: {e})") from None
 
 
 def live_discovered(conn: sqlite3.Connection) -> list[Board]:

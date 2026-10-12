@@ -7,8 +7,8 @@ from collections.abc import Callable
 
 TIMEOUT = 10
 # The text travels as arguments, never spliced into the script, so nothing in it can change what runs.
-SCRIPT = ["-e", "on run argv", "-e", "display notification (item 1 of argv) with title (item 2 of argv)",
-          "-e", "end run"]
+SCRIPT = ("-e", "on run argv", "-e", "display notification (item 1 of argv) with title (item 2 of argv)",
+          "-e", "end run")
 log = logging.getLogger("jobscan")
 
 

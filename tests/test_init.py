@@ -25,9 +25,12 @@ class InitTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name) / "jobscan-home"
 
-    def run_init(self, typed, key="sk-or-v1-abc"):
-        with mock.patch("builtins.input", side_effect=typed), \
-                mock.patch.object(init.getpass, "getpass", return_value=key), \
+    def run_init(self, typed, keys=("sk-or-v1-abc",), env_key=None):
+        environ = {k: v for k, v in os.environ.items() if k != "OPENROUTER_API_KEY"}
+        if env_key:
+            environ["OPENROUTER_API_KEY"] = env_key
+        with mock.patch("builtins.input", side_effect=typed), mock.patch.dict(os.environ, environ, clear=True), \
+                mock.patch.object(init.getpass, "getpass", side_effect=keys), \
                 contextlib.redirect_stdout(io.StringIO()):
             return init.init(self.home)
 
@@ -47,11 +50,14 @@ class InitTest(unittest.TestCase):
             self.assertEqual(load_config(self.home).api_key, "sk-or-v1-abc")
         self.assertIn("# [custom_tags.b2b]", setup.profile.read_text())
 
-    def test_no_key_typed_leaves_the_environment_to_supply_it(self):
-        setup = self.run_init(answers(exclude="-"), key="")
-        self.assertIsNone(setup.key)
+    def test_enter_saves_the_environment_key_for_scheduled_runs(self):
+        setup = self.run_init(answers(exclude="-"), keys=("",), env_key="sk-or-v1-env")
+        self.assertEqual(setup.key.read_text(), "sk-or-v1-env\n")
         self.assertEqual(load_profile(self.home).exclude_titles, ())
-        self.assertNotIn("openrouter.key", self.files())
+
+    def test_a_key_is_required(self):
+        setup = self.run_init(answers(), keys=("", "sk or v1", "sk-or-v1-abc"))
+        self.assertEqual(setup.key.read_text(), "sk-or-v1-abc\n")
 
     def test_awkward_text_round_trips(self):
         titles = 'Lead "Growth" PM, Head\\Product, PM 😀, Café\x7fx, Tab\there'

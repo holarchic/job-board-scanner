@@ -95,25 +95,27 @@ def load_config(home: Path, environ: Mapping[str, str] | None = None) -> Config:
         if not (model_config.provider and model_config.quantization):
             raise ConfigError(f"{path}: OpenRouter needs `model.provider` and `model.quantization` pinned")
         api_key = environ.get("OPENROUTER_API_KEY") or _key_file(home / KEY_FILE)
-        if not api_key.isascii() or not api_key.isprintable() or " " in api_key:
+        if not usable_key(api_key):
             # Checked here because a malformed header value would otherwise surface inside exception text.
-            raise ConfigError("OPENROUTER_API_KEY contains whitespace or control characters")
+            raise ConfigError("the OpenRouter key contains whitespace or control characters")
     return Config(home=home, boards_file=boards_file, model=model_config, api_key=api_key)
+
+
+def usable_key(key: str) -> bool:
+    """A key that can go in an HTTP header as it is."""
+    return bool(key) and key.isascii() and key.isprintable() and " " not in key
 
 
 def _key_file(path: Path) -> str:
     """The key a scheduled run reads, since launchd passes no shell environment. Refused when anyone but the owner
-    can read it, as ssh refuses a loose private key."""
+    can read it, as ssh refuses a loose private key; the mode is checked on the file that is then read."""
     try:
-        mode = path.stat().st_mode
+        with path.open("rb") as f:
+            if os.fstat(f.fileno()).st_mode & 0o077:
+                raise ConfigError(f"{path}: other users can read it; run `chmod 600 {path}`")
+            key = f.read().decode().strip()
     except FileNotFoundError:
         raise ConfigError(f"no OpenRouter key: set OPENROUTER_API_KEY or put the key in {path}") from None
-    except OSError as e:
-        raise ConfigError(f"{path}: not readable ({type(e).__name__})") from None
-    if mode & 0o077:
-        raise ConfigError(f"{path}: other users can read it; run `chmod 600 {path}`")
-    try:
-        key = path.read_text().strip()
     except (OSError, UnicodeDecodeError) as e:
         raise ConfigError(f"{path}: not readable ({type(e).__name__})") from None
     if not key:
@@ -162,9 +164,12 @@ def _custom_tag(name: str, table, path: Path) -> CustomTag:
     if not isinstance(definition, str) or not definition.strip():
         raise ConfigError(f"{where}: `definition` must be a non-empty string")
     values = table.get("values", CUSTOM_TAG_VALUES)
+    # Replies are compared stripped, so a padded value could never be answered.
     if not isinstance(values, (list, tuple)) or not values \
-            or not all(isinstance(v, str) and v.strip() for v in values) or len(set(values)) != len(values):
-        raise ConfigError(f"{where}: `values` must be a non-empty list of different strings")
+            or not all(isinstance(v, str) and v.strip() and v == v.strip() for v in values) \
+            or len(set(values)) != len(values):
+        raise ConfigError(f"{where}: `values` must be a non-empty list of different strings, without surrounding "
+                          "spaces")
     multi = table.get("multi", False)
     if not isinstance(multi, bool):
         raise ConfigError(f"{where}: `multi` must be true or false")

@@ -3,10 +3,12 @@ import contextlib
 import io
 import os
 import plistlib
+import shlex
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import time
 from pathlib import Path
 from unittest import mock
 
@@ -44,7 +46,7 @@ class ScheduleTest(unittest.TestCase):
         return sorted(p.name for p in self.agents.iterdir() if p != self.job.plist) if self.agents.exists() else []
 
     def test_plist_runs_this_jobscan_daily_with_its_home(self):
-        job = schedule.install(self.home, 8, 5, self.agents, FakeLaunchctl(bootout=[3]))
+        job = schedule.install(self.home, time(8, 5), self.agents, FakeLaunchctl(bootout=[3]))
         spec = plistlib.loads(job.plist.read_bytes())
         self.assertEqual(spec["Label"], job.label)
         self.assertTrue(job.label.startswith(schedule.LABEL_PREFIX))
@@ -60,8 +62,8 @@ class ScheduleTest(unittest.TestCase):
 
     def test_first_install_and_replacement(self):
         launchctl = FakeLaunchctl(bootout=[3])
-        schedule.install(self.home, 8, 0, self.agents, launchctl)
-        schedule.install(self.home, 9, 30, self.agents, launchctl)
+        schedule.install(self.home, time(8, 0), self.agents, launchctl)
+        schedule.install(self.home, time(9, 30), self.agents, launchctl)
         target = f"{self.domain}/{self.job.label}"
         self.assertEqual(launchctl.calls, [["bootout", target], ["bootstrap", self.domain, str(self.job.plist)],
                                            ["bootout", target], ["bootstrap", self.domain, str(self.job.plist)]])
@@ -70,32 +72,51 @@ class ScheduleTest(unittest.TestCase):
         self.assertEqual(self.leftovers(), [])
 
     def test_unexpected_bootout_failure_touches_nothing(self):
-        schedule.install(self.home, 8, 0, self.agents, FakeLaunchctl(bootout=[3]))
+        schedule.install(self.home, time(8, 0), self.agents, FakeLaunchctl(bootout=[3]))
         before = self.job.plist.read_bytes()
         launchctl = FakeLaunchctl(bootout=[5])
         with self.assertRaises(schedule.ScheduleError):
-            schedule.install(self.home, 9, 0, self.agents, launchctl)
+            schedule.install(self.home, time(9, 0), self.agents, launchctl)
         self.assertEqual((self.job.plist.read_bytes(), [c[0] for c in launchctl.calls]), (before, ["bootout"]))
 
     def test_failed_first_install_leaves_no_plist(self):
         with self.assertRaises(schedule.ScheduleError) as caught:
-            schedule.install(self.home, 8, 0, self.agents, FakeLaunchctl(bootout=[3], bootstrap=[5]))
+            schedule.install(self.home, time(8, 0), self.agents, FakeLaunchctl(bootout=[3], bootstrap=[5]))
         self.assertIn("bootstrap said 5", str(caught.exception))
         self.assertFalse(self.job.plist.exists())
         self.assertEqual(self.leftovers(), [])
 
     def test_failed_replacement_restores_the_previous_job(self):
-        schedule.install(self.home, 8, 0, self.agents, FakeLaunchctl(bootout=[3]))
+        schedule.install(self.home, time(8, 0), self.agents, FakeLaunchctl(bootout=[3]))
         before = self.job.plist.read_bytes()
         launchctl = FakeLaunchctl(bootstrap=[5])
         with self.assertRaises(schedule.ScheduleError):
-            schedule.install(self.home, 9, 0, self.agents, launchctl)
+            schedule.install(self.home, time(9, 0), self.agents, launchctl)
         self.assertEqual(self.job.plist.read_bytes(), before)
         self.assertEqual([c[0] for c in launchctl.calls], ["bootout", "bootstrap", "bootstrap"])
         self.assertEqual(self.leftovers(), [])
 
+    def test_unwritable_plist_puts_the_untouched_previous_job_back(self):
+        schedule.install(self.home, time(8, 0), self.agents, FakeLaunchctl(bootout=[3]))
+        before = self.job.plist.read_bytes()
+        self.agents.chmod(0o500)
+        self.addCleanup(self.agents.chmod, 0o700)
+        launchctl = FakeLaunchctl()
+        with self.assertRaises(schedule.ScheduleError) as caught:
+            schedule.install(self.home, time(9, 0), self.agents, launchctl)
+        self.assertEqual(launchctl.calls, [["bootout", f"{self.domain}/{self.job.label}"],
+                                           ["bootstrap", self.domain, str(self.job.plist)]])
+        self.assertEqual(self.job.plist.read_bytes(), before)
+        self.assertIn("PermissionError", str(caught.exception))
+
+    def test_failed_restore_is_reported(self):
+        schedule.install(self.home, time(8, 0), self.agents, FakeLaunchctl(bootout=[3]))
+        with self.assertRaises(schedule.ScheduleError) as caught:
+            schedule.install(self.home, time(9, 0), self.agents, FakeLaunchctl(bootstrap=[5, 5]))
+        self.assertIn("putting the previous schedule back also failed", str(caught.exception))
+
     def test_remove_is_idempotent(self):
-        schedule.install(self.home, 8, 0, self.agents, FakeLaunchctl(bootout=[3]))
+        schedule.install(self.home, time(8, 0), self.agents, FakeLaunchctl(bootout=[3]))
         launchctl = FakeLaunchctl(bootout=[0, 3])
         schedule.remove(self.home, self.agents, launchctl)
         schedule.remove(self.home, self.agents, launchctl)
@@ -103,10 +124,19 @@ class ScheduleTest(unittest.TestCase):
         with self.assertRaises(schedule.ScheduleError):
             schedule.remove(self.home, self.agents, FakeLaunchctl(bootout=[5]))
 
+    def test_cron_escapes_percent(self):
+        home = self.home.parent / "100%"
+        home.mkdir()
+        self.assertIn("100\\%", schedule.cron_line(home, time(7, 5)))
+        self.assertNotIn("100%", schedule.cron_line(home, time(7, 5)).replace("100\\%", ""))
+
     def test_cron_line_elsewhere(self):
-        line = schedule.cron_line(self.home, 7, 5)
-        expected = f"5 7 * * *  JOBSCAN_HOME={self.home.resolve()} {sys.executable} -m jobscan run"
-        self.assertTrue(line.startswith(expected), line)
+        home = self.home.parent / "my jobs"
+        home.mkdir()
+        fields = schedule.cron_line(home, time(7, 5)).split(None, 5)
+        self.assertEqual(fields[:5], ["5", "7", "*", "*", "*"])
+        self.assertEqual(shlex.split(fields[5]), [f"JOBSCAN_HOME={home.resolve()}", sys.executable, "-m", "jobscan",
+                                                  "run", ">>", str(home.resolve() / "cron.log"), "2>&1"])
 
 
 class ScheduleCliTest(unittest.TestCase):

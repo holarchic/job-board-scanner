@@ -2,8 +2,8 @@
 import argparse
 import fcntl
 import logging
-import subprocess
 import sys
+from datetime import time
 from pathlib import Path
 
 from jobscan import discover, evaluate, init, notify, scan, schedule, store, tag
@@ -91,14 +91,14 @@ def _news(outcome: scan.ScanOutcome) -> str | None:
     return "; ".join(parts) or None
 
 
-def _clock(text: str) -> tuple[int, int]:
+def _clock(text: str) -> time:
     hour, _, minute = text.partition(":")
     if not (hour.isdigit() and minute.isdigit() and len(minute) == 2 and int(hour) < 24 and int(minute) < 60):
         raise argparse.ArgumentTypeError("use HH:MM, 24-hour, e.g. 08:00")
-    return int(hour), int(minute)
+    return time(int(hour), int(minute))
 
 
-def _schedule(home: Path, at: tuple[int, int] | None) -> int:
+def _schedule(home: Path, at: time | None) -> int:
     """`at` None: remove. A schedule is installed only for a config that loads as the job will run it: with no
     shell environment, so the key must be in the key file."""
     if at is not None:
@@ -110,7 +110,7 @@ def _schedule(home: Path, at: tuple[int, int] | None) -> int:
             print(f"jobscan: {e}", file=sys.stderr)
             return EXIT_USAGE
     if sys.platform != "darwin":
-        print(schedule.cron_line(home, *at) if at else "jobscan: remove the jobscan line with `crontab -e`")
+        print(schedule.cron_line(home, at) if at else "jobscan: remove the jobscan line with `crontab -e`")
         return EXIT_OK
     agents = Path.home() / "Library" / "LaunchAgents"
     try:
@@ -118,9 +118,9 @@ def _schedule(home: Path, at: tuple[int, int] | None) -> int:
             job = schedule.remove(home, agents)
             print(f"unscheduled\t{job.plist}")
         else:
-            job = schedule.install(home, *at, agents)
-            print(f"scheduled\t{at[0]:02d}:{at[1]:02d}\t{job.plist}")
-    except (schedule.ScheduleError, OSError, subprocess.SubprocessError) as e:
+            job = schedule.install(home, at, agents)
+            print(f"scheduled\t{at:%H:%M}\t{job.plist}")
+    except schedule.ScheduleError as e:
         print(f"jobscan: could not change the schedule: {e}", file=sys.stderr)
         return EXIT_INCOMPLETE
     return EXIT_OK
@@ -135,8 +135,7 @@ def _init(home: Path) -> int:
     except init.InitCancelled:
         print("\njobscan: cancelled; nothing was written", file=sys.stderr)
         return EXIT_USAGE
-    written = [setup.config, setup.profile] + ([setup.key] if setup.key else [])
-    print("\nWrote " + ", ".join(str(p) for p in written) + ".")
+    print(f"\nWrote {setup.config}, {setup.profile} and {setup.key}.")
     print(init.NEXT_STEPS.format(profile=setup.profile))
     return EXIT_OK
 
@@ -158,7 +157,7 @@ def _discover(home: Path) -> int:
         print(f"jobscan: another run is using {home}", file=sys.stderr)
         return EXIT_USAGE
     except CrawlError as e:
-        log.error("discover_failed error=%r (the previous board list is kept)", str(e))
+        log.error("discover_failed error=%r kept=previous_list", str(e))
         return EXIT_INCOMPLETE
     print(f"discovered\t{outcome.boards}\t{','.join(outcome.crawls)}")
     return EXIT_OK

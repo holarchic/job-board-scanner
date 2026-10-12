@@ -2,6 +2,7 @@
 
 Nothing is written until every answer is in and the profile it makes loads; a failure part-way through removes
 whatever this invocation created."""
+import contextlib
 import getpass
 import json
 import os
@@ -9,9 +10,10 @@ import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 from jobscan import tag
-from jobscan.config import KEY_FILE, ConfigError, load_profile
+from jobscan.config import KEY_FILE, ConfigError, load_config, load_profile, usable_key
 
 CONFIG = """# The model that tags postings: DeepSeek V4 Flash on OpenRouter, pinned to one provider and quantisation.
 [model]
@@ -30,15 +32,16 @@ CUSTOM_TAGS_EXAMPLE = """
 NEXT_STEPS = """
 Next:
   jobscan run                    the first run finds about 4,000 job boards, then tags every matching posting:
-                                 a few hundred, so most of an hour and roughly $0.10 to $0.30. Later runs take minutes.
+                                 a few hundred, so anything from ten minutes to most of an hour, and roughly
+                                 $0.05 to $0.30. Later runs take minutes.
   jobscan schedule --at 08:00    then a run every day, with a notification when there's something new.
 
 Change your search, or add your own tags, in {profile}"""
 # Titles a plain match would let through for a common search; offered as the starting exclusion list.
-NEAR_MISSES = {
-    "product manager": ["Product Marketing", "Project Manager", "Program Manager", "Programme Manager"],
-    "account executive": ["Account Manager", "Executive Assistant", "Sales Development"],
-}
+NEAR_MISSES = MappingProxyType({
+    "product manager": ("Product Marketing", "Project Manager", "Program Manager", "Programme Manager"),
+    "account executive": ("Account Manager", "Executive Assistant", "Sales Development"),
+})
 PROFILE_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
 
 
@@ -50,7 +53,7 @@ class InitCancelled(Exception):
 class Setup:
     config: Path
     profile: Path
-    key: Path | None  # None: the key comes from OPENROUTER_API_KEY
+    key: Path
 
 
 @dataclass(frozen=True)
@@ -61,7 +64,7 @@ class Answers:
     locations: list[str]
     eligible_where: str
     tags: list[str]
-    key: str | None  # None: the key comes from OPENROUTER_API_KEY
+    key: str  # always written to the key file: a scheduled run has no shell environment
 
 
 def init(home: Path) -> Setup:
@@ -76,12 +79,10 @@ def init(home: Path) -> Setup:
     except (KeyboardInterrupt, EOFError):
         raise InitCancelled from None
     setup = Setup(config=home / "config.toml", profile=home / "profiles" / f"{answers.name}.toml",
-                  key=home / KEY_FILE if answers.key else None)
-    profile = profile_text(answers)
-    _check(answers, profile)
-    files = {setup.config: (CONFIG, 0o644), setup.profile: (profile, 0o644)}
-    if setup.key:
-        files[setup.key] = (answers.key + "\n", 0o600)
+                  key=home / KEY_FILE)
+    files = {setup.config: (CONFIG, 0o644), setup.profile: (profile_text(answers), 0o644),
+             setup.key: (answers.key + "\n", 0o600)}
+    _check(answers, home, files)
     _write(home, files)
     return setup
 
@@ -112,7 +113,7 @@ def _ask() -> Answers:
     name = _answer("Name for this search (lower-case letters, digits and -)", "my-search",
                    lambda a: PROFILE_NAME.fullmatch(a) is not None)
     titles = _split(_answer("Job titles to look for (e.g. Product Manager, Senior Product Manager)", None, _items))
-    misses = [m for t in titles for m in NEAR_MISSES.get(t.lower(), []) if m not in titles]
+    misses = [m for t in titles for m in NEAR_MISSES.get(t.lower(), ()) if m not in titles]
     exclude = _answer("Titles to leave out, even if they match (- for none)", ", ".join(misses) or "-",
                       lambda a: a == "-" or _items(a))
     locations = _split(_answer("Locations to keep, as job ads write them (e.g. London, UK, Remote)", None, _items))
@@ -120,11 +121,19 @@ def _ask() -> Answers:
                              bool)
     print("\nTags: the model answers each one for every matching posting, quoting the ad.")
     tags = _choose_tags()
-    key = getpass.getpass("\nOpenRouter API key (hidden; Enter to use OPENROUTER_API_KEY instead): ").strip()
-    while key and (not key.isascii() or not key.isprintable() or " " in key):
-        key = getpass.getpass("That key has spaces or control characters; paste it again: ").strip()
     return Answers(name=name, titles=titles, exclude_titles=[] if exclude == "-" else _split(exclude),
-                   locations=locations, eligible_where=eligible_where, tags=tags, key=key or None)
+                   locations=locations, eligible_where=eligible_where, tags=tags, key=_ask_key())
+
+
+def _ask_key() -> str:
+    """Saved to the key file either way: the scheduled run can't see the shell's OPENROUTER_API_KEY."""
+    from_env = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    hint = "Enter to save the one in OPENROUTER_API_KEY" if usable_key(from_env) else "from openrouter.ai/keys"
+    while True:
+        key = getpass.getpass(f"\nOpenRouter API key (hidden; {hint}): ").strip() or from_env
+        if usable_key(key):
+            return key
+        print("  That isn't a key: paste it again, with no spaces.")
 
 
 def _choose_tags() -> list[str]:
@@ -161,15 +170,24 @@ def _split(answer: str) -> list[str]:
     return [item.strip() for item in answer.split(",") if item.strip()]
 
 
-def _check(answers: Answers, text: str) -> None:
-    """The profile must read back exactly as answered, through the same loader `run` uses."""
+def _check(answers: Answers, home: Path, files: dict[Path, tuple[str, int]]) -> None:
+    """The install must load exactly as answered, through the loaders `run` uses, as a scheduled run sees it: with
+    no shell environment."""
     with tempfile.TemporaryDirectory() as scratch:
-        (Path(scratch) / "profiles").mkdir()
-        (Path(scratch) / "profiles" / f"{answers.name}.toml").write_text(text, encoding="utf-8")
-        profile = load_profile(Path(scratch))
-    read_back = (list(profile.titles), list(profile.exclude_titles), list(profile.locations), profile.eligible_where,
-                 list(profile.tags))
-    if read_back != (answers.titles, answers.exclude_titles, answers.locations, answers.eligible_where, answers.tags):
+        root = Path(scratch)
+        (root / "profiles").mkdir()
+        for path, (text, mode) in files.items():
+            target = root / path.relative_to(home)
+            target.write_text(text, encoding="utf-8")
+            target.chmod(mode)
+        load_config(root, environ={})
+        profile = load_profile(root)
+    expected = {"titles": answers.titles, "exclude_titles": answers.exclude_titles, "locations": answers.locations,
+                "eligible_where": answers.eligible_where, "tags": answers.tags}
+    read_back = {"titles": list(profile.titles), "exclude_titles": list(profile.exclude_titles),
+                 "locations": list(profile.locations), "eligible_where": profile.eligible_where,
+                 "tags": list(profile.tags)}
+    if read_back != expected:
         raise ConfigError("the profile didn't read back as written")
     tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
 
@@ -187,11 +205,9 @@ def _write(home: Path, files: dict[Path, tuple[str, int]]) -> None:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(text)
     except BaseException as e:
-        for path in reversed(created):
-            if path.is_dir():
-                path.rmdir()
-            else:
-                path.unlink()
+        for path in reversed(created):  # every path is attempted; a cleanup failure never hides the cause
+            with contextlib.suppress(OSError):
+                path.rmdir() if path.is_dir() else path.unlink()
         if isinstance(e, OSError):
             raise ConfigError(f"could not write {home} ({type(e).__name__}); nothing was kept") from None
         raise

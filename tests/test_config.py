@@ -110,6 +110,7 @@ class ConfigTest(unittest.TestCase):
                       '[custom_tags.climate]\ndefinition = " "', '[custom_tags.climate]\nvalues = ["yes"]',
                       '[custom_tags.climate]\ndefinition = "x"\nvalues = []',
                       '[custom_tags.climate]\ndefinition = "x"\nvalues = ["yes", "yes"]',
+                      '[custom_tags.climate]\ndefinition = "x"\nvalues = ["b2b ", "b2c"]',
                       '[custom_tags.climate]\ndefinition = "x"\nmulti = "yes"',
                       '[custom_tags.climate]\ndefinition = "x"\ndefault = "maybe"',
                       '[custom_tags.climate]\ndefinition = "x"\nmulti = true\ndefault = "no"',

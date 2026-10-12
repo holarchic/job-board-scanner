@@ -29,7 +29,7 @@ def refresh_if_stale(conn: sqlite3.Connection, now: datetime) -> None:
     try:
         discover(conn)
     except crawl.CrawlError as e:
-        log.warning("discover_failed error=%r (the previous board list is kept)", str(e))
+        log.warning("discover_failed error=%r kept=previous_list", str(e))
 
 
 def discover(conn: sqlite3.Connection) -> DiscoverOutcome:

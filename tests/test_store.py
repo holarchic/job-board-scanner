@@ -50,6 +50,13 @@ class ApplyFetchTest(unittest.TestCase):
         store.apply_fetch(self.conn, "ashby:beta", (posting("1", "beta"),), "2026-10-11T10:00:00.000000+00:00")
         self.assertEqual(store.open_counts(self.conn, {"ashby:acme", "ashby:gone"}), {"ashby:acme": 2, "ashby:gone": 0})
 
+    def test_unreadable_board_list_is_a_config_error(self):
+        broken = sqlite3.connect(":memory:")  # no boards table: the read fails the way a damaged file would
+        broken.row_factory = sqlite3.Row
+        self.addCleanup(broken.close)
+        with self.assertRaises(ConfigError):
+            store.discovered_at(broken)
+
     def test_unopenable_database_is_a_config_error(self):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "jobscan.sqlite").mkdir()
