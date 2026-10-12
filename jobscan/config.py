@@ -2,6 +2,7 @@
 import os
 import re
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
@@ -62,7 +63,9 @@ def jobscan_home() -> Path:
     return Path(os.environ.get("JOBSCAN_HOME") or "~/.jobscan").expanduser()
 
 
-def load_config(home: Path) -> Config:
+def load_config(home: Path, environ: Mapping[str, str] | None = None) -> Config:
+    """`environ` stands in for the process environment: `schedule` checks the config as launchd will run it."""
+    environ = os.environ if environ is None else environ
     path = home / "config.toml"
     data = _read_toml(path)
     model = data.get("model")
@@ -91,7 +94,7 @@ def load_config(home: Path) -> Config:
             raise ConfigError(f"{path}: OpenRouter must be reached over https")
         if not (model_config.provider and model_config.quantization):
             raise ConfigError(f"{path}: OpenRouter needs `model.provider` and `model.quantization` pinned")
-        api_key = os.environ.get("OPENROUTER_API_KEY") or _key_file(home / KEY_FILE)
+        api_key = environ.get("OPENROUTER_API_KEY") or _key_file(home / KEY_FILE)
         if not api_key.isascii() or not api_key.isprintable() or " " in api_key:
             # Checked here because a malformed header value would otherwise surface inside exception text.
             raise ConfigError("OPENROUTER_API_KEY contains whitespace or control characters")

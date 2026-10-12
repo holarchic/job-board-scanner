@@ -4,13 +4,15 @@ import fcntl
 import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from jobscan import ashby, cli, crawl, digest, fetch, scan, store, tag
+from jobscan import ashby, cli, crawl, digest, fetch, notify, scan, store, tag
 from jobscan.records import Board
 from tests.fakes import (
     FakeFiles,
@@ -169,6 +171,58 @@ class RunTest(RunFixture):
             code, _ = self.run_cli()
         self.assertEqual(code, 2)
         self.assertEqual(self.ats.requests, [])
+
+
+class NotifyTest(RunFixture):
+    """`run --notify` tells the desktop about news and problems, never about a quiet run, and never changes the
+    outcome."""
+
+    def run_notified(self):
+        out = io.StringIO()
+        with mock.patch.object(notify, "notify") as sent, contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = cli.main(["run", "--notify"])
+        return code, [c.args[0] for c in sent.call_args_list]
+
+    def test_news_then_quiet(self):
+        code, sent = self.run_notified()
+        self.assertEqual((code, sent), (0, [f"2 new postings in {self.home / 'digests' / 'ae'}"]))
+        self.assertEqual(self.run_notified(), (0, []))
+
+    def test_untagged_postings(self):
+        self.model.routes["/chat/completions"] = (503, {"error": "down"})
+        self.assertEqual(self.run_notified(), (1, ["2 couldn't be tagged yet; see runs.log"]))
+
+    def test_digest_write_failure(self):
+        (self.home / "digests").mkdir()
+        (self.home / "digests" / "ae").write_text("a file where the directory should be")
+        self.assertEqual(self.run_notified(), (1, ["the digest couldn't be written; see runs.log"]))
+
+    def test_config_error(self):
+        (self.home / "config.toml").write_text("not toml [")
+        code, sent = self.run_notified()
+        self.assertEqual(code, 2)
+        self.assertTrue(sent[0].startswith("jobscan couldn't run: "), sent)
+
+    def test_crash(self):
+        with mock.patch.object(notify, "notify") as sent, self.assertRaises(RuntimeError), \
+                mock.patch.object(scan, "scan", side_effect=RuntimeError("boom")):
+            cli.main(["run", "--notify"])
+        self.assertIn("stopped with an error (RuntimeError)", sent.call_args.args[0])
+
+    def test_failing_notifier_changes_nothing(self):
+        with mock.patch.object(sys, "platform", "darwin"), \
+                mock.patch.object(notify.subprocess, "run", side_effect=subprocess.TimeoutExpired("osascript", 10)):
+            code, (_, new, _) = self.run_cli_notify()
+        self.assertEqual((code, new), (0, "2"))
+        self.assertIn("notify_failed error=TimeoutExpired", (self.home / "runs.log").read_text())
+        self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
+
+    def run_cli_notify(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = cli.main(["run", "--notify"])
+        return code, out.getvalue().strip().split("\t")
 
 
 class CustomTagsTest(RunFixture):

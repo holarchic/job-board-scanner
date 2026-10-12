@@ -2,10 +2,11 @@
 import argparse
 import fcntl
 import logging
+import subprocess
 import sys
 from pathlib import Path
 
-from jobscan import discover, evaluate, init, scan, store, tag
+from jobscan import discover, evaluate, init, notify, scan, schedule, store, tag
 from jobscan.config import ConfigError, jobscan_home, load_config, load_profile
 from jobscan.crawl import CrawlError
 
@@ -22,7 +23,14 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("init", help="set up a search: asks in the terminal, writes config, profile and key")
     commands.add_parser("discover", help="rebuild the board list from the newest Common Crawl crawls (monthly)")
-    commands.add_parser("run", help="fetch → filter → tag → write the profile's digest")
+    run_parser = commands.add_parser("run", help="fetch → filter → tag → write the profile's digest")
+    run_parser.add_argument("--notify", action="store_true",
+                            help="macOS: a desktop notification on new postings or a problem")
+    schedule_parser = commands.add_parser(
+        "schedule", help="macOS: run every day at a set time, even after sleep (launchd); elsewhere: print a cron line")
+    when = schedule_parser.add_mutually_exclusive_group(required=True)
+    when.add_argument("--at", type=_clock, metavar="HH:MM", help="daily run time, 24-hour clock")
+    when.add_argument("--off", action="store_true", help="remove the scheduled run")
     eval_parser = commands.add_parser("eval", help="score the tagging path against a labelled posting set")
     eval_parser.add_argument("set", type=Path, help="JSON list of {id, title, location, description, labels}")
     try:
@@ -36,6 +44,13 @@ def main(argv: list[str] | None = None) -> int:
         return _eval(home, args.set)
     if args.command == "discover":
         return _discover(home)
+    if args.command == "schedule":
+        return _schedule(home, args.at)
+    return _run(home, args.notify)
+
+
+def _run(home: Path, notifying: bool) -> int:
+    """With `notifying`, a scheduled run reports news and problems on the desktop; nothing on a quiet run."""
     try:
         config = load_config(home)
         profile = load_profile(home)
@@ -44,13 +59,71 @@ def main(argv: list[str] | None = None) -> int:
         with _run_lock(home):
             outcome = scan.scan(config, profile, defs)
     except ConfigError as e:
-        print(f"jobscan: {e}", file=sys.stderr)
-        return EXIT_USAGE
+        return _refused(str(e), notifying)
     except RunLocked:
-        print(f"jobscan: another run is using {home}", file=sys.stderr)
-        return EXIT_USAGE
+        return _refused(f"another run is using {home}", notifying)
+    except Exception as e:
+        if notifying:
+            notify.notify(f"jobscan stopped with an error ({type(e).__name__}); see {home / 'launchd.log'}")
+        raise
     print(f"{outcome.profile}\t{outcome.new}\t{outcome.digest_path or '-'}")
+    news = _news(outcome)
+    if notifying and news:
+        notify.notify(news)
     return EXIT_OK if outcome.complete else EXIT_INCOMPLETE
+
+
+def _refused(reason: str, notifying: bool) -> int:
+    print(f"jobscan: {reason}", file=sys.stderr)
+    if notifying:
+        notify.notify(f"jobscan couldn't run: {reason}")
+    return EXIT_USAGE
+
+
+def _news(outcome: scan.ScanOutcome) -> str | None:
+    parts = []
+    if outcome.new:
+        parts.append(f"{outcome.new} new posting{'' if outcome.new == 1 else 's'} in {outcome.digest_path.parent}")
+    if outcome.carried_over:
+        parts.append(f"{outcome.carried_over} couldn't be tagged yet; see runs.log")
+    if outcome.digest_failed:
+        parts.append("the digest couldn't be written; see runs.log")
+    return "; ".join(parts) or None
+
+
+def _clock(text: str) -> tuple[int, int]:
+    hour, _, minute = text.partition(":")
+    if not (hour.isdigit() and minute.isdigit() and len(minute) == 2 and int(hour) < 24 and int(minute) < 60):
+        raise argparse.ArgumentTypeError("use HH:MM, 24-hour, e.g. 08:00")
+    return int(hour), int(minute)
+
+
+def _schedule(home: Path, at: tuple[int, int] | None) -> int:
+    """`at` None: remove. A schedule is installed only for a config that loads as the job will run it: with no
+    shell environment, so the key must be in the key file."""
+    if at is not None:
+        try:
+            load_config(home, environ={})
+            profile = load_profile(home)
+            tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
+        except ConfigError as e:
+            print(f"jobscan: {e}", file=sys.stderr)
+            return EXIT_USAGE
+    if sys.platform != "darwin":
+        print(schedule.cron_line(home, *at) if at else "jobscan: remove the jobscan line with `crontab -e`")
+        return EXIT_OK
+    agents = Path.home() / "Library" / "LaunchAgents"
+    try:
+        if at is None:
+            job = schedule.remove(home, agents)
+            print(f"unscheduled\t{job.plist}")
+        else:
+            job = schedule.install(home, *at, agents)
+            print(f"scheduled\t{at[0]:02d}:{at[1]:02d}\t{job.plist}")
+    except (schedule.ScheduleError, OSError, subprocess.SubprocessError) as e:
+        print(f"jobscan: could not change the schedule: {e}", file=sys.stderr)
+        return EXIT_INCOMPLETE
+    return EXIT_OK
 
 
 def _init(home: Path) -> int:
