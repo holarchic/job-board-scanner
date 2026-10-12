@@ -29,7 +29,8 @@ WORKERS = 4
 STOP_AFTER_FAILURES = 3  # consecutive failed postings → treat the model as unavailable
 UNKNOWN = "unknown"
 # G2 validated `location_eligible` for UK eligibility only.
-UK = re.compile(r"\b(UK|U\.K\.|United Kingdom|Britain|England|Scotland|Wales|Northern Ireland|London)\b", re.IGNORECASE)
+UK = re.compile(r"(?<!\w)(UK|U\.K\.|United Kingdom|Britain|England|Scotland|Wales|Northern Ireland|London)(?!\w)",
+                re.IGNORECASE)
 
 
 @dataclass(frozen=True)

@@ -140,7 +140,8 @@ class DefinitionsTest(unittest.TestCase):
                 tag.definitions(("founding", "location_eligible"), "the UK", custom)
 
     def test_location_eligible_validated_only_for_the_uk(self):
-        for where, validated in [("the UK, working from London", True), ("United Kingdom", True),
+        for where, validated in [("the UK, working from London", True), ("United Kingdom", True), ("the U.K.", True),
+                                 ("U.K. or Ireland", True),
                                  ("Berlin", False), ("remote anywhere", False), ("Ukraine", False)]:
             (d,) = tag.definitions(("location_eligible",), where)
             self.assertEqual(d.validated, validated, where)
