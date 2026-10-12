@@ -386,7 +386,7 @@ class DiscoveryRefreshTest(RunFixture):
         self.assertIn("## acme — Enterprise Account Executive", Path(path).read_text())
         boards, at = self.discovered()
         self.assertEqual(boards, ["ashby:acme"])
-        self.assertGreater(at, self.days_ago(1))
+        self.assertGreater(at, datetime.fromisoformat(self.days_ago(1)))
 
     def test_fresh_list_is_not_rediscovered(self):
         self.seed_discovery("acme", at=self.days_ago(29))
@@ -407,7 +407,7 @@ class DiscoveryRefreshTest(RunFixture):
         self.cc.fail["/cc-index/collections/CC-MAIN-2026-30/indexes/cluster.idx"] = [503] * 4
         code, (_, new, _) = self.run_cli()
         self.assertEqual((code, new), (0, "2"))
-        self.assertEqual(self.discovered(), (["ashby:acme"], stale))
+        self.assertEqual(self.discovered(), (["ashby:acme"], datetime.fromisoformat(stale)))
         self.assertIn("discover_failed", (self.home / "runs.log").read_text())
 
     def test_no_list_and_no_crawl_is_a_usage_error(self):

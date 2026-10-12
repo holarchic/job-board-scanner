@@ -24,7 +24,7 @@ def refresh_if_stale(conn: sqlite3.Connection, now: datetime) -> None:
     """`run`'s monthly discovery, so one scheduled job is enough. An unreadable crawl keeps the old list and the run
     goes on; a list that can't be saved is a ConfigError, as for `discover`."""
     last = store.discovered_at(conn)
-    if last is not None and now - datetime.fromisoformat(last) < STALE_AFTER:
+    if last is not None and now - last < STALE_AFTER:
         return
     try:
         discover(conn)

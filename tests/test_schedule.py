@@ -109,6 +109,21 @@ class ScheduleTest(unittest.TestCase):
         self.assertEqual(self.job.plist.read_bytes(), before)
         self.assertIn("PermissionError", str(caught.exception))
 
+    def test_ctrl_c_after_bootout_puts_the_previous_job_back(self):
+        schedule.install(self.home, time(8, 0), self.agents, FakeLaunchctl(bootout=[3]))
+        before = self.job.plist.read_bytes()
+        calls = []
+
+        def interrupted(args):
+            calls.append(args[0])
+            if calls.count("bootstrap") == 1 and args[0] == "bootstrap":
+                raise KeyboardInterrupt
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        with self.assertRaises(KeyboardInterrupt):
+            schedule.install(self.home, time(9, 0), self.agents, interrupted)
+        self.assertEqual((calls, self.job.plist.read_bytes()), (["bootout", "bootstrap", "bootstrap"], before))
+
     def test_failed_restore_is_reported(self):
         schedule.install(self.home, time(8, 0), self.agents, FakeLaunchctl(bootout=[3]))
         with self.assertRaises(schedule.ScheduleError) as caught:

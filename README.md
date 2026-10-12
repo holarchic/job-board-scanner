@@ -53,11 +53,12 @@ You need an [OpenRouter](https://openrouter.ai) API key. Then, in a terminal:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
 uv tool install git+https://github.com/holarchic/jobscan
 jobscan init
 ```
 
-uv installs a recent Python by itself if yours is too old (a Mac's is). If the terminal says `jobscan: command not found`, run `uv tool update-shell`, open a new terminal window and try again. On a fresh Mac the install may ask to install Apple's command-line developer tools; say yes.
+The second line puts uv, and the `jobscan` it installs, on this terminal's path; new terminals have them already. uv installs a recent Python by itself if yours is too old (a Mac's is). If a terminal ever says `jobscan: command not found`, run `uv tool update-shell` and open a new window. On a fresh Mac the install may ask to install Apple's command-line developer tools; say yes.
 
 `init` asks what you're looking for — job titles, titles to leave out, locations, where you can work from, which tags — and your OpenRouter key. It writes everything under `~/.jobscan/`: `config.toml`, your profile in `profiles/`, and the key in `openrouter.key`, readable only by you.
 

@@ -56,6 +56,10 @@ class ApplyFetchTest(unittest.TestCase):
         self.addCleanup(broken.close)
         with self.assertRaises(ConfigError):
             store.discovered_at(broken)
+        for stamp in ["not a date", "2026-10-11T00:00:00"]:  # unparseable; no time zone
+            store.replace_discovered(self.conn, [Board("ashby", "a", "a", "https://x/a")], stamp)
+            with self.assertRaises(ConfigError, msg=stamp):
+                store.discovered_at(self.conn)
 
     def test_unopenable_database_is_a_config_error(self):
         with tempfile.TemporaryDirectory() as d:

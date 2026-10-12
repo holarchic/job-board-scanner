@@ -2,7 +2,6 @@
 
 Nothing is written until every answer is in and the profile it makes loads; a failure part-way through removes
 whatever this invocation created."""
-import contextlib
 import getpass
 import json
 import os
@@ -57,6 +56,12 @@ class Setup:
 
 
 @dataclass(frozen=True)
+class File:
+    text: str
+    mode: int
+
+
+@dataclass(frozen=True)
 class Answers:
     name: str
     titles: list[str]
@@ -80,9 +85,12 @@ def init(home: Path) -> Setup:
         raise InitCancelled from None
     setup = Setup(config=home / "config.toml", profile=home / "profiles" / f"{answers.name}.toml",
                   key=home / KEY_FILE)
-    files = {setup.config: (CONFIG, 0o644), setup.profile: (profile_text(answers), 0o644),
-             setup.key: (answers.key + "\n", 0o600)}
-    _check(answers, home, files)
+    files = {setup.config: File(CONFIG, 0o644), setup.profile: File(profile_text(answers), 0o644),
+             setup.key: File(answers.key + "\n", 0o600)}
+    try:
+        _check(answers, home, files)
+    except OSError as e:
+        raise ConfigError(f"could not check the new install in a temporary directory ({type(e).__name__})") from None
     _write(home, files)
     return setup
 
@@ -170,16 +178,16 @@ def _split(answer: str) -> list[str]:
     return [item.strip() for item in answer.split(",") if item.strip()]
 
 
-def _check(answers: Answers, home: Path, files: dict[Path, tuple[str, int]]) -> None:
+def _check(answers: Answers, home: Path, files: dict[Path, File]) -> None:
     """The install must load exactly as answered, through the loaders `run` uses, as a scheduled run sees it: with
     no shell environment."""
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
         (root / "profiles").mkdir()
-        for path, (text, mode) in files.items():
+        for path, file in files.items():
             target = root / path.relative_to(home)
-            target.write_text(text, encoding="utf-8")
-            target.chmod(mode)
+            target.write_text(file.text, encoding="utf-8")
+            target.chmod(file.mode)
         load_config(root, environ={})
         profile = load_profile(root)
     expected = {"titles": answers.titles, "exclude_titles": answers.exclude_titles, "locations": answers.locations,
@@ -192,22 +200,32 @@ def _check(answers: Answers, home: Path, files: dict[Path, tuple[str, int]]) -> 
     tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
 
 
-def _write(home: Path, files: dict[Path, tuple[str, int]]) -> None:
+def _write(home: Path, files: dict[Path, File]) -> None:
     created: list[Path] = []
     try:
         for directory in (home, home / "profiles"):
             if not directory.exists():
                 directory.mkdir()
                 created.append(directory)
-        for path, (text, mode) in files.items():
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+        for path, file in files.items():
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, file.mode)
             created.append(path)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(text)
+                f.write(file.text)
     except BaseException as e:
-        for path in reversed(created):  # every path is attempted; a cleanup failure never hides the cause
-            with contextlib.suppress(OSError):
-                path.rmdir() if path.is_dir() else path.unlink()
+        left = _remove(created)
         if isinstance(e, OSError):
-            raise ConfigError(f"could not write {home} ({type(e).__name__}); nothing was kept") from None
+            kept = f"; delete {', '.join(map(str, left))} before trying again" if left else "; nothing was kept"
+            raise ConfigError(f"could not write {home} ({type(e).__name__}){kept}") from None
         raise
+
+
+def _remove(created: list[Path]) -> list[Path]:
+    """Removes what this invocation created, newest first, trying every path; returns what couldn't be removed."""
+    left = []
+    for path in reversed(created):
+        try:
+            path.rmdir() if path.is_dir() else path.unlink()
+        except OSError:
+            left.append(path)
+    return left

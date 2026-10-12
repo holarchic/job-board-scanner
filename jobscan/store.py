@@ -4,6 +4,7 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from jobscan.config import ConfigError
@@ -169,12 +170,16 @@ def replace_discovered(conn: sqlite3.Connection, boards: list[Board], now: str) 
         )
 
 
-def discovered_at(conn: sqlite3.Connection) -> str | None:
+def discovered_at(conn: sqlite3.Connection) -> datetime | None:
     """When the discovered list was last replaced (every row carries that time), or None when it's empty."""
     try:
-        return conn.execute("SELECT MAX(discovered) AS at FROM boards").fetchone()["at"]
-    except sqlite3.Error as e:
-        raise ConfigError(f"cannot read the board list ({type(e).__name__}: {e})") from None
+        at = conn.execute("SELECT MAX(discovered) AS at FROM boards").fetchone()["at"]
+        parsed = None if at is None else datetime.fromisoformat(at)
+    except (sqlite3.Error, ValueError, TypeError) as e:
+        raise ConfigError(f"cannot read the board list's date ({type(e).__name__})") from None
+    if parsed is not None and parsed.tzinfo is None:
+        raise ConfigError("the board list's date has no time zone")
+    return parsed
 
 
 def live_discovered(conn: sqlite3.Connection) -> list[Board]:

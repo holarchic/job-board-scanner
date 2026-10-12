@@ -98,6 +98,25 @@ class InitTest(unittest.TestCase):
             self.run_init(answers())
         self.assertFalse(self.home.exists())
 
+    def test_a_failed_cleanup_names_what_is_left(self):
+        real_open, real_unlink = os.open, Path.unlink
+
+        def failing_open(path, flags, mode=0o777, **kwargs):
+            if str(path).endswith("openrouter.key"):
+                raise OSError(28, "No space left on device")
+            return real_open(path, flags, mode, **kwargs)
+
+        def stuck_unlink(path, missing_ok=False):
+            if path.name == "config.toml":
+                raise PermissionError(1, "Operation not permitted")
+            return real_unlink(path, missing_ok)
+
+        with mock.patch.object(init.os, "open", failing_open), mock.patch.object(Path, "unlink", stuck_unlink), \
+                self.assertRaises(ConfigError) as caught:
+            self.run_init(answers())
+        self.assertIn(f"delete {self.home / 'config.toml'}", str(caught.exception))
+        self.assertNotIn("nothing was kept", str(caught.exception))
+
     def test_through_the_cli(self):
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.dict(os.environ, {"JOBSCAN_HOME": str(self.home)}), \

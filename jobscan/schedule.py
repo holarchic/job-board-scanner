@@ -73,13 +73,15 @@ def install(home: Path, at: time, agents: Path, run: Launchctl | None = None) ->
     try:
         _write(j.plist, plist(j, home, at))
         _check(run(["bootstrap", domain, str(j.plist)]), "bootstrap")
-    except (OSError, subprocess.SubprocessError, ScheduleError) as failure:
+    except BaseException as failure:  # Ctrl-C too: the old job is unloaded at this point
         cause = str(failure) if isinstance(failure, ScheduleError) else f"{type(failure).__name__}: {failure}"
         try:
             _restore(run, domain, j, previous)
         except (OSError, subprocess.SubprocessError, ScheduleError) as e:
             raise ScheduleError(f"{cause}; putting the previous schedule back also failed: {e}") from None
-        raise ScheduleError(cause) from None
+        if isinstance(failure, (OSError, subprocess.SubprocessError, ScheduleError)):
+            raise ScheduleError(cause) from None
+        raise
     return j
 
 
