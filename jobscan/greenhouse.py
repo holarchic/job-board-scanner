@@ -21,8 +21,9 @@ NOT_IN_SLUG = frozenset("/:?#")
 REAL_TAG = re.compile(r"</?[a-zA-Z]")
 # A layer of escaped markup shows an escaped closing tag (any tag) or an escaped standard HTML tag (`<br>`, an
 # unclosed `<p>`); a bare `&lt;customer&gt;` is neither and stays text.
-ESCAPED_MARKUP = re.compile(r"&(?:amp;)?lt;(?:/[a-z]|(?:a|article|b|blockquote|br|div|em|h[1-6]|hr|i|img|li|mark|ol|p|"
-                            r"section|span|strong|sub|sup|table|tbody|td|th|thead|tr|u|ul)\b)", re.IGNORECASE)
+ESCAPED_MARKUP = re.compile(r"&(?:amp;)?lt;(?:/[a-z]|(?:a|article|b|blockquote|br|code|dd|div|dl|dt|em|font|h[1-6]|"
+                            r"hr|i|img|li|mark|ol|p|pre|s|section|small|span|strong|sub|sup|table|tbody|td|th|thead|"
+                            r"tr|u|ul|wbr)\b)", re.IGNORECASE)
 
 
 # A token is percent-decoded and case-folded (Greenhouse tokens are case-insensitive), so every spelling of a board
