@@ -9,7 +9,7 @@ from jobscan.records import Board, BoardError, Posting
 
 ATS = "ashby"
 DISPLAY_NAME = "Ashby"
-CRAWL_HOST = "jobs.ashbyhq.com"
+CRAWL_HOSTS = ("jobs.ashbyhq.com",)
 API = "https://api.ashbyhq.com/posting-api/job-board/"
 
 

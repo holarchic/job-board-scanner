@@ -21,10 +21,11 @@ class DiscoverOutcome:
 
 
 def refresh_if_stale(conn: sqlite3.Connection, now: datetime) -> None:
-    """`run`'s monthly discovery, so one scheduled job is enough. An unreadable crawl keeps the old list and the run
-    goes on; a list that can't be saved is a ConfigError, as for `discover`."""
+    """`run`'s monthly discovery, so one scheduled job is enough; also as soon as an ATS gains an adapter, so an
+    upgraded install reads it on its next run. An unreadable crawl keeps the old list and the run goes on; a list
+    that can't be saved is a ConfigError, as for `discover`."""
     last = store.discovered_at(conn)
-    if last is not None and now - last < STALE_AFTER:
+    if last is not None and now - last < STALE_AFTER and store.discovered_ats(conn) >= set(fetch.ADAPTERS):
         return
     try:
         discover(conn)
@@ -39,13 +40,14 @@ def discover(conn: sqlite3.Connection) -> DiscoverOutcome:
     crawls = crawl.latest_crawls(CRAWLS, base)
     boards: dict[str, Board] = {}
     for adapter in fetch.ADAPTERS.values():
-        for crawl_id in crawls:
-            urls = crawl.captures(crawl_id, adapter.CRAWL_HOST, base)
-            found = [b for b in (adapter.board("", url) for url in urls) if b is not None]
-            log.info("discover crawl=%s host=%s captures=%d boards=%d", crawl_id, adapter.CRAWL_HOST, len(urls),
-                     len({b.id for b in found}))
-            for board in found:
-                boards.setdefault(board.id, board)
+        for host in adapter.CRAWL_HOSTS:
+            for crawl_id in crawls:
+                urls = crawl.captures(crawl_id, host, base)
+                found = [b for b in (adapter.board("", url) for url in urls) if b is not None]
+                log.info("discover crawl=%s host=%s captures=%d boards=%d", crawl_id, host, len(urls),
+                         len({b.id for b in found}))
+                for board in found:
+                    boards.setdefault(board.id, board)
     try:
         store.replace_discovered(conn, list(boards.values()), datetime.now(UTC).isoformat(timespec="microseconds"))
     except sqlite3.Error as e:

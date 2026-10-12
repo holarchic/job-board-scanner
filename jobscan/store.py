@@ -182,6 +182,14 @@ def discovered_at(conn: sqlite3.Connection) -> datetime | None:
     return parsed
 
 
+def discovered_ats(conn: sqlite3.Connection) -> set[str]:
+    """The ATSes the discovered list covers."""
+    try:
+        return {r["ats"] for r in conn.execute("SELECT DISTINCT ats FROM boards")}
+    except sqlite3.Error as e:
+        raise ConfigError(f"cannot read the board list ({type(e).__name__})") from None
+
+
 def live_discovered(conn: sqlite3.Connection) -> list[Board]:
     """Discovered boards short of DEAD_AFTER consecutive 404s. A discovered board's company name is its slug."""
     rows = conn.execute("SELECT ats, slug, api_url FROM boards WHERE not_found < ? ORDER BY id", (DEAD_AFTER,))
