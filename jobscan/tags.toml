@@ -3,9 +3,10 @@
 # with a list of values (empty = the posting doesn't say). `default` is the answer when the posting is silent,
 # which needs no quote. founding and language_required follow the G2 labelling guide v2.1.0. `validated` says
 # whether `eval` has passed the tag; "uk" means only when the profile's `eligible_where` names the UK, the only
-# eligibility G2 tested.
+# eligibility G2 tested. `summary` is the one line `jobscan init` shows; the model never sees it.
 
 [founding]
+summary = "Is this the first and only hire in the role at the company?"
 validated = true
 values = ["yes", "no"]
 default = "no"
@@ -17,6 +18,7 @@ The first and only hire in the role's own function **at the company**: the first
 """
 
 [location_eligible]
+summary = "Can you take the job from where you are?"
 validated = "uk"
 values = ["yes", "no", "unknown"]
 definition = """
@@ -28,6 +30,7 @@ Someone who wants to work from {eligible_where} can do this job.
 """
 
 [segment]
+summary = "Sales roles: enterprise, mid-market or SMB customers?"
 validated = false
 values = ["enterprise", "mid_market", "smb"]
 multi = true
@@ -39,6 +42,7 @@ The customer sizes this sales role sells to. List every segment the title or des
 """
 
 [language_required]
+summary = "Does it need a language other than English?"
 validated = true
 default = "no"
 definition = """
@@ -48,6 +52,7 @@ A language other than English is required. Answer `no` or the language name (`Ge
 """
 
 [tech_company]
+summary = "Is the company's main business technology?"
 validated = false
 values = ["yes", "no", "unknown"]
 definition = """

@@ -5,7 +5,7 @@ import logging
 import sys
 from pathlib import Path
 
-from jobscan import discover, evaluate, scan, store, tag
+from jobscan import discover, evaluate, init, scan, store, tag
 from jobscan.config import ConfigError, jobscan_home, load_config, load_profile
 from jobscan.crawl import CrawlError
 
@@ -20,6 +20,7 @@ class RunLocked(Exception):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jobscan")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("init", help="set up a search: asks in the terminal, writes config, profile and key")
     commands.add_parser("discover", help="rebuild the board list from the newest Common Crawl crawls (monthly)")
     commands.add_parser("run", help="fetch → filter → tag → write the profile's digest")
     eval_parser = commands.add_parser("eval", help="score the tagging path against a labelled posting set")
@@ -29,6 +30,8 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as e:
         return EXIT_OK if e.code == 0 else EXIT_USAGE
     home = jobscan_home()
+    if args.command == "init":
+        return _init(home)
     if args.command == "eval":
         return _eval(home, args.set)
     if args.command == "discover":
@@ -48,6 +51,21 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE
     print(f"{outcome.profile}\t{outcome.new}\t{outcome.digest_path or '-'}")
     return EXIT_OK if outcome.complete else EXIT_INCOMPLETE
+
+
+def _init(home: Path) -> int:
+    try:
+        setup = init.init(home)
+    except ConfigError as e:
+        print(f"jobscan: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    except init.InitCancelled:
+        print("\njobscan: cancelled; nothing was written", file=sys.stderr)
+        return EXIT_USAGE
+    written = [setup.config, setup.profile] + ([setup.key] if setup.key else [])
+    print("\nWrote " + ", ".join(str(p) for p in written) + ".")
+    print(init.NEXT_STEPS.format(profile=setup.profile))
+    return EXIT_OK
 
 
 def _discover(home: Path) -> int:

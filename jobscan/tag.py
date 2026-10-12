@@ -98,6 +98,11 @@ def builtin_names() -> tuple[str, ...]:
     return tuple(_builtins())
 
 
+def builtin_summaries() -> dict[str, str]:
+    """One line per built-in tag, for people choosing tags; the model never sees it."""
+    return {name: spec["summary"] for name, spec in _builtins().items()}
+
+
 def _builtins() -> dict:
     return tomllib.loads((Path(__file__).parent / "tags.toml").read_text())
 
