@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from jobscan import fetch
+from jobscan import fetch, payload
 from jobscan.config import ConfigError
 from jobscan.records import Board
 from tests.fakes import FakeServer, ashby_job
@@ -54,6 +54,12 @@ class AshbyBoardTest(unittest.TestCase):
             boards, skipped = fetch.load_boards(path)
         self.assertEqual([(b.company, b.id) for b in boards], [("Acme", "ashby:acme")])
         self.assertEqual(skipped, 2)
+
+    def test_malformed_markup_still_gives_text(self):
+        for markup in ["<p>Before <![bogus]> after</p>", "<p>Our <strong title=\"a > b\">first</strong> hire</p>"]:
+            self.assertIn("after" if "bogus" in markup else "Our first hire", payload.html_to_text(markup), markup)
+        with mock.patch.object(payload._Text, "feed", side_effect=AssertionError):
+            self.assertEqual(payload.html_to_text("<p>Before <![bogus]> after</p>"), "Before after")
 
     def test_api_paths_win_over_board_pages(self):
         for url, ats in [("https://jobs.ashbyhq.com/acme", "ashby"),

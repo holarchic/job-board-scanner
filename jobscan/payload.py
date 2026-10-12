@@ -1,11 +1,14 @@
 """Helpers for reading ATS data, shared by the adapters: board URLs, string fields that fail the board when
 malformed, and job-description HTML → plain text."""
+import html
+import re
 from html.parser import HTMLParser
 from urllib.parse import SplitResult, urlsplit
 
 from jobscan.records import BoardError
 
-BLOCK_TAGS = {"br", "p", "li", "div", "h1", "h2", "h3", "h4", "h5", "h6"}
+BLOCK_TAGS = frozenset({"br", "p", "li", "div", "h1", "h2", "h3", "h4", "h5", "h6"})
+ANY_TAG = re.compile(r"<[^>]*>")
 
 
 def http_url(url: str) -> SplitResult | None:
@@ -38,9 +41,13 @@ def html_to_text(markup: str) -> str:
     """Block tags become line breaks, other tags vanish, entities decode; blank lines and runs of spaces go. A real
     HTML parser, so a `>` inside a quoted attribute doesn't end the tag."""
     parser = _Text()
-    parser.feed(markup)
-    parser.close()
-    lines = (" ".join(line.split()) for line in "".join(parser.parts).splitlines())
+    try:
+        parser.feed(markup)
+        parser.close()
+        text = "".join(parser.parts)
+    except AssertionError:  # Python 3.11's parser asserts on some malformed declarations, e.g. `<![bogus]>`
+        text = html.unescape(ANY_TAG.sub(" ", markup))
+    lines = (" ".join(line.split()) for line in text.splitlines())
     return "\n".join(line for line in lines if line)
 
 

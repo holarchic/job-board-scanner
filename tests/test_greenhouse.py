@@ -83,6 +83,14 @@ class ParseTest(unittest.TestCase):
             (p,) = greenhouse.parse(self.board, {"jobs": [greenhouse_job(1, "AE", content=content)]})
             self.assertEqual(p.description, text, content)
 
+    def test_any_tag_in_any_case_unescapes_alike(self):
+        markup = "<ARTICLE><P>Our <MARK>first sales hire</MARK>.</P></ARTICLE>"
+        once = markup.replace("<", "&lt;").replace(">", "&gt;")
+        for content in (markup, once, once.replace("&", "&amp;")):
+            (p,) = greenhouse.parse(self.board, {"jobs": [greenhouse_job(1, "AE", content=content)]})
+            self.assertEqual(p.description, "Our first sales hire.", content)
+            self.assertTrue(tag.verify_quote("Our first sales hire", p))
+
     def test_ids_may_be_numbers_or_strings(self):
         postings = greenhouse.parse(self.board, {"jobs": [greenhouse_job(1, "A"), greenhouse_job("x2", "B")]})
         self.assertEqual([p.key for p in postings], ["greenhouse:acme:1", "greenhouse:acme:x2"])
