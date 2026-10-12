@@ -19,9 +19,10 @@ LIST = "/jobs?content=true"
 SLUG = re.compile(r"[!-~]+")
 NOT_IN_SLUG = frozenset("/:?#")
 REAL_TAG = re.compile(r"</?[a-zA-Z]")
-# A layer of escaped markup shows an escaped closing tag, whatever the tag; a bare `&lt;customer&gt;` has none and
-# stays text.
-ESCAPED_CLOSING_TAG = re.compile(r"&(?:amp;)?lt;/[a-zA-Z]")
+# A layer of escaped markup shows an escaped closing tag (any tag) or an escaped standard HTML tag (`<br>`, an
+# unclosed `<p>`); a bare `&lt;customer&gt;` is neither and stays text.
+ESCAPED_MARKUP = re.compile(r"&(?:amp;)?lt;(?:/[a-z]|(?:a|article|b|blockquote|br|div|em|h[1-6]|hr|i|img|li|mark|ol|p|"
+                            r"section|span|strong|sub|sup|table|tbody|td|th|thead|tr|u|ul)\b)", re.IGNORECASE)
 
 
 # A token is percent-decoded and case-folded (Greenhouse tokens are case-insensitive), so every spelling of a board
@@ -115,7 +116,7 @@ def _description(content: str) -> str:
     """`content` is HTML with its markup entity-escaped, once in live payloads (`&lt;p&gt;`) and twice in
     Greenhouse's documentation (`&amp;lt;p&amp;gt;`): unescape until the tags are real, then strip them."""
     for _ in range(2):
-        if REAL_TAG.search(content) or not ESCAPED_CLOSING_TAG.search(content):
+        if REAL_TAG.search(content) or not ESCAPED_MARKUP.search(content):
             break  # real markup: what's still escaped is text, such as a literal "<customer>"
         content = html.unescape(content)
     return html_to_text(content)

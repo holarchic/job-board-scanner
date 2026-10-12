@@ -58,6 +58,16 @@ class AshbyBoardTest(unittest.TestCase):
     def test_malformed_markup_still_gives_text(self):
         for markup in ["<p>Before <![bogus]> after</p>", "<p>Our <strong title=\"a > b\">first</strong> hire</p>"]:
             self.assertIn("after" if "bogus" in markup else "Our first hire", payload.html_to_text(markup), markup)
+        markup = '<p>Our <strong title="a > b">first</strong> hire <![bogus]></p><p>Next</p>'
+        real_feed = payload._Text.feed
+
+        def asserting_on_declarations(parser, data):
+            if "<!" in data:
+                raise AssertionError("unexpected call to parse_marked_section")
+            return real_feed(parser, data)
+
+        with mock.patch.object(payload._Text, "feed", asserting_on_declarations):
+            self.assertEqual(payload.html_to_text(markup), "Our first hire\nNext")
         with mock.patch.object(payload._Text, "feed", side_effect=AssertionError):
             self.assertEqual(payload.html_to_text("<p>Before <![bogus]> after</p>"), "Before after")
 

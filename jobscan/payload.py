@@ -8,6 +8,7 @@ from urllib.parse import SplitResult, urlsplit
 from jobscan.records import BoardError
 
 BLOCK_TAGS = frozenset({"br", "p", "li", "div", "h1", "h2", "h3", "h4", "h5", "h6"})
+DECLARATION = re.compile(r"<![^>]*>")
 ANY_TAG = re.compile(r"<[^>]*>")
 
 
@@ -40,15 +41,24 @@ def text_field(record: dict, name: str, index: int, required: bool = False) -> s
 def html_to_text(markup: str) -> str:
     """Block tags become line breaks, other tags vanish, entities decode; blank lines and runs of spaces go. A real
     HTML parser, so a `>` inside a quoted attribute doesn't end the tag."""
-    parser = _Text()
+    # Python 3.11's parser asserts on some malformed declarations, e.g. `<![bogus]>`: drop declarations and parse
+    # again; only if that fails too, strip every tag.
     try:
-        parser.feed(markup)
-        parser.close()
-        text = "".join(parser.parts)
-    except AssertionError:  # Python 3.11's parser asserts on some malformed declarations, e.g. `<![bogus]>`
-        text = html.unescape(ANY_TAG.sub(" ", markup))
+        text = _parse(markup)
+    except AssertionError:
+        try:
+            text = _parse(DECLARATION.sub(" ", markup))
+        except AssertionError:
+            text = html.unescape(ANY_TAG.sub(" ", markup))
     lines = (" ".join(line.split()) for line in text.splitlines())
     return "\n".join(line for line in lines if line)
+
+
+def _parse(markup: str) -> str:
+    parser = _Text()
+    parser.feed(markup)
+    parser.close()
+    return "".join(parser.parts)
 
 
 class _Text(HTMLParser):
