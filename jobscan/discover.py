@@ -9,7 +9,7 @@ from jobscan import crawl, fetch, store
 from jobscan.config import ConfigError
 from jobscan.records import Board
 
-CRAWLS = 3  # one crawl finds 91% of a hand-built board list, three 97%, a fourth nothing more
+CRAWLS = 3  # Ashby: one crawl finds 91% of a hand-built board list, three 97%, a fourth nothing more
 STALE_AFTER = timedelta(days=30)  # Common Crawl publishes about one crawl a month
 log = logging.getLogger("jobscan")
 
@@ -43,7 +43,8 @@ def discover(conn: sqlite3.Connection) -> DiscoverOutcome:
         for host in adapter.CRAWL_HOSTS:
             for crawl_id in crawls:
                 urls = crawl.captures(crawl_id, host, base)
-                found = [b for b in (adapter.board("", url) for url in urls) if b is not None]
+                boards_seen = (fetch.board_for("", url) for url in urls)
+                found = [b for b in boards_seen if b is not None and b.ats == adapter.ATS]
                 log.info("discover crawl=%s host=%s captures=%d boards=%d", crawl_id, host, len(urls),
                          len({b.id for b in found}))
                 for board in found:

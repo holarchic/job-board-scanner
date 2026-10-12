@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from jobscan import ashby, fetch
+from jobscan import fetch
 from jobscan.config import ConfigError
 from jobscan.records import Board
 from tests.fakes import FakeServer, ashby_job
@@ -19,27 +19,27 @@ def split(boards):
 
 class AshbyBoardTest(unittest.TestCase):
     def test_human_board_url_maps_to_api(self):
-        board = ashby.board("Acme", "https://jobs.ashbyhq.com/acme")
+        board = fetch.board_for("Acme", "https://jobs.ashbyhq.com/acme")
         self.assertEqual((board.id, board.api_url), ("ashby:acme", "https://api.ashbyhq.com/posting-api/job-board/acme"))
 
     def test_api_url_used_as_is_on_any_host(self):
-        self.assertEqual(ashby.board("Acme", "http://127.0.0.1:9/posting-api/job-board/acme?x=1").api_url,
+        self.assertEqual(fetch.board_for("Acme", "http://127.0.0.1:9/posting-api/job-board/acme?x=1").api_url,
                          "http://127.0.0.1:9/posting-api/job-board/acme")
 
     def test_slug_is_case_folded_in_both_url_forms(self):
         for url in ["https://jobs.ashbyhq.com/MotherDuck", "https://api.ashbyhq.com/posting-api/job-board/MotherDuck"]:
-            board = ashby.board("MotherDuck", url)
+            board = fetch.board_for("MotherDuck", url)
             self.assertEqual((board.id, board.api_url, board.company),
                              ("ashby:motherduck", "https://api.ashbyhq.com/posting-api/job-board/motherduck",
                               "MotherDuck"), url)
 
     def test_other_ats_and_malformed_urls_are_none(self):
-        self.assertIsNone(ashby.board("Acme", "https://boards.greenhouse.io/acme"))
-        self.assertIsNone(ashby.board("Acme", "https://[::1/posting-api/job-board/acme"))
-        self.assertIsNone(ashby.board("Acme", "https://jobs.ashbyhq.com:99999/acme"))
+        self.assertEqual(fetch.board_for("Acme", "https://boards.greenhouse.io/acme").ats, "greenhouse")
+        self.assertIsNone(fetch.board_for("Acme", "https://[::1/posting-api/job-board/acme"))
+        self.assertIsNone(fetch.board_for("Acme", "https://jobs.ashbyhq.com:99999/acme"))
         for url in ["/posting-api/job-board/acme", "http:///posting-api/job-board/acme",
                     "file://host/posting-api/job-board/acme"]:
-            self.assertIsNone(ashby.board("Acme", url), url)
+            self.assertIsNone(fetch.board_for("Acme", url), url)
 
     def test_load_boards_dedupes_and_counts_skipped(self):
         with tempfile.TemporaryDirectory() as d:
@@ -55,14 +55,16 @@ class AshbyBoardTest(unittest.TestCase):
         self.assertEqual([(b.company, b.id) for b in boards], [("Acme", "ashby:acme")])
         self.assertEqual(skipped, 2)
 
-    def test_every_board_url_has_exactly_one_adapter(self):
-        for url in ["https://jobs.ashbyhq.com/acme", "https://api.ashbyhq.com/posting-api/job-board/acme",
-                    "https://job-boards.greenhouse.io/acme", "https://boards-api.greenhouse.io/v1/boards/acme/jobs",
-                    "https://jobs.ashbyhq.com/v1/boards/acme/jobs",
-                    "https://job-boards.greenhouse.io/posting-api/job-board/acme",
-                    "http://127.0.0.1:8000/v1/boards/acme/jobs", "http://127.0.0.1:8000/posting-api/job-board/acme"]:
-            claimants = [ats for ats, adapter in fetch.ADAPTERS.items() if adapter.board("", url) is not None]
-            self.assertEqual(len(claimants), 1, (url, claimants))
+    def test_api_paths_win_over_board_pages(self):
+        for url, ats in [("https://jobs.ashbyhq.com/acme", "ashby"),
+                         ("https://api.ashbyhq.com/posting-api/job-board/acme", "ashby"),
+                         ("https://job-boards.greenhouse.io/acme", "greenhouse"),
+                         ("https://boards-api.greenhouse.io/v1/boards/acme/jobs", "greenhouse"),
+                         ("https://jobs.ashbyhq.com/v1/boards/acme/jobs", "greenhouse"),  # an API path wins
+                         ("https://job-boards.greenhouse.io/posting-api/job-board/acme", "ashby"),
+                         ("http://127.0.0.1:8000/v1/boards/acme/jobs", "greenhouse"),
+                         ("http://127.0.0.1:8000/posting-api/job-board/acme", "ashby")]:
+            self.assertEqual(fetch.board_for("", url).ats, ats, url)
 
     def test_load_boards_rejects_lone_surrogates(self):
         with tempfile.TemporaryDirectory() as d:

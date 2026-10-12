@@ -1,7 +1,7 @@
 """Greenhouse adapter: board URLs → boards, and Job Board API payloads → postings."""
 import unittest
 
-from jobscan import greenhouse, tag
+from jobscan import fetch, greenhouse, tag
 from jobscan.records import BoardError
 from tests.fakes import greenhouse_job
 
@@ -15,37 +15,42 @@ class BoardTest(unittest.TestCase):
                     "https://boards.eu.greenhouse.io/acme", "https://boards.greenhouse.io/embed/job_board?for=Acme",
                     "https://boards-api.greenhouse.io/v1/boards/acme/jobs",
                     "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true"]:
-            b = greenhouse.board("Acme", url)
+            b = fetch.board_for("Acme", url)
             self.assertEqual((b.id, b.api_url), ("greenhouse:acme", API + "acme/jobs?content=true"), url)
 
     def test_encoded_tokens_are_one_board_and_encoded_again_for_the_api(self):
         for url in ["https://job-boards.greenhouse.io/ep%2Bco", "https://job-boards.greenhouse.io/EP+Co",
                     "https://boards.greenhouse.io/embed/job_board?for=ep%2Bco"]:
-            b = greenhouse.board("", url)
+            b = fetch.board_for("", url)
             self.assertEqual((b.id, b.company, b.api_url),
                              ("greenhouse:ep+co", "ep+co", API + "ep%2Bco/jobs?content=true"), url)
-        self.assertEqual(greenhouse.board("", "https://job-boards.greenhouse.io/harrison%26star").api_url,
+        self.assertEqual(fetch.board_for("", "https://job-boards.greenhouse.io/harrison%26star").api_url,
                          API + "harrison%26star/jobs?content=true")
 
     def test_semicolons_stay_in_the_token(self):
         for url in ["https://job-boards.greenhouse.io/x;y", "https://job-boards.greenhouse.io/x%3By",
                     "https://job-boards.greenhouse.io/x;y/jobs/1"]:
-            self.assertEqual(greenhouse.board("", url).id, "greenhouse:x;y", url)
+            self.assertEqual(fetch.board_for("", url).id, "greenhouse:x;y", url)
+
+    def test_host_case_and_default_port_are_one_board(self):
+        for url in ["https://Job-Boards.Greenhouse.io/acme", "https://job-boards.greenhouse.io:443/acme"]:
+            self.assertEqual(fetch.board_for("", url).id, "greenhouse:acme", url)
 
     def test_api_url_on_another_host_is_kept(self):
-        b = greenhouse.board("Acme", "http://127.0.0.1:8000/v1/boards/acme/jobs")
+        b = fetch.board_for("Acme", "http://127.0.0.1:8000/v1/boards/acme/jobs")
         self.assertEqual(b.api_url, "http://127.0.0.1:8000/v1/boards/acme/jobs?content=true")
 
     def test_other_urls_are_not_greenhouse(self):
-        for url in ["https://jobs.ashbyhq.com/acme", "https://jobs.lever.co/acme", "https://job-boards.greenhouse.io/",
+        self.assertEqual(fetch.board_for("", "https://jobs.ashbyhq.com/acme").ats, "ashby")
+        for url in ["https://jobs.lever.co/acme", "https://job-boards.greenhouse.io/",
                     "https://boards.greenhouse.io/embed/job_board", "https://job-boards.greenhouse.io/a%3Ab",
                     "https://job-boards.greenhouse.io/a%2Fb", "https://job-boards.greenhouse.io/a%20b",
                     "https://www.example.com/acme", "ftp://job-boards.greenhouse.io/acme", "not a url"]:
-            self.assertIsNone(greenhouse.board("", url), url)
+            self.assertIsNone(fetch.board_for("", url), url)
 
 
 class ParseTest(unittest.TestCase):
-    board = greenhouse.board("Acme", "https://job-boards.greenhouse.io/acme")
+    board = fetch.board_for("Acme", "https://job-boards.greenhouse.io/acme")
 
     def test_posting_fields(self):
         (p,) = greenhouse.parse(self.board, {"jobs": [greenhouse_job(42, "Account Executive", "London, UK",
@@ -70,6 +75,13 @@ class ParseTest(unittest.TestCase):
         for content in (markup, once, once.replace("&", "&amp;")):
             (p,) = greenhouse.parse(self.board, {"jobs": [greenhouse_job(1, "AE", content=content)]})
             self.assertEqual(p.description, "Use <customer> APIs.", content)
+
+    def test_quoted_angle_brackets_and_bare_literals(self):
+        quoted = '&lt;p&gt;Our &lt;strong title="a &amp;gt; b"&gt;first sales hire&lt;/strong&gt;&lt;/p&gt;'
+        for content, text in [(quoted, "Our first sales hire"),
+                              ("Use &lt;customer&gt; APIs.", "Use <customer> APIs.")]:
+            (p,) = greenhouse.parse(self.board, {"jobs": [greenhouse_job(1, "AE", content=content)]})
+            self.assertEqual(p.description, text, content)
 
     def test_ids_may_be_numbers_or_strings(self):
         postings = greenhouse.parse(self.board, {"jobs": [greenhouse_job(1, "A"), greenhouse_job("x2", "B")]})

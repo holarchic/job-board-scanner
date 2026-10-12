@@ -3,49 +3,54 @@
 One API host serves US and EU boards. Parsing is all-or-nothing per board, as for Ashby."""
 import html
 import re
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote
 
-from jobscan.payload import html_to_text, text_field
+from jobscan.payload import html_to_text, http_url, text_field
 from jobscan.records import Board, BoardError, Posting
 
 ATS = "greenhouse"
 DISPLAY_NAME = "Greenhouse"
 # boards.greenhouse.io redirects to these, so Common Crawl holds no status-200 pages of its own.
 CRAWL_HOSTS = ("job-boards.greenhouse.io", "job-boards.eu.greenhouse.io")
-BOARD_HOSTS = {*CRAWL_HOSTS, "boards.greenhouse.io", "boards.eu.greenhouse.io"}
+BOARD_HOSTS = frozenset({*CRAWL_HOSTS, "boards.greenhouse.io", "boards.eu.greenhouse.io"})
 API = "https://boards-api.greenhouse.io/v1/boards/"
 LIST = "/jobs?content=true"
 # Board tokens include `ep+co` and `harrison&star`; ':' is the posting-key separator.
 SLUG = re.compile(r"[!-~]+")
-NOT_IN_SLUG = set("/:?#")
+NOT_IN_SLUG = frozenset("/:?#")
 REAL_TAG = re.compile(r"</?[a-zA-Z]")
-ESCAPED_TAG = re.compile(r"&(?:amp;)?lt;/?[a-zA-Z]")
+# Only tags job descriptions use count as an escaped markup layer; `&lt;customer&gt;` in plain text stays text.
+ESCAPED_TAG = re.compile(r"&(?:amp;)?lt;/?(?:p|div|span|br|ul|ol|li|strong|b|em|i|u|a|h[1-6]|table|tr|td|th|"
+                         r"tbody|thead|img|hr|blockquote|sup|sub|section)\b")
 
 
-def board(company: str, board_url: str) -> Board | None:
-    """A Board for a Job Board API URL on any host (how tests point at a fake server), or a board page on a
-    Greenhouse host, including the legacy embed form `…/embed/job_board?for=<slug>`. The slug is percent-decoded
-    and case-folded (Greenhouse tokens are case-insensitive), so every spelling of a board is one board. None when
-    the URL isn't recognisably Greenhouse's."""
-    try:
-        parsed = urlsplit(board_url)  # not urlparse: it would split `;params` off a token like `x;y`
-        parsed.port  # noqa: B018 -- raises on a malformed port
-    except ValueError:
+# A token is percent-decoded and case-folded (Greenhouse tokens are case-insensitive), so every spelling of a board
+# is one board; the API URL encodes it again. `fetch.board_for` tries every adapter's api_board before any page_board.
+
+
+def api_board(company: str, url: str) -> Board | None:
+    """A Job Board API URL on any host (how tests point at a fake server); the host is kept."""
+    parsed = http_url(url)
+    path = [p for p in parsed.path.split("/") if p] if parsed else []
+    if path[:2] != ["v1", "boards"] or len(path) < 3:
         return None
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+    return _board(company, _slug(path[2]), f"{parsed.scheme}://{parsed.netloc}/v1/boards/")
+
+
+def page_board(company: str, url: str) -> Board | None:
+    """A board page on a Greenhouse host, current or legacy, including the embed form `…/embed/job_board?for=<slug>`."""
+    parsed = http_url(url)
+    if parsed is None or parsed.hostname not in BOARD_HOSTS:
         return None
     path = [p for p in parsed.path.split("/") if p]
-    if path[:2] == ["v1", "boards"] and len(path) > 2:
-        slug = _slug(path[2])
-        base = f"{parsed.scheme}://{parsed.netloc}/v1/boards/"
-    elif parsed.netloc in BOARD_HOSTS and path[:2] == ["embed", "job_board"]:
-        slug = _slug(parse_qs(parsed.query).get("for", [""])[0], decoded=True)
-        base = API
-    elif parsed.netloc in BOARD_HOSTS and path and path[0] != "embed" and path[:2] != ["posting-api", "job-board"]:
-        slug = _slug(path[0])
-        base = API
-    else:
+    if path[:2] == ["embed", "job_board"]:
+        return _board(company, _slug(parse_qs(parsed.query).get("for", [""])[0], decoded=True), API)
+    if not path or path[0] == "embed":
         return None
+    return _board(company, _slug(path[0]), API)
+
+
+def _board(company: str, slug: str | None, base: str) -> Board | None:
     if slug is None:
         return None
     return Board(ats=ATS, slug=slug, company=company or slug, api_url=base + quote(slug, safe="") + LIST)
@@ -93,23 +98,17 @@ def _posting(board: Board, index: int, job) -> Posting:
 def _locations(job: dict, index: int) -> list[str]:
     """The job's location (optional), then its offices', each once."""
     places = []
-    location = job.get("location")
-    for record in ([] if location is None else [location]) + _list(job, "offices", index):
+    location, offices = job.get("location"), job.get("offices")
+    offices = [] if offices is None else offices
+    if not isinstance(offices, list):
+        raise BoardError(f"job {index}: `offices` is not a list")
+    for record in ([] if location is None else [location]) + offices:
         if not isinstance(record, dict):
             raise BoardError(f"job {index}: a location or office is not an object")
         name = (text_field(record, "name", index) or "").strip()
         if name and name not in places:
             places.append(name)
     return places
-
-
-def _list(job: dict, name: str, index: int) -> list:
-    value = job.get(name)
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise BoardError(f"job {index}: `{name}` is not a list")
-    return value
 
 
 def _description(content: str) -> str:

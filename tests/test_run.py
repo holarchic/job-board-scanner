@@ -74,7 +74,8 @@ class RunFixture(unittest.TestCase):
         conn = store.open_db(self.home)
         try:
             boards = [Board("ashby", s, s, f"{self.ats.url}/posting-api/job-board/{s}") for s in slugs]
-            store.replace_discovered(conn, [*boards, *SENTINELS], at or scan._now())
+            store.replace_discovered(conn, [*boards, *SENTINELS],
+                                     at or datetime.now(UTC).isoformat(timespec="microseconds"))
             with conn:
                 conn.execute("UPDATE boards SET not_found = ? WHERE slug = 'sentinel'", (store.DEAD_AFTER,))
         finally:

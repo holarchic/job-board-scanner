@@ -54,14 +54,24 @@ def load_boards(path: Path) -> tuple[list[Board], int]:
         for text in (company, url):
             if isinstance(text, str) and not _encodable(text):  # a lone surrogate can't be stored
                 raise ConfigError(f"{path}: entry {n} is not valid Unicode")
-        found = next((b for adapter in ADAPTERS.values()
-                      if (b := adapter.board(company if isinstance(company, str) else "",
-                                             url if isinstance(url, str) else "")) is not None), None)
+        found = board_for(company if isinstance(company, str) else "", url if isinstance(url, str) else "")
         if found is None:
             skipped += 1
             continue
         boards.setdefault(found.id, found)
     return list(boards.values()), skipped
+
+
+def board_for(company: str, url: str) -> Board | None:
+    """The board a URL names, or None. API URLs come first, on any host (tests point at fakes), so a path one ATS
+    uses for its API is never read as another ATS's board page."""
+    for adapter in ADAPTERS.values():
+        if (found := adapter.api_board(company, url)) is not None:
+            return found
+    for adapter in ADAPTERS.values():
+        if (found := adapter.page_board(company, url)) is not None:
+            return found
+    return None
 
 
 def _encodable(text: str) -> bool:

@@ -1,12 +1,24 @@
-"""Helpers for reading ATS payloads, shared by the adapters: string fields that fail the board when malformed, and
-job-description HTML → plain text."""
-import html
-import re
+"""Helpers for reading ATS data, shared by the adapters: board URLs, string fields that fail the board when
+malformed, and job-description HTML → plain text."""
+from html.parser import HTMLParser
+from urllib.parse import SplitResult, urlsplit
 
 from jobscan.records import BoardError
 
-BLOCK_TAG = re.compile(r"<\s*(?:br|/?p|/?li|/?div|/?h[1-6])\b[^>]*>", re.I)
-ANY_TAG = re.compile(r"<[^>]+>")
+BLOCK_TAGS = {"br", "p", "li", "div", "h1", "h2", "h3", "h4", "h5", "h6"}
+
+
+def http_url(url: str) -> SplitResult | None:
+    """An http(s) URL with a host, split; None for anything else. urlsplit, not urlparse, which would cut
+    `;params` off a path segment."""
+    try:
+        parsed = urlsplit(url)
+        parsed.port  # noqa: B018 -- raises on a malformed port
+    except ValueError:
+        return None
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return None
+    return parsed
 
 
 def text_field(record: dict, name: str, index: int, required: bool = False) -> str | None:
@@ -23,7 +35,27 @@ def text_field(record: dict, name: str, index: int, required: bool = False) -> s
 
 
 def html_to_text(markup: str) -> str:
-    """Block tags become line breaks, other tags vanish, entities decode; blank lines and runs of spaces go."""
-    text = html.unescape(ANY_TAG.sub("", BLOCK_TAG.sub("\n", markup)))
-    lines = (re.sub(r"[ \t\u00a0]+", " ", line).strip() for line in text.splitlines())
+    """Block tags become line breaks, other tags vanish, entities decode; blank lines and runs of spaces go. A real
+    HTML parser, so a `>` inside a quoted attribute doesn't end the tag."""
+    parser = _Text()
+    parser.feed(markup)
+    parser.close()
+    lines = (" ".join(line.split()) for line in "".join(parser.parts).splitlines())
     return "\n".join(line for line in lines if line)
+
+
+class _Text(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        self.parts.append(data)

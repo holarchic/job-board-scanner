@@ -83,10 +83,21 @@ class DiscoverTest(unittest.TestCase):
 
     def test_a_failing_greenhouse_host_keeps_the_whole_list(self):
         self.assertEqual(self.run_cli()[0], 0)
-        before = self.discovered()
+        conn = store.open_db(self.home)
+        with conn:
+            conn.execute("UPDATE boards SET not_found = 2 WHERE id = 'ashby:beta'")
+        conn.close()
+        before = self.rows()
         self.serve({c: captures("delta", greenhouse=("new",), greenhouse_eu=()) for c in CRAWLS})
         self.assertEqual(self.run_cli(), (1, ""))
-        self.assertEqual(self.discovered(), before)
+        self.assertEqual(self.rows(), before)  # ids, URLs, 404 counts and timestamps alike
+
+    def rows(self):
+        conn = store.open_db(self.home)
+        try:
+            return [tuple(r) for r in conn.execute("SELECT * FROM boards ORDER BY id")]
+        finally:
+            conn.close()
 
     def test_unreadable_crawl_keeps_the_previous_list(self):
         self.assertEqual(self.run_cli()[0], 0)

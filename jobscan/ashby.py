@@ -2,9 +2,7 @@
 
 Parsing is all-or-nothing per board: one malformed listed job fails the board, so a partial snapshot
 never closes postings that are still live."""
-from urllib.parse import urlparse
-
-from jobscan.payload import html_to_text, text_field
+from jobscan.payload import html_to_text, http_url, text_field
 from jobscan.records import Board, BoardError, Posting
 
 ATS = "ashby"
@@ -13,28 +11,30 @@ CRAWL_HOSTS = ("jobs.ashbyhq.com",)
 API = "https://api.ashbyhq.com/posting-api/job-board/"
 
 
-def board(company: str, board_url: str) -> Board | None:
-    """A Board for either URL form the map stores: the human board URL (jobs.ashbyhq.com/<slug>) or a posting-API
-    URL on any host (how tests point at a fake server), normalised to scheme://host/posting-api/job-board/<slug>.
-    Ashby slugs are case-insensitive, so the slug is case-folded: one board, one id and one set of posting keys,
-    however a source writes it. None when the URL isn't recognisably Ashby's."""
-    try:
-        parsed = urlparse(board_url)
-        parsed.port  # noqa: B018 -- raises on a malformed port
-    except ValueError:
+# Ashby slugs are case-insensitive, so slugs are case-folded: one board, one id and one set of posting keys, however
+# a source writes it. `fetch.board_for` tries every adapter's api_board before any page_board.
+
+
+def api_board(company: str, url: str) -> Board | None:
+    """A posting-API URL on any host (how tests point at a fake server), normalised to
+    scheme://host/posting-api/job-board/<slug>."""
+    parsed = http_url(url)
+    path = [p for p in parsed.path.split("/") if p] if parsed else []
+    if path[:2] != ["posting-api", "job-board"] or len(path) < 3:
         return None
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+    slug = path[2].lower()
+    return Board(ats=ATS, slug=slug, company=company or slug,
+                 api_url=f"{parsed.scheme}://{parsed.netloc}/posting-api/job-board/{slug}")
+
+
+def page_board(company: str, url: str) -> Board | None:
+    """A board page, jobs.ashbyhq.com/<slug>[/…]."""
+    parsed = http_url(url)
+    path = [p for p in parsed.path.split("/") if p] if parsed else []
+    if not path or parsed.hostname != CRAWL_HOSTS[0]:
         return None
-    path = [p for p in parsed.path.split("/") if p]
-    if path[:2] == ["posting-api", "job-board"] and len(path) > 2:
-        slug = path[2].lower()
-        api_url = f"{parsed.scheme}://{parsed.netloc}/posting-api/job-board/{slug}"
-    elif parsed.netloc == "jobs.ashbyhq.com" and path and path[:2] != ["v1", "boards"]:  # Greenhouse's API path
-        slug = path[0].lower()
-        api_url = API + slug
-    else:
-        return None
-    return Board(ats=ATS, slug=slug, company=company or slug, api_url=api_url)
+    slug = path[0].lower()
+    return Board(ats=ATS, slug=slug, company=company or slug, api_url=API + slug)
 
 
 def parse(board: Board, data) -> tuple[Posting, ...]:
