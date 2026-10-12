@@ -2,10 +2,9 @@
 
 Parsing is all-or-nothing per board: one malformed listed job fails the board, so a partial snapshot
 never closes postings that are still live."""
-import html
-import re
 from urllib.parse import urlparse
 
+from jobscan.payload import html_to_text, text_field
 from jobscan.records import Board, BoardError, Posting
 
 ATS = "ashby"
@@ -56,13 +55,13 @@ def _posting(board: Board, index: int, job) -> Posting | None:
         raise BoardError(f"job {index}: `isListed` is not a boolean")
     if not listed:
         return None
-    job_id = _field(job, "id", index, required=True)
-    title = _field(job, "title", index, required=True)
+    job_id = text_field(job, "id", index, required=True)
+    title = text_field(job, "title", index, required=True)
     secondary = job.get("secondaryLocations")
     secondary = [] if secondary is None else secondary
     if not isinstance(secondary, list) or not all(isinstance(s, dict) for s in secondary):
         raise BoardError(f"job {index}: `secondaryLocations` is not a list of objects")
-    locations = [_field(job, "location", index)] + [_field(s, "location", index) for s in secondary]
+    locations = [text_field(job, "location", index)] + [text_field(s, "location", index) for s in secondary]
     return Posting(
         key=f"{board.id}:{job_id}",
         ats=ATS,
@@ -70,31 +69,12 @@ def _posting(board: Board, index: int, job) -> Posting | None:
         company=board.company,
         title=title.strip(),
         location=" / ".join(loc for loc in locations if loc),
-        url=_field(job, "jobUrl", index) or "",
-        description=_description(_field(job, "descriptionPlain", index), _field(job, "descriptionHtml", index)),
+        url=text_field(job, "jobUrl", index) or "",
+        description=_description(text_field(job, "descriptionPlain", index), text_field(job, "descriptionHtml", index)),
     )
-
-
-def _field(record: dict, name: str, index: int, required: bool = False) -> str | None:
-    value = record.get(name)
-    if value is None and not required:
-        return None
-    if not isinstance(value, str) or (required and not value.strip()):
-        raise BoardError(f"job {index}: `{name}` is not {'a non-empty ' if required else 'a '}string")
-    try:
-        value.encode()  # a lone surrogate from a JSON escape can't be stored
-    except UnicodeEncodeError:
-        raise BoardError(f"job {index}: `{name}` is not valid Unicode") from None
-    return value
-
-
-BLOCK_TAG = re.compile(r"<\s*(?:br|/?p|/?li|/?div|/?h[1-6])\b[^>]*>", re.I)
-ANY_TAG = re.compile(r"<[^>]+>")
 
 
 def _description(plain: str | None, rich: str | None) -> str:
     if plain and plain.strip():
         return plain.strip()
-    text = html.unescape(ANY_TAG.sub("", BLOCK_TAG.sub("\n", rich or "")))
-    lines = (re.sub(r"[ \t\u00a0]+", " ", line).strip() for line in text.splitlines())
-    return "\n".join(line for line in lines if line)
+    return html_to_text(rich or "")
