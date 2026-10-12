@@ -94,7 +94,7 @@ class ParseTest(unittest.TestCase):
     def test_break_only_and_unclosed_paragraphs_unescape_alike(self):
         for markup, text in [("First sales hire<BR>Own EMEA", "First sales hire\nOwn EMEA"),
                              ("<p>First sales hire<p>Own EMEA", "First sales hire\nOwn EMEA"),
-                             ("First sales hire<wbr><br>Own EMEA", "First sales hire\nOwn EMEA")]:
+                             ("First sales hire Own EM<wbr>EA", "First sales hire Own EMEA")]:
             once = markup.replace("<", "&lt;").replace(">", "&gt;")
             for content in (markup, once, once.replace("&", "&amp;")):
                 (p,) = greenhouse.parse(self.board, {"jobs": [greenhouse_job(1, "AE", content=content)]})
