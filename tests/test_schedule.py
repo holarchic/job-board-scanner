@@ -32,6 +32,28 @@ class FakeLaunchctl:
         return subprocess.CompletedProcess(["launchctl", *args], code, stdout="", stderr=f"{args[0]} said {code}")
 
 
+class StatefulLaunchctl:
+    """A launchd that keeps what it has loaded. `interrupt` names the call, as (verb, nth), that takes effect and is
+    then interrupted, as Ctrl-C landing while launchctl returns."""
+
+    def __init__(self, interrupt=None):
+        self.loaded, self.calls, self.interrupt = {}, [], interrupt
+
+    def __call__(self, args):
+        self.calls.append(args[0])
+        label = args[1].rsplit("/", 1)[1] if args[0] == "bootout" else None
+        if args[0] == "bootout":
+            code = 0 if self.loaded.pop(label, None) is not None else 3
+        else:
+            spec = plistlib.loads(Path(args[2]).read_bytes())
+            code = 5 if spec["Label"] in self.loaded else 0  # launchd refuses a label already loaded
+            if not code:
+                self.loaded[spec["Label"]] = Path(args[2]).read_bytes()
+        if (args[0], self.calls.count(args[0])) == self.interrupt:
+            raise KeyboardInterrupt
+        return subprocess.CompletedProcess(args, code, "", f"{args[0]} said {code}")
+
+
 class ScheduleTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -93,7 +115,7 @@ class ScheduleTest(unittest.TestCase):
         with self.assertRaises(schedule.ScheduleError):
             schedule.install(self.home, time(9, 0), self.agents, launchctl)
         self.assertEqual(self.job.plist.read_bytes(), before)
-        self.assertEqual([c[0] for c in launchctl.calls], ["bootout", "bootstrap", "bootstrap"])
+        self.assertEqual([c[0] for c in launchctl.calls], ["bootout", "bootstrap", "bootout", "bootstrap"])
         self.assertEqual(self.leftovers(), [])
 
     def test_unwritable_plist_puts_the_untouched_previous_job_back(self):
@@ -104,7 +126,8 @@ class ScheduleTest(unittest.TestCase):
         launchctl = FakeLaunchctl()
         with self.assertRaises(schedule.ScheduleError) as caught:
             schedule.install(self.home, time(9, 0), self.agents, launchctl)
-        self.assertEqual(launchctl.calls, [["bootout", f"{self.domain}/{self.job.label}"],
+        target = f"{self.domain}/{self.job.label}"
+        self.assertEqual(launchctl.calls, [["bootout", target], ["bootout", target],
                                            ["bootstrap", self.domain, str(self.job.plist)]])
         self.assertEqual(self.job.plist.read_bytes(), before)
         self.assertIn("PermissionError", str(caught.exception))
@@ -122,7 +145,25 @@ class ScheduleTest(unittest.TestCase):
 
         with self.assertRaises(KeyboardInterrupt):
             schedule.install(self.home, time(9, 0), self.agents, interrupted)
-        self.assertEqual((calls, self.job.plist.read_bytes()), (["bootout", "bootstrap", "bootstrap"], before))
+        self.assertEqual((calls, self.job.plist.read_bytes()),
+                         (["bootout", "bootstrap", "bootout", "bootstrap"], before))
+
+    def test_ctrl_c_after_launchd_acted_leaves_the_previous_job_loaded(self):
+        for interrupt in [("bootout", 2), ("bootstrap", 2)]:
+            with self.subTest(interrupt=interrupt):
+                launchd = StatefulLaunchctl()
+                schedule.install(self.home, time(8, 0), self.agents, launchd)
+                before = self.job.plist.read_bytes()
+                launchd.interrupt = interrupt
+                with self.assertRaises(KeyboardInterrupt):
+                    schedule.install(self.home, time(9, 0), self.agents, launchd)
+                self.assertEqual((launchd.loaded, self.job.plist.read_bytes()), ({self.job.label: before}, before))
+
+    def test_ctrl_c_on_a_first_install_leaves_nothing_loaded(self):
+        launchd = StatefulLaunchctl(interrupt=("bootstrap", 1))
+        with self.assertRaises(KeyboardInterrupt):
+            schedule.install(self.home, time(9, 0), self.agents, launchd)
+        self.assertEqual((launchd.loaded, self.job.plist.exists(), self.leftovers()), ({}, False, []))
 
     def test_failed_restore_is_reported(self):
         schedule.install(self.home, time(8, 0), self.agents, FakeLaunchctl(bootout=[3]))

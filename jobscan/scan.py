@@ -26,10 +26,11 @@ class ScanOutcome:
 
 
 def scan(config: Config, profile: Profile, defs: list[tag.TagDef]) -> ScanOutcome:
-    started = _now()
+    started_at = datetime.now(UTC)
+    started = _stamp(started_at)
     conn = store.open_db(config.home)
     try:
-        discover.refresh_if_stale(conn, datetime.fromisoformat(started))
+        discover.refresh_if_stale(conn, started_at)
         fetched = _fetch(conn, config, started)
         matched = [p for p in store.pending(conn, profile.name, fetched.eligible)
                    if prefilter.matches(p.posting, profile)]
@@ -137,4 +138,9 @@ def _digest(conn: sqlite3.Connection, config: Config, profile: Profile, entries:
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat(timespec="microseconds")
+    return _stamp(datetime.now(UTC))
+
+
+def _stamp(at: datetime) -> str:
+    """The stored form of a time: fixed-width ISO, so stored times sort as text."""
+    return at.isoformat(timespec="microseconds")

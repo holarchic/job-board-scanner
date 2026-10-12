@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import time
 from pathlib import Path
+from typing import NoReturn
 
 LABEL_PREFIX = "io.github.holarchic.jobscan."
 NOT_LOADED = 3  # `launchctl bootout` of a label that isn't loaded: ESRCH, "No such process"
@@ -58,8 +59,8 @@ def plist(job: Job, home: Path, at: time) -> bytes:
 
 
 def install(home: Path, at: time, agents: Path, run: Launchctl | None = None) -> Job:
-    """Replaces this install's job with one daily at `at`. Any failure after the old job is unloaded puts the old
-    one back (or removes the new plist when there was none) and raises; if putting it back fails too, the
+    """Replaces this install's job with one daily at `at`. A refused bootout changes nothing. Any later failure,
+    Ctrl-C included, puts the old job back (or leaves none when there was none) and raises; if that fails too, the
     ScheduleError says so."""
     run = run or launchctl
     j = job(home, agents)
@@ -67,25 +68,39 @@ def install(home: Path, at: time, agents: Path, run: Launchctl | None = None) ->
     try:
         agents.mkdir(parents=True, exist_ok=True)
         previous = j.plist.read_bytes() if j.plist.exists() else None
-        _bootout(run, domain, j)
-    except (OSError, subprocess.SubprocessError) as e:
+    except OSError as e:
         raise ScheduleError(f"{type(e).__name__}: {e}") from None
+    try:
+        _bootout(run, domain, j)
+    except ScheduleError:
+        raise  # launchctl answered and refused: the old job is as it was
+    except OSError as e:
+        raise ScheduleError(f"{type(e).__name__}: {e}") from None  # launchctl never ran
+    except BaseException as failure:  # interrupted or timed out: the old job may or may not be loaded
+        _roll_back(run, domain, j, previous, failure)
     try:
         _write(j.plist, plist(j, home, at))
         _check(run(["bootstrap", domain, str(j.plist)]), "bootstrap")
-    except BaseException as failure:  # Ctrl-C too: the old job is unloaded at this point
-        cause = str(failure) if isinstance(failure, ScheduleError) else f"{type(failure).__name__}: {failure}"
-        try:
-            _restore(run, domain, j, previous)
-        except (OSError, subprocess.SubprocessError, ScheduleError) as e:
-            raise ScheduleError(f"{cause}; putting the previous schedule back also failed: {e}") from None
-        if isinstance(failure, (OSError, subprocess.SubprocessError, ScheduleError)):
-            raise ScheduleError(cause) from None
-        raise
+    except BaseException as failure:
+        _roll_back(run, domain, j, previous, failure)
     return j
 
 
+def _roll_back(run: Launchctl, domain: str, j: Job, previous: bytes | None, failure: BaseException) -> NoReturn:
+    """Puts the previous job back, then re-raises: operational failures as ScheduleError, Ctrl-C as itself."""
+    cause = str(failure) if isinstance(failure, ScheduleError) else f"{type(failure).__name__}: {failure}"
+    try:
+        _restore(run, domain, j, previous)
+    except (OSError, subprocess.SubprocessError, ScheduleError) as e:
+        raise ScheduleError(f"{cause}; putting the previous schedule back also failed: {e}") from None
+    if isinstance(failure, (OSError, subprocess.SubprocessError, ScheduleError)):
+        raise ScheduleError(cause) from None
+    raise failure
+
+
 def _restore(run: Launchctl, domain: str, j: Job, previous: bytes | None) -> None:
+    """Whatever launchd has loaded under the label goes first: an interrupted bootstrap may have loaded the new job."""
+    _bootout(run, domain, j)
     if previous is None:
         j.plist.unlink(missing_ok=True)
         return

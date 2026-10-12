@@ -1,7 +1,7 @@
 """`jobscan init`: asks for the search in the terminal, then writes config.toml, the profile and the key file.
 
-Nothing is written until every answer is in and the profile it makes loads; a failure part-way through removes
-whatever this invocation created."""
+Nothing is written until every answer is in and the install it makes loads; a failure part-way through tries to
+remove whatever this invocation created and names anything it couldn't."""
 import getpass
 import json
 import os
@@ -214,9 +214,11 @@ def _write(home: Path, files: dict[Path, File]) -> None:
                 f.write(file.text)
     except BaseException as e:
         left = _remove(created)
+        kept = f"delete {', '.join(map(str, left))} before trying again" if left else "nothing was kept"
         if isinstance(e, OSError):
-            kept = f"; delete {', '.join(map(str, left))} before trying again" if left else "; nothing was kept"
-            raise ConfigError(f"could not write {home} ({type(e).__name__}){kept}") from None
+            raise ConfigError(f"could not write {home} ({type(e).__name__}); {kept}") from None
+        if left:
+            e.add_note(f"jobscan init: {kept}")
         raise
 
 
