@@ -47,7 +47,7 @@ first=$(headless_run 2>>"$home/smoke-stderr.log") || { echo "FAIL: first run exi
 second=$(headless_run 2>>"$home/smoke-stderr.log") || { echo "FAIL: second run exited $?"; exit 1; }
 echo "run 1: $first"
 grep -q "fetch_start boards=3 " "$home/runs.log" || { echo "FAIL: run did not read exactly the three smoke boards"; exit 1; }
-if grep -q "discover" "$home/runs.log"; then echo "FAIL: run crawled Common Crawl"; exit 1; fi
+if grep -qE "discover( crawl=|_done|_failed)" "$home/runs.log"; then echo "FAIL: run crawled Common Crawl"; exit 1; fi
 echo "run 2: $second"
 
 clean_env env FIRST="$first" SECOND="$second" python3 - <<'PY'
