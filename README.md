@@ -35,7 +35,7 @@ jobscan schedule --at 08:00                            # then every day
 **Good at**
 - Roles at tech companies, especially startups and scale-ups, where the title gets you most of the way and the posting tells you the rest. I built it for my London Account Executive search; it works the same for any role you can name in a few titles.
 - Finding boards you didn't know about: about 4,000 on Ashby and 4,800 on Greenhouse. Of my hand-built list it finds 111 of 114 Ashby boards and 33 of 37 Greenhouse ones.
-- Cheap: about $0.0005 a posting. The first run tags a backlog (my AE search: 233 postings, 47 minutes, $0.11; a PM search: 169, 7 minutes, $0.08); later runs take a minute or two.
+- Cheap: about $0.0005 a posting. The first run tags a backlog (my AE search: 233 postings, 47 minutes, $0.11; a PM search: 169, 7 minutes, $0.08); later runs still fetch every board (about eight minutes) and tag only what's new.
 - Evidence: every tag quotes the ad; unchecked tags are marked ⓘ.
 - No dependencies: standard-library Python and one SQLite file.
 

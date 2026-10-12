@@ -55,6 +55,15 @@ class AshbyBoardTest(unittest.TestCase):
         self.assertEqual([(b.company, b.id) for b in boards], [("Acme", "ashby:acme")])
         self.assertEqual(skipped, 2)
 
+    def test_every_board_url_has_exactly_one_adapter(self):
+        for url in ["https://jobs.ashbyhq.com/acme", "https://api.ashbyhq.com/posting-api/job-board/acme",
+                    "https://job-boards.greenhouse.io/acme", "https://boards-api.greenhouse.io/v1/boards/acme/jobs",
+                    "https://jobs.ashbyhq.com/v1/boards/acme/jobs",
+                    "https://job-boards.greenhouse.io/posting-api/job-board/acme",
+                    "http://127.0.0.1:8000/v1/boards/acme/jobs", "http://127.0.0.1:8000/posting-api/job-board/acme"]:
+            claimants = [ats for ats, adapter in fetch.ADAPTERS.items() if adapter.board("", url) is not None]
+            self.assertEqual(len(claimants), 1, (url, claimants))
+
     def test_load_boards_rejects_lone_surrogates(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "boards.json"

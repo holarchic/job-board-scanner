@@ -27,6 +27,11 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(greenhouse.board("", "https://job-boards.greenhouse.io/harrison%26star").api_url,
                          API + "harrison%26star/jobs?content=true")
 
+    def test_semicolons_stay_in_the_token(self):
+        for url in ["https://job-boards.greenhouse.io/x;y", "https://job-boards.greenhouse.io/x%3By",
+                    "https://job-boards.greenhouse.io/x;y/jobs/1"]:
+            self.assertEqual(greenhouse.board("", url).id, "greenhouse:x;y", url)
+
     def test_api_url_on_another_host_is_kept(self):
         b = greenhouse.board("Acme", "http://127.0.0.1:8000/v1/boards/acme/jobs")
         self.assertEqual(b.api_url, "http://127.0.0.1:8000/v1/boards/acme/jobs?content=true")
@@ -59,6 +64,13 @@ class ParseTest(unittest.TestCase):
             self.assertEqual(p.description, "You'll be our first sales hire & more.\nOwn EMEA", content[:20])
             self.assertTrue(tag.verify_quote("our first sales hire & more", p))
 
+    def test_literal_escaped_text_survives_any_number_of_escapings(self):
+        markup = "<p>Use &lt;customer&gt; APIs.</p>"
+        once = markup.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        for content in (markup, once, once.replace("&", "&amp;")):
+            (p,) = greenhouse.parse(self.board, {"jobs": [greenhouse_job(1, "AE", content=content)]})
+            self.assertEqual(p.description, "Use <customer> APIs.", content)
+
     def test_ids_may_be_numbers_or_strings(self):
         postings = greenhouse.parse(self.board, {"jobs": [greenhouse_job(1, "A"), greenhouse_job("x2", "B")]})
         self.assertEqual([p.key for p in postings], ["greenhouse:acme:1", "greenhouse:acme:x2"])
@@ -71,8 +83,8 @@ class ParseTest(unittest.TestCase):
     def test_a_malformed_job_fails_the_board(self):
         bad = []
         for change in [{"id": True}, {"id": None}, {"id": " "}, {"title": None}, {"title": 3}, {"location": "London"},
-                       {"offices": "London"}, {"offices": [3]}, {"content": 5}, {"absolute_url": 1},
-                       {"title": "\ud800"}]:
+                       {"offices": "London"}, {"offices": [3]}, {"offices": [None]}, {"content": 5},
+                       {"absolute_url": 1}, {"title": "\ud800"}, {"id": "a\ud800"}]:
             bad.append({**greenhouse_job(1, "AE"), **change})
         for job in [*bad, "not a job"]:
             with self.assertRaises(BoardError, msg=job):

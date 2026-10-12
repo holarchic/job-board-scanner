@@ -29,7 +29,7 @@ def board(company: str, board_url: str) -> Board | None:
     if path[:2] == ["posting-api", "job-board"] and len(path) > 2:
         slug = path[2].lower()
         api_url = f"{parsed.scheme}://{parsed.netloc}/posting-api/job-board/{slug}"
-    elif parsed.netloc == "jobs.ashbyhq.com" and path:
+    elif parsed.netloc == "jobs.ashbyhq.com" and path and path[:2] != ["v1", "boards"]:  # Greenhouse's API path
         slug = path[0].lower()
         api_url = API + slug
     else:

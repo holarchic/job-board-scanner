@@ -3,7 +3,7 @@
 One API host serves US and EU boards. Parsing is all-or-nothing per board, as for Ashby."""
 import html
 import re
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from jobscan.payload import html_to_text, text_field
 from jobscan.records import Board, BoardError, Posting
@@ -18,7 +18,8 @@ LIST = "/jobs?content=true"
 # Board tokens include `ep+co` and `harrison&star`; ':' is the posting-key separator.
 SLUG = re.compile(r"[!-~]+")
 NOT_IN_SLUG = set("/:?#")
-ESCAPED_TAG = re.compile(r"&lt;/?[a-zA-Z]")
+REAL_TAG = re.compile(r"</?[a-zA-Z]")
+ESCAPED_TAG = re.compile(r"&(?:amp;)?lt;/?[a-zA-Z]")
 
 
 def board(company: str, board_url: str) -> Board | None:
@@ -27,7 +28,7 @@ def board(company: str, board_url: str) -> Board | None:
     and case-folded (Greenhouse tokens are case-insensitive), so every spelling of a board is one board. None when
     the URL isn't recognisably Greenhouse's."""
     try:
-        parsed = urlparse(board_url)
+        parsed = urlsplit(board_url)  # not urlparse: it would split `;params` off a token like `x;y`
         parsed.port  # noqa: B018 -- raises on a malformed port
     except ValueError:
         return None
@@ -40,7 +41,7 @@ def board(company: str, board_url: str) -> Board | None:
     elif parsed.netloc in BOARD_HOSTS and path[:2] == ["embed", "job_board"]:
         slug = _slug(parse_qs(parsed.query).get("for", [""])[0], decoded=True)
         base = API
-    elif parsed.netloc in BOARD_HOSTS and path and path[0] != "embed":
+    elif parsed.netloc in BOARD_HOSTS and path and path[0] != "embed" and path[:2] != ["posting-api", "job-board"]:
         slug = _slug(path[0])
         base = API
     else:
@@ -71,8 +72,12 @@ def _posting(board: Board, index: int, job) -> Posting:
     if not isinstance(job, dict):
         raise BoardError(f"job {index} is not an object")
     job_id = job.get("id")
-    if isinstance(job_id, bool) or not isinstance(job_id, int | str) or not str(job_id).strip():
+    if isinstance(job_id, int) and not isinstance(job_id, bool):
+        job_id = str(job_id)
+    elif not isinstance(job_id, str):
         raise BoardError(f"job {index}: `id` is not a number or a non-empty string")
+    else:
+        job_id = text_field(job, "id", index, required=True)
     return Posting(
         key=f"{board.id}:{job_id}",
         ats=ATS,
@@ -86,11 +91,10 @@ def _posting(board: Board, index: int, job) -> Posting:
 
 
 def _locations(job: dict, index: int) -> list[str]:
-    """The job's location, then its offices', each once."""
+    """The job's location (optional), then its offices', each once."""
     places = []
-    for record in [job.get("location"), *_list(job, "offices", index)]:
-        if record is None:
-            continue
+    location = job.get("location")
+    for record in ([] if location is None else [location]) + _list(job, "offices", index):
         if not isinstance(record, dict):
             raise BoardError(f"job {index}: a location or office is not an object")
         name = (text_field(record, "name", index) or "").strip()
@@ -112,7 +116,7 @@ def _description(content: str) -> str:
     """`content` is HTML with its markup entity-escaped, once in live payloads (`&lt;p&gt;`) and twice in
     Greenhouse's documentation (`&amp;lt;p&amp;gt;`): unescape until the tags are real, then strip them."""
     for _ in range(2):
-        if not ESCAPED_TAG.search(content) and "&amp;lt;" not in content:
-            break
+        if REAL_TAG.search(content) or not ESCAPED_TAG.search(content):
+            break  # real markup: what's still escaped is text, such as a literal "<customer>"
         content = html.unescape(content)
     return html_to_text(content)

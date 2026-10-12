@@ -200,6 +200,18 @@ class GreenhouseRunTest(RunFixture):
         self.assertIn("· 2 open roles", text)
 
 
+    def test_a_malformed_greenhouse_board_fails_alone(self):
+        (self.home / "boards.json").write_text(json.dumps({"companies": [
+            {"company": "Acme", "board_url": f"{self.ats.url}/posting-api/job-board/acme"},
+            {"company": "Globex", "board_url": f"{self.ats.url}/v1/boards/globex/jobs"},
+        ]}))
+        self.ats.routes["/v1/boards/globex/jobs?content=true"] = (200, {"jobs": [
+            greenhouse_job("a\ud800", "Account Executive")]})
+        code, (_, new, _) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        self.assertIn("board_failed company='Globex' board=greenhouse:globex", (self.home / "runs.log").read_text())
+
+
 class NotifyTest(RunFixture):
     """`run --notify` tells the desktop about news and problems, never about a quiet run, and never changes the
     outcome."""
