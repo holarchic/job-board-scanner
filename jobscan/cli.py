@@ -5,6 +5,7 @@ import logging
 import sys
 from datetime import time
 from pathlib import Path
+from time import monotonic
 
 from jobscan import discover, evaluate, init, notify, scan, schedule, store, tag
 from jobscan.config import ConfigError, jobscan_home, load_config, load_profile
@@ -51,12 +52,14 @@ def main(argv: list[str] | None = None) -> int:
 
 def _run(home: Path, notifying: bool) -> int:
     """With `notifying`, a scheduled run reports news and problems on the desktop; nothing on a quiet run."""
+    entered = monotonic()
     try:
         config = load_config(home)
         profile = load_profile(home)
         defs = tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
         _setup_logging(home)
         with _run_lock(home):
+            log.info("run_start profile=%s setup_seconds=%.1f", profile.name, monotonic() - entered)
             outcome = scan.scan(config, profile, defs)
     except ConfigError as e:
         return _refused(str(e), notifying)

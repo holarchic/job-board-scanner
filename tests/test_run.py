@@ -4,6 +4,7 @@ import fcntl
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -97,6 +98,13 @@ class RunFixture(unittest.TestCase):
     def digests(self):
         return sorted((self.home / "digests" / "ae").glob("*.md"))
 
+    def assert_logged_in_order(self, *patterns):
+        """Each regex matches a runs.log line, in this order."""
+        lines = (self.home / "runs.log").read_text().splitlines()
+        at = [next((i for i, line in enumerate(lines) if re.search(pattern, line)), None) for pattern in patterns]
+        self.assertNotIn(None, at, dict(zip(patterns, at, strict=True)))
+        self.assertEqual(at, sorted(at), dict(zip(patterns, at, strict=True)))
+
 
 class RunTest(RunFixture):
     def test_new_then_nothing_then_one_added(self):
@@ -114,6 +122,12 @@ class RunTest(RunFixture):
         self.assertEqual((code, new), (0, "1"))
         self.assertIn("Founding Account Executive", Path(path).read_text())
         self.assertEqual(len(self.digests()), 2)
+
+    def test_the_run_times_its_steps_before_fetching(self):
+        self.run_cli()
+        self.assert_logged_in_order(r"run_start profile=ae setup_seconds=\d+\.\d$",
+                                    r"prefetch db_open_seconds=\d+\.\d discovery_check_seconds=\d+\.\d$",
+                                    r"fetch_start boards=")
 
     def test_board_failure_is_logged_and_run_completes(self):
         code, (_, new, _) = self.run_cli()
@@ -433,6 +447,7 @@ class DiscoveryRefreshTest(RunFixture):
         boards, at = self.discovered()
         self.assertEqual(boards, DISCOVERED)
         self.assertGreater(at, datetime.fromisoformat(self.days_ago(1)))
+        self.assert_logged_in_order("run_start", "discover_done", "prefetch db_open_seconds=", "fetch_start")
 
     def test_fresh_list_is_not_rediscovered(self):
         self.seed_discovery("acme", at=self.days_ago(29))

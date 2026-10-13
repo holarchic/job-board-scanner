@@ -1,6 +1,7 @@
 """One scan for the install's profile: fetch → store → prefilter → tag → digest."""
 import logging
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -28,9 +29,13 @@ class ScanOutcome:
 def scan(config: Config, profile: Profile, defs: list[tag.TagDef]) -> ScanOutcome:
     started_at = datetime.now(UTC)
     started = _stamp(started_at)
+    opening = time.monotonic()
     conn = store.open_db(config.home)
     try:
+        checking = time.monotonic()
         discover.refresh_if_stale(conn, started_at)
+        log.info("prefetch db_open_seconds=%.1f discovery_check_seconds=%.1f", checking - opening,
+                 time.monotonic() - checking)
         fetched = _fetch(conn, config, started)
         matched = [p for p in store.pending(conn, profile.name, fetched.eligible)
                    if prefilter.matches(p.posting, profile)]
