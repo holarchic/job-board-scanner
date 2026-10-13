@@ -1,0 +1,98 @@
+"""Gem adapter: board URLs → API URL, and the public job board API payload → postings.
+
+The payload is a bare list of jobs, shaped like Greenhouse's. Parsing is all-or-nothing per board, as for the
+others."""
+from urllib.parse import quote
+
+from jobscan.payload import board_slug, html_to_text, http_url, text_field
+from jobscan.records import Board, BoardError, Posting
+
+ATS = "gem"
+DISPLAY_NAME = "Gem"
+CRAWL_HOSTS = ("jobs.gem.com",)
+API_PATH = ["job_board", "v0"]
+API = "https://api.gem.com/job_board/v0/"
+LIST = "/job_posts/"
+
+
+# Gem board paths are case-sensitive (`BigPanda` is a 404 where `bigpanda` reads), so a slug keeps its case.
+# `fetch.board_for` tries every adapter's api_board before any page_board.
+
+
+def api_board(company: str, url: str) -> Board | None:
+    """A job board API URL on any host (how tests point at a fake server); the host is kept."""
+    parsed = http_url(url)
+    path = [p for p in parsed.path.split("/") if p] if parsed else []
+    if path[:2] != API_PATH or len(path) < 3:
+        return None
+    return _board(company, board_slug(path[2]), f"{parsed.scheme}://{parsed.netloc}/{'/'.join(API_PATH)}/")
+
+
+def page_board(company: str, url: str) -> Board | None:
+    """A board page, jobs.gem.com/<slug>[/…]."""
+    parsed = http_url(url)
+    path = [p for p in parsed.path.split("/") if p] if parsed else []
+    if not path or parsed.hostname != CRAWL_HOSTS[0]:
+        return None
+    return _board(company, board_slug(path[0]), API)
+
+
+def _board(company: str, slug: str | None, base: str) -> Board | None:
+    if slug is None:
+        return None
+    return Board(ats=ATS, slug=slug, company=company or slug, api_url=base + quote(slug, safe="") + LIST)
+
+
+def parse(board: Board, data) -> tuple[Posting, ...]:
+    if not isinstance(data, list):
+        raise BoardError("response is not a list of jobs")
+    postings = tuple(_posting(board, i, job) for i, job in enumerate(data))
+    if len({p.key for p in postings}) != len(postings):
+        raise BoardError("duplicate job ids")
+    return postings
+
+
+def _posting(board: Board, index: int, job) -> Posting:
+    if not isinstance(job, dict):
+        raise BoardError(f"job {index} is not an object")
+    plain = text_field(job, "content_plain", index)
+    rich = text_field(job, "content", index)
+    return Posting(
+        key=f"{board.id}:{text_field(job, 'id', index, required=True)}",
+        ats=ATS,
+        board=board.id,
+        company=board.company,
+        title=text_field(job, "title", index, required=True).strip(),
+        location=" / ".join(_locations(job, index)),
+        url=text_field(job, "absolute_url", index) or "",
+        description=plain.strip() if plain and plain.strip() else html_to_text(rich or ""),
+    )
+
+
+def _locations(job: dict, index: int) -> list[str]:
+    """The job's location, then each office's name and location, each once; `Remote` when the job is remote and
+    no name says so."""
+    offices = job.get("offices")
+    offices = [] if offices is None else offices
+    if not isinstance(offices, list) or not all(isinstance(o, dict) for o in offices):
+        raise BoardError(f"job {index}: `offices` is not a list of objects")
+    names = [_place_name(job, index)]
+    for office in offices:
+        names += [(text_field(office, "name", index) or "").strip(), _place_name(office, index)]
+    places = []
+    for name in names:
+        if name and name not in places:
+            places.append(name)
+    kind = text_field(job, "location_type", index)
+    if kind == "remote" and not any("remote" in p.casefold() for p in places):
+        places.append("Remote")
+    return places
+
+
+def _place_name(record: dict, index: int) -> str:
+    place = record.get("location")
+    if place is None:
+        return ""
+    if not isinstance(place, dict):
+        raise BoardError(f"job {index}: a `location` is not an object")
+    return (text_field(place, "name", index) or "").strip()
