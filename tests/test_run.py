@@ -16,7 +16,7 @@ from email.parser import BytesParser
 from pathlib import Path
 from unittest import mock
 
-from jobscan import ashby, cli, crawl, digest, fetch, greenhouse, notify, scan, store, tag
+from jobscan import ashby, cli, crawl, digest, fetch, gem, greenhouse, notify, scan, store, tag, workable
 from jobscan.records import Board
 from tests.fakes import (
     FakeFiles,
@@ -25,10 +25,12 @@ from tests.fakes import (
     cdx_line,
     crawl_files,
     crawl_list,
+    gem_job,
     greenhouse_job,
     model_reply,
     patch_smtp,
     tags_quoting_the_posting,
+    workable_job,
 )
 
 PROFILE = """titles = ["Account Executive"]
@@ -229,6 +231,29 @@ class GreenhouseRunTest(RunFixture):
         code, (_, new, _) = self.run_cli()
         self.assertEqual((code, new), (0, "2"))
         self.assertIn("board_failed company='Globex' board=greenhouse:globex", (self.home / "runs.log").read_text())
+
+
+class WorkableGemRunTest(RunFixture):
+    def test_workable_and_gem_boards_reach_the_digest(self):
+        (self.home / "boards.json").write_text(json.dumps({"companies": [
+            {"company": "Acme", "board_url": f"{self.ats.url}/posting-api/job-board/acme"},
+            {"company": "Initech", "board_url": f"{self.ats.url}/api/v1/widget/accounts/initech"},
+            {"company": "Hooli", "board_url": f"{self.ats.url}/job_board/v0/hooli/job_posts/"},
+        ]}))
+        self.ats.routes["/api/v1/widget/accounts/initech?details=true"] = (200, {"jobs": [
+            workable_job("AB12", "Account Executive", "London"), workable_job("CD34", "Engineer"),
+            workable_job("AB12", "Account Executive", "Manchester")]})
+        self.ats.routes["/job_board/v0/hooli/job_posts/"] = (200, [
+            gem_job("g1", "Account Executive", "London, UK"), gem_job("g2", "Engineer")])
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "4"))
+        text = Path(path).read_text()
+        self.assertIn("## Initech — Account Executive · London, United Kingdom / Manchester, United Kingdom\n"
+                      "https://apply.workable.com/j/AB12 · Workable · first seen", text)
+        self.assertIn("## Hooli — Account Executive · London, UK\nhttps://jobs.gem.com/acme/g1 · Gem · first seen",
+                      text)
+        self.assertEqual(text.count("· 2 open roles"), 2)  # one per new board: jobs, not Workable's entries
+        self.assertEqual(self.run_cli()[1][1:], ["0", "-"])
 
 
 class NotifyTest(RunFixture):
@@ -504,7 +529,7 @@ class BoardSourcesTest(RunFixture):
         self.assertEqual(self.run_cli()[1][1], "2")
 
 
-DISCOVERED = ["ashby:acme", "greenhouse:gh-acme", "greenhouse:gh-eu"]
+DISCOVERED = ["ashby:acme", "gem:gem-acme", "greenhouse:gh-acme", "greenhouse:gh-eu", "workable:wk-acme"]
 
 
 class DiscoveryRefreshTest(RunFixture):
@@ -517,7 +542,9 @@ class DiscoveryRefreshTest(RunFixture):
         self.addCleanup(self.cc.close)
         for target, name, value in [(crawl, "BASE", self.cc.url), (crawl, "RETRY_PAUSES", (0, 0, 0)),
                                     (ashby, "API", f"{self.ats.url}/posting-api/job-board/"),
-                                    (greenhouse, "API", f"{self.ats.url}/v1/boards/")]:
+                                    (greenhouse, "API", f"{self.ats.url}/v1/boards/"),
+                                    (workable, "API", f"{self.ats.url}/api/v1/widget/accounts/"),
+                                    (gem, "API", f"{self.ats.url}/job_board/v0/")]:
             mock.patch.object(target, name, value).start()
         crawls = ("CC-MAIN-2026-39", "CC-MAIN-2026-34", "CC-MAIN-2026-30")
         self.cc.files.update(crawl_list(*crawls))
@@ -525,6 +552,8 @@ class DiscoveryRefreshTest(RunFixture):
             self.cc.files.update(crawl_files(crawl_id, [cdx_line("https://jobs.ashbyhq.com/acme/job-1"),
                                                         cdx_line("https://job-boards.greenhouse.io/gh-acme"),
                                                         cdx_line("https://job-boards.eu.greenhouse.io/gh-eu"),
+                                                        cdx_line("https://apply.workable.com/wk-acme"),
+                                                        cdx_line("https://jobs.gem.com/gem-acme"),
                                                         cdx_line("https://www.example.com/")]))
         self.write_config(boards_file=False)
 
@@ -571,13 +600,14 @@ class DiscoveryRefreshTest(RunFixture):
         self.assertIn("discover_failed", (self.home / "runs.log").read_text())
 
     def test_a_newly_supported_ats_is_discovered_on_the_next_run(self):
-        self.seed_discovery("acme", at=self.days_ago(1))
-        conn = store.open_db(self.home)
-        with conn:
-            conn.execute("DELETE FROM boards WHERE ats = 'greenhouse'")  # as an install from before Greenhouse
-        conn.close()
-        self.assertEqual(self.run_cli()[0], 0)
-        self.assertEqual(self.discovered()[0], DISCOVERED)
+        for ats in ("greenhouse", "workable", "gem"):
+            self.seed_discovery("acme", at=self.days_ago(1))
+            conn = store.open_db(self.home)
+            with conn:
+                conn.execute("DELETE FROM boards WHERE ats = ?", (ats,))  # as an install from before the ATS
+            conn.close()
+            self.assertEqual(self.run_cli()[0], 0, ats)
+            self.assertEqual(self.discovered()[0], DISCOVERED, ats)
 
     def test_fresh_install_whose_crawl_fails_has_no_boards(self):
         conn = store.open_db(self.home)

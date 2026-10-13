@@ -79,7 +79,15 @@ class AshbyBoardTest(unittest.TestCase):
                          ("https://jobs.ashbyhq.com/v1/boards/acme/jobs", "greenhouse"),  # an API path wins
                          ("https://job-boards.greenhouse.io/posting-api/job-board/acme", "ashby"),
                          ("http://127.0.0.1:8000/v1/boards/acme/jobs", "greenhouse"),
-                         ("http://127.0.0.1:8000/posting-api/job-board/acme", "ashby")]:
+                         ("http://127.0.0.1:8000/posting-api/job-board/acme", "ashby"),
+                         ("https://apply.workable.com/acme", "workable"),
+                         ("https://apply.workable.com/api/v1/widget/accounts/acme", "workable"),
+                         ("https://jobs.ashbyhq.com/api/v1/widget/accounts/acme", "workable"),
+                         ("https://apply.workable.com/v1/boards/acme/jobs", "greenhouse"),
+                         ("https://jobs.gem.com/acme", "gem"),
+                         ("https://api.gem.com/job_board/v0/acme/job_posts/", "gem"),
+                         ("https://jobs.gem.com/posting-api/job-board/acme", "ashby"),
+                         ("https://job-boards.greenhouse.io/job_board/v0/acme", "gem")]:
             self.assertEqual(fetch.board_for("", url).ats, ats, url)
 
     def test_load_boards_rejects_lone_surrogates(self):
