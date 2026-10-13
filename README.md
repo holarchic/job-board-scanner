@@ -17,6 +17,10 @@ https://jobs.ashbyhq.com/acme/1 · Ashby · first seen 2026-10-12 · 14 open rol
 - language_required: no
 ```
 
+## Attribution
+
+For those who care about such things, the majority of the analysis and code in this repo was produced by Claude Opus 5.5 (Anthropic), with david guiding Claude, providing insights, direction and critical review throughout the process.
+
 ## Quick start
 
 macOS or Linux, and an [OpenRouter](https://openrouter.ai) API key with credit.
