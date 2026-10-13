@@ -15,8 +15,8 @@ TLS_PORT = 465
 
 
 class MailError(Exception):
-    """The message wasn't accepted for delivery. The text says why, with the password and the addresses masked:
-    a server's reply can quote what it was sent."""
+    """Sending failed before the server accepted the message. The text says why, with the password and the
+    addresses masked: a server's reply can quote what it was sent."""
 
 
 def send_digest(email: EmailConfig, digest: Path, profile: str, new: int, carried_over: int) -> None:
@@ -36,35 +36,52 @@ def send_test(email: EmailConfig, profile: str) -> None:
 
 def send(email: EmailConfig, subject: str, body: str) -> None:
     try:
-        message = _message(email, subject, body)
+        message = _message(email, subject, body, formatdate(localtime=True),
+                           make_msgid(domain=email.sender.partition("@")[2]))
         context = ssl.create_default_context()
         if email.port == TLS_PORT:
             server = smtplib.SMTP_SSL(email.host, email.port, timeout=TIMEOUT, context=context)
         else:
             server = smtplib.SMTP(email.host, email.port, timeout=TIMEOUT)
-        with server:
+        try:
             if email.port != TLS_PORT:
                 server.starttls(context=context)  # SMTPNotSupportedError when not offered: no login follows
             server.login(email.sender, email.password)
             server.send_message(message)
+        except BaseException:
+            server.close()
+            raise
     except UnicodeError as e:  # its text quotes the offending characters
         raise MailError(type(e).__name__) from None
     except (smtplib.SMTPException, OSError, ValueError) as e:  # ValueError: a header the library won't write
-        raise MailError(_masked(f"{type(e).__name__}: {e}", email)) from None
+        raise MailError(_reason(e, email)) from None
+    try:
+        server.quit()
+    except (smtplib.SMTPException, OSError):  # the message is accepted: a refused goodbye changes nothing
+        server.close()
 
 
-def _message(email: EmailConfig, subject: str, body: str) -> EmailMessage:
+def _message(email: EmailConfig, subject: str, body: str, date: str, message_id: str) -> EmailMessage:
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = email.sender
     message["To"] = email.to
-    message["Date"] = formatdate(localtime=True)
-    message["Message-ID"] = make_msgid(domain=email.sender.partition("@")[2])
+    message["Date"] = date
+    message["Message-ID"] = message_id
     message.set_content(body)
     return message
 
 
-def _masked(reason: str, email: EmailConfig) -> str:
+def _reason(error: Exception, email: EmailConfig) -> str:
+    """The server's reply as text, never a repr: an escaped password (`\\`, quotes) would slip past the mask."""
+    if isinstance(error, smtplib.SMTPResponseException):
+        reply = error.smtp_error
+        reply = reply.decode("utf-8", "replace") if isinstance(reply, bytes) else str(reply)
+        detail = f"{error.smtp_code} {reply}"
+    elif isinstance(error, smtplib.SMTPRecipientsRefused):
+        detail = "refused, " + ", ".join(str(code) for code, _ in error.recipients.values())
+    else:
+        detail = str(error)
     for secret, mask in [(email.password, "<password>"), (email.to, "<to>"), (email.sender, "<from>")]:
-        reason = reason.replace(secret, mask)
-    return reason
+        detail = detail.replace(secret, mask)
+    return f"{type(error).__name__}: " + "".join(c if c.isprintable() else " " for c in detail)

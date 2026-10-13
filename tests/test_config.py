@@ -169,13 +169,14 @@ class EmailConfigTest(unittest.TestCase):
             self.assertNotIn("abcd", str(caught.exception))
             self.assertIn("email.toml", str(caught.exception))
 
-    def test_unparseable_file_is_refused(self):
+    def test_unparseable_file_is_refused_without_quoting_it(self):
         path = self.home / "email.toml"
-        path.write_text('password = "abcd efgh\n')
-        path.chmod(0o600)
-        with self.assertRaises(ConfigError) as caught:
-            load_email(self.home)
-        self.assertNotIn("abcd", str(caught.exception))
+        for text in ['password = "abcd efgh\n', '[abcd-secret]\n[abcd-secret]\n']:
+            path.write_text(text)
+            path.chmod(0o600)
+            with self.assertRaises(ConfigError, msg=text) as caught:
+                load_email(self.home)
+            self.assertNotIn("abcd", str(caught.exception))
 
 
 if __name__ == "__main__":

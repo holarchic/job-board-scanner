@@ -171,7 +171,7 @@ def tags_quoting_the_posting(payload):
 def fake_smtp(calls: list, fail: dict | None = None, *, tls: bool):
     """A stand-in for smtplib.SMTP_SSL (`tls`) or smtplib.SMTP, with the real constructor's signature, recording each
     call as (name, args) in `calls`; the constructor records as "SMTP_SSL" or "SMTP". `fail[name]` is raised by that
-    call, read when the call happens; "quit" fails on leaving the `with` block, as a refused QUIT does."""
+    call, read when the call happens."""
     fail = {} if fail is None else fail
 
     class FakeSMTP:
@@ -180,13 +180,13 @@ def fake_smtp(calls: list, fail: dict | None = None, *, tls: bool):
             if name in fail:
                 raise fail[name]
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
+        def quit(self):
             self._call("quit")
 
-        def starttls(self, context=None):
+        def close(self):
+            calls.append(("close", {}))
+
+        def starttls(self, *, context=None):
             self._call("starttls", context=context)
 
         def login(self, user, password):

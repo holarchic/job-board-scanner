@@ -132,8 +132,8 @@ def load_email(home: Path) -> EmailConfig | None:
         raise ConfigError(f"{path}: not readable ({type(e).__name__})") from None
     try:
         data = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as e:
-        raise ConfigError(f"{path}: {e}") from None
+    except tomllib.TOMLDecodeError:  # the parser's message can quote the file, and the file holds the password
+        raise ConfigError(f"{path}: not valid TOML; fix it, or run `jobscan email` again") from None
     if set(data) != EMAIL_KEYS:
         raise ConfigError(f"{path}: needs exactly {', '.join(sorted(EMAIL_KEYS))}")
     for key in ("to", "from"):

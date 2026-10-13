@@ -213,7 +213,7 @@ class EmailSetupTest(unittest.TestCase):
 
     def test_another_provider_is_asked_for_its_server(self):
         self.installed()
-        code, _, _ = self.email_cli(["you@fastmail.com", "", "", "465"], ("pass word",))
+        code, _, _ = self.email_cli(["you@fastmail.com", "", "", "²", "9" * 5000, "465"], ("pass word",))
         self.assertEqual(code, 0)
         email = load_email(self.home)
         self.assertEqual((email.host, email.port, email.password), ("smtp.fastmail.com", 465, "pass word"))

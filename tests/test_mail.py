@@ -61,7 +61,6 @@ class SendTest(SmtpTestCase):
             (GMAIL, {"SMTP_SSL": ssl.SSLCertVerificationError("certificate verify failed")}),
             (GMAIL, {"login": smtplib.SMTPAuthenticationError(535, f"5.7.8 {PASSWORD} not accepted".encode())}),
             (GMAIL, {"send": smtplib.SMTPRecipientsRefused({"you@example.com": (550, b"no such user")})}),
-            (GMAIL, {"quit": smtplib.SMTPResponseException(421, b"closing")}),
             (ICLOUD, {"starttls": smtplib.SMTPNotSupportedError("STARTTLS extension not supported by server.")}),
             (GMAIL, {"login": UnicodeEncodeError("ascii", PASSWORD, 0, 1, "ordinal not in range(128)")}),
         ]:
@@ -74,11 +73,26 @@ class SendTest(SmtpTestCase):
             for secret in (PASSWORD, "you@example.com", "me@gmail.com"):
                 self.assertNotIn(secret, text)
 
-    def test_a_reply_quoting_the_password_is_masked(self):
-        self.refuse["login"] = smtplib.SMTPAuthenticationError(535, f"5.7.8 {PASSWORD} not accepted".encode())
-        with self.assertRaises(mail.MailError) as caught:
+    def test_a_reply_quoting_the_password_is_masked_however_it_is_written(self):
+        for password in [PASSWORD, "app\\secret", "it's \"quoted\"", "tab\\tlike"]:
+            email = EmailConfig(to="you@example.com", sender="me@gmail.com", host="smtp.gmail.com", port=465,
+                                password=password)
+            self.refuse["login"] = smtplib.SMTPAuthenticationError(535, f"5.7.8 {password} not accepted".encode())
+            with self.assertRaises(mail.MailError) as caught:
+                mail.send_test(email, "pm")
+            self.assertEqual(str(caught.exception), "SMTPAuthenticationError: 535 5.7.8 <password> not accepted")
+            self.assertNotIn(password, repr(str(caught.exception)))
+
+    def test_a_refused_goodbye_after_the_message_is_accepted_is_not_a_failure(self):
+        self.refuse["quit"] = smtplib.SMTPResponseException(421, b"closing")
+        mail.send_test(GMAIL, "pm")
+        self.assertEqual(self.names(), ["SMTP_SSL", "login", "send", "quit", "close"])
+
+    def test_a_failure_closes_the_connection(self):
+        self.refuse["login"] = smtplib.SMTPAuthenticationError(535, b"no")
+        with self.assertRaises(mail.MailError):
             mail.send_test(GMAIL, "pm")
-        self.assertIn("<password> not accepted", str(caught.exception))
+        self.assertEqual(self.names(), ["SMTP_SSL", "login", "close"])
 
     def test_tls_set_up_failing_is_a_mail_error(self):
         with mock.patch.object(mail.ssl, "create_default_context", side_effect=ssl.SSLError("no CA store")), \

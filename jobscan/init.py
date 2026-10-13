@@ -66,7 +66,6 @@ class MailServer:
 
 
 GMAIL, ICLOUD = MailServer("smtp.gmail.com", 465), MailServer("smtp.mail.me.com", 587)
-# Known providers by the sending address's domain; any other is asked for its server.
 MAIL_SERVERS = MappingProxyType({"gmail.com": GMAIL, "googlemail.com": GMAIL,
                                  "icloud.com": ICLOUD, "me.com": ICLOUD, "mac.com": ICLOUD})
 # Personal Microsoft accounts take only OAuth sign-in from mail apps, which jobscan doesn't do.
@@ -261,7 +260,8 @@ def _ask_email() -> EmailConfig:
               "address, or another provider's mail server.")
     server = MAIL_SERVERS.get(domain) or MailServer(
         _answer("Your provider's mail (SMTP) server", f"smtp.{domain}", is_host),
-        int(_answer("Its port: 465 or 587", "587", lambda a: a.isdigit() and is_port(int(a)))))
+        int(_answer("Its port: 465 or 587", "587", lambda a: a.isascii() and a.isdigit() and len(a) <= 5
+                    and is_port(int(a)))))
     hint = APP_PASSWORDS.get(server.host.lower(), "your provider's app password for mail apps")
     while True:
         password = getpass.getpass(f"App password (hidden; {hint}): ")

@@ -287,7 +287,7 @@ class NotifyTest(RunFixture):
 class EmailRunTest(RunFixture):
     """With email.toml, a run that publishes a digest emails its text; a failed send is reported, never resent."""
 
-    PASSWORD = "abcdefghijklmnop"
+    PASSWORD = "app\\\\secret"  # a backslash: escaped when printed, so masking must happen on the text itself
 
     def setUp(self):
         super().setUp()
@@ -340,15 +340,16 @@ class EmailRunTest(RunFixture):
         self.assertEqual(self.calls, [])
 
     def test_a_failed_send_is_reported_and_never_resent(self):
-        self.refuse["login"] = smtplib.SMTPAuthenticationError(535, b"5.7.8 Username and Password not accepted")
+        self.refuse["login"] = smtplib.SMTPAuthenticationError(535, b"5.7.8 app\\secret not accepted")
         code, (_, new, path), notified = self.run_notified()
         self.assertEqual((code, new), (1, "2"))
         self.assertEqual(notified, [f"2 new postings in {self.home / 'digests' / 'ae'}; "
                                     "the digest couldn't be emailed; see runs.log"])
         self.assertTrue(Path(path).exists())
         log = (self.home / "runs.log").read_text()
-        self.assertRegex(log, r"ERROR email_failed reason=.SMTPAuthenticationError: \(535, ")
-        self.assertNotIn(self.PASSWORD, log)
+        self.assertIn("ERROR email_failed reason='SMTPAuthenticationError: 535 5.7.8 <password> not accepted'", log)
+        self.assertNotIn("secret", log)
+        self.assertIn("<password> not accepted", log)
         del self.refuse["login"]
         self.assertEqual(self.run_notified(), (0, ["ae", "0", "-"], []))
         self.assertEqual(self.sent(), [])
