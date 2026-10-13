@@ -207,7 +207,8 @@ class ScheduleCliTest(unittest.TestCase):
         self.launchctl = FakeLaunchctl(bootout=[3])
         for patcher in [mock.patch.dict(os.environ, {"JOBSCAN_HOME": str(self.home), "HOME": str(self.root),
                                                      "OPENROUTER_API_KEY": "sk-or-v1-env"}),
-                        mock.patch.object(schedule, "launchctl", self.launchctl)]:
+                        mock.patch.object(schedule, "launchctl", self.launchctl),
+                        mock.patch.object(sys, "platform", "darwin")]:  # the launchd path, on any CI host
             patcher.start()
             self.addCleanup(patcher.stop)
 
