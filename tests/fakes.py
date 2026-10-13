@@ -151,6 +151,24 @@ def greenhouse_job(job_id, title, location="London", content=None, offices=()):
             "absolute_url": f"https://job-boards.greenhouse.io/acme/jobs/{job_id}"}
 
 
+def workable_job(shortcode, title, city="London", country="United Kingdom", description=None, **extra):
+    """A Workable widget-API job as `?details=true` returns it: one entry per location."""
+    return {"shortcode": shortcode, "title": title, "url": f"https://apply.workable.com/j/{shortcode}",
+            "description": description if description is not None else f"<p>{title} role. We sell software.</p>",
+            "telecommuting": False, "city": city, "state": "", "country": country,
+            "locations": [{"city": city, "region": None, "country": country, "countryCode": "GB", "hidden": False}],
+            **extra}
+
+
+def gem_job(job_id, title, location="London", offices=(), content_plain=None, **extra):
+    """A Gem job board API job: plain-text and HTML descriptions, a location and offices with their own."""
+    text = content_plain if content_plain is not None else f"{title} role. We sell software."
+    return {"id": job_id, "title": title, "absolute_url": f"https://jobs.gem.com/acme/{job_id}",
+            "content_plain": text, "content": f"<p>{text}</p>", "location": {"name": location},
+            "offices": [{"name": name, "location": {"name": place}} for name, place in offices],
+            "location_type": "in_office", **extra}
+
+
 def model_reply(tags: dict, cost: float = 0.0005):
     """An OpenRouter-shaped chat-completions response carrying `tags` as the message content."""
     return 200, {"choices": [{"message": {"content": json.dumps(tags)}}], "usage": {"cost": cost}}

@@ -1,15 +1,18 @@
-"""Helpers for reading ATS data, shared by the adapters: board URLs, string fields that fail the board when
-malformed, and job-description HTML → plain text."""
+"""Helpers for reading ATS data, shared by the adapters: board URLs and slugs, string fields that fail the board
+when malformed, and job-description HTML → plain text."""
 import html
 import re
 from html.parser import HTMLParser
-from urllib.parse import SplitResult, urlsplit
+from urllib.parse import SplitResult, unquote, urlsplit
 
 from jobscan.records import BoardError
 
 BLOCK_TAGS = frozenset({"br", "p", "li", "div", "h1", "h2", "h3", "h4", "h5", "h6"})
 DECLARATION = re.compile(r"<![^>]*>")
 ANY_TAG = re.compile(r"<[^>]*>")
+# Board tokens include `ep+co` and `harrison&star`; ':' is the posting-key separator.
+SLUG = re.compile(r"[!-~]+")
+NOT_IN_SLUG = frozenset("/:?#")
 
 
 def http_url(url: str) -> SplitResult | None:
@@ -23,6 +26,15 @@ def http_url(url: str) -> SplitResult | None:
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         return None
     return parsed
+
+
+def board_slug(raw: str, decoded: bool = False) -> str | None:
+    """A board's slug from a URL path segment (percent-decoded unless `decoded`), case kept; None unless it is
+    printable ASCII free of `/:?#`. The adapter re-encodes it for its API URL."""
+    slug = raw if decoded else unquote(raw)
+    if not SLUG.fullmatch(slug) or NOT_IN_SLUG & set(slug):
+        return None
+    return slug
 
 
 def text_field(record: dict, name: str, index: int, required: bool = False) -> str | None:

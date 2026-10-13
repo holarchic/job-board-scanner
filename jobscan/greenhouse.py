@@ -3,9 +3,9 @@
 One API host serves US and EU boards. Parsing is all-or-nothing per board, as for Ashby."""
 import html
 import re
-from urllib.parse import parse_qs, quote, unquote
+from urllib.parse import parse_qs, quote
 
-from jobscan.payload import html_to_text, http_url, text_field
+from jobscan.payload import board_slug, html_to_text, http_url, text_field
 from jobscan.records import Board, BoardError, Posting
 
 ATS = "greenhouse"
@@ -15,9 +15,6 @@ CRAWL_HOSTS = ("job-boards.greenhouse.io", "job-boards.eu.greenhouse.io")
 BOARD_HOSTS = frozenset({*CRAWL_HOSTS, "boards.greenhouse.io", "boards.eu.greenhouse.io"})
 API = "https://boards-api.greenhouse.io/v1/boards/"
 LIST = "/jobs?content=true"
-# Board tokens include `ep+co` and `harrison&star`; ':' is the posting-key separator.
-SLUG = re.compile(r"[!-~]+")
-NOT_IN_SLUG = frozenset("/:?#")
 REAL_TAG = re.compile(r"</?[a-zA-Z]")
 # A layer of escaped markup shows an escaped closing tag (any tag) or an escaped standard HTML tag (`<br>`, an
 # unclosed `<p>`); a bare `&lt;customer&gt;` is neither and stays text.
@@ -59,10 +56,8 @@ def _board(company: str, slug: str | None, base: str) -> Board | None:
 
 
 def _slug(raw: str, decoded: bool = False) -> str | None:
-    slug = (raw if decoded else unquote(raw)).lower()
-    if not SLUG.fullmatch(slug) or NOT_IN_SLUG & set(slug):
-        return None
-    return slug
+    slug = board_slug(raw, decoded)
+    return slug.lower() if slug is not None else None
 
 
 def parse(board: Board, data) -> tuple[Posting, ...]:
