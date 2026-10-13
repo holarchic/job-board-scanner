@@ -14,12 +14,12 @@ from tests.fakes import FakeFiles, cdx_line, crawl_files, crawl_list
 CRAWLS = ("CC-MAIN-2026-39", "CC-MAIN-2026-34", "CC-MAIN-2026-30")
 
 
-FIRST_LIST = ["ashby:acme", "ashby:beta", "ashby:gamma", "gem:gem-acme", "greenhouse:gh-eu", "greenhouse:gh-us",
-              "workable:wk-acme"]
+FIRST_LIST = ["ashby:acme", "ashby:beta", "ashby:gamma", "gem:gem-acme", "greenhouse:gh-eu", "greenhouse:gh-us"]
 
 
 def captures(*slugs, greenhouse=("gh-us",), greenhouse_eu=("gh-eu",), workable=("wk-acme",), gem=("gem-acme",)):
-    """One crawl's index lines: Ashby boards, Greenhouse boards on both hosts, Workable and Gem boards, and noise."""
+    """One crawl's index lines: Ashby boards, Greenhouse boards on both hosts, Gem boards, and noise, including
+    Workable boards, which are never discovered."""
     return [cdx_line(f"https://jobs.ashbyhq.com/{slug}/job-1") for slug in slugs] + \
         [cdx_line(f"https://job-boards.greenhouse.io/{slug}/jobs/1") for slug in greenhouse] + \
         [cdx_line(f"https://job-boards.eu.greenhouse.io/{slug}") for slug in greenhouse_eu] + \
@@ -67,7 +67,7 @@ class DiscoverTest(unittest.TestCase):
             conn.close()
 
     def test_union_of_three_crawls_case_folded(self):
-        self.assertEqual(self.run_cli(), (0, "discovered\t7\t" + ",".join(CRAWLS)))
+        self.assertEqual(self.run_cli(), (0, "discovered\t6\t" + ",".join(CRAWLS)))
         self.assertEqual(self.discovered(), [
             ("ashby:acme", "https://api.ashbyhq.com/posting-api/job-board/acme"),
             ("ashby:beta", "https://api.ashbyhq.com/posting-api/job-board/beta"),
@@ -75,7 +75,6 @@ class DiscoverTest(unittest.TestCase):
             ("gem:gem-acme", "https://api.gem.com/job_board/v0/gem-acme/job_posts/"),
             ("greenhouse:gh-eu", "https://boards-api.greenhouse.io/v1/boards/gh-eu/jobs?content=true"),
             ("greenhouse:gh-us", "https://boards-api.greenhouse.io/v1/boards/gh-us/jobs?content=true"),
-            ("workable:wk-acme", "https://apply.workable.com/api/v1/widget/accounts/wk-acme?details=true"),
         ])
 
     def test_greenhouse_hosts_union_and_fold(self):
@@ -85,22 +84,23 @@ class DiscoverTest(unittest.TestCase):
         self.assertEqual(self.run_cli()[0], 0)
         self.assertEqual([b for b, _ in self.discovered()],
                          ["ashby:acme", "gem:gem-acme", "greenhouse:ep+co", "greenhouse:eu-only", "greenhouse:gh-eu",
-                          "greenhouse:shared", "greenhouse:us-only", "workable:wk-acme"])
+                          "greenhouse:shared", "greenhouse:us-only"])
 
-    def test_workable_and_gem_slugs_keep_their_case(self):
-        self.serve({CRAWLS[0]: captures("acme", workable=("Mixed", "mixed"), gem=("Gem-B",)),
+    def test_gem_slugs_keep_their_case_and_workable_is_never_discovered(self):
+        self.serve({CRAWLS[0]: captures("acme", workable=("Mixed", "mixed"), gem=("Gem-B", "gem-b")),
                     CRAWLS[1]: captures("acme", workable=("other",)), CRAWLS[2]: captures("acme")})
         self.assertEqual(self.run_cli()[0], 0)
-        self.assertEqual([b for b, _ in self.discovered() if b.startswith(("workable", "gem"))],
-                         ["gem:Gem-B", "gem:gem-acme", "workable:Mixed", "workable:mixed", "workable:other",
-                          "workable:wk-acme"])
+        self.assertEqual([b for b, _ in self.discovered() if not b.startswith(("ashby", "greenhouse"))],
+                         ["gem:Gem-B", "gem:gem-acme", "gem:gem-b"])
+        self.assertNotIn("host=apply.workable.com", (self.home / "runs.log").read_text())
 
-    def test_a_crawl_without_workable_or_gem_captures_keeps_the_list(self):
+    def test_a_crawl_without_gem_captures_keeps_the_list_one_without_workable_does_not(self):
         self.assertEqual(self.run_cli()[0], 0)
-        for missing in ({"workable": ()}, {"gem": ()}):
-            self.serve({c: captures("delta", **(missing if c == CRAWLS[1] else {})) for c in CRAWLS})
-            self.assertEqual(self.run_cli(), (1, ""), missing)
-            self.assertEqual([b for b, _ in self.discovered()], FIRST_LIST, missing)
+        self.serve({c: captures("delta", **({"gem": ()} if c == CRAWLS[1] else {})) for c in CRAWLS})
+        self.assertEqual(self.run_cli(), (1, ""))
+        self.assertEqual([b for b, _ in self.discovered()], FIRST_LIST)
+        self.serve({c: captures("delta", workable=()) for c in CRAWLS})
+        self.assertEqual(self.run_cli()[0], 0)
 
     def test_a_failing_greenhouse_host_keeps_the_whole_list(self):
         self.assertEqual(self.run_cli()[0], 0)

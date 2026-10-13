@@ -1,7 +1,10 @@
 """Workable adapter: board URLs → API URL, and the public widget API payload → postings.
 
 The widget lists a job once per location: entries sharing a shortcode are one job, carrying every entry's
-locations. Parsing is all-or-nothing per board, as for the others."""
+locations. Parsing is all-or-nothing per board, as for the others.
+
+Boards come from the boards file only: Workable rate-limits (HTTP 429 on every request) a daily sweep of the ~5,300
+boards Common Crawl holds, so discovery leaves it out."""
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -10,9 +13,10 @@ from jobscan.records import Board, BoardError, Posting
 
 ATS = "workable"
 DISPLAY_NAME = "Workable"
-CRAWL_HOSTS = ("apply.workable.com",)
+BOARD_HOST = "apply.workable.com"
+CRAWL_HOSTS = ()  # not discovered: see the module docstring
 API_PATH = ("api", "v1", "widget", "accounts")
-API = f"https://{CRAWL_HOSTS[0]}/" + "/".join(API_PATH) + "/"
+API = f"https://{BOARD_HOST}/" + "/".join(API_PATH) + "/"
 DETAILS = "?details=true"  # descriptions in the list, requirements and benefits included
 NOT_BOARDS = frozenset({"j", "api"})  # apply.workable.com/j/<shortcode> links a job without naming its account
 
@@ -34,7 +38,7 @@ def page_board(company: str, url: str) -> Board | None:
     """A board page, apply.workable.com/<slug>[/…]."""
     parsed = http_url(url)
     path = [p for p in parsed.path.split("/") if p] if parsed else []
-    if not path or parsed.hostname != CRAWL_HOSTS[0]:
+    if not path or parsed.hostname != BOARD_HOST:
         return None
     slug = board_slug(path[0])
     return None if slug in NOT_BOARDS else _board(company, slug, API)

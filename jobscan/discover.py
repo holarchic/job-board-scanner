@@ -21,11 +21,12 @@ class DiscoverOutcome:
 
 
 def refresh_if_stale(conn: sqlite3.Connection, now: datetime) -> None:
-    """`run`'s monthly discovery, so one scheduled job is enough; also as soon as an ATS gains an adapter, so an
-    upgraded install reads it on its next run. An unreadable crawl keeps the old list and the run goes on; a list
-    that can't be saved is a ConfigError, as for `discover`."""
+    """`run`'s monthly discovery, so one scheduled job is enough; also as soon as an ATS gains an adapter with crawl
+    hosts, so an upgraded install reads it on its next run. An unreadable crawl keeps the old list and the run goes
+    on; a list that can't be saved is a ConfigError, as for `discover`."""
     last = store.discovered_at(conn)
-    if last is not None and now - last < STALE_AFTER and store.discovered_ats(conn) >= set(fetch.ADAPTERS):
+    discoverable = {a.ATS for a in fetch.ADAPTERS.values() if a.CRAWL_HOSTS}
+    if last is not None and now - last < STALE_AFTER and store.discovered_ats(conn) >= discoverable:
         return
     try:
         discover(conn)

@@ -529,7 +529,7 @@ class BoardSourcesTest(RunFixture):
         self.assertEqual(self.run_cli()[1][1], "2")
 
 
-DISCOVERED = ["ashby:acme", "gem:gem-acme", "greenhouse:gh-acme", "greenhouse:gh-eu", "workable:wk-acme"]
+DISCOVERED = ["ashby:acme", "gem:gem-acme", "greenhouse:gh-acme", "greenhouse:gh-eu"]  # never Workable
 
 
 class DiscoveryRefreshTest(RunFixture):
@@ -600,7 +600,7 @@ class DiscoveryRefreshTest(RunFixture):
         self.assertIn("discover_failed", (self.home / "runs.log").read_text())
 
     def test_a_newly_supported_ats_is_discovered_on_the_next_run(self):
-        for ats in ("greenhouse", "workable", "gem"):
+        for ats in ("greenhouse", "gem"):
             self.seed_discovery("acme", at=self.days_ago(1))
             conn = store.open_db(self.home)
             with conn:
@@ -608,6 +608,15 @@ class DiscoveryRefreshTest(RunFixture):
             conn.close()
             self.assertEqual(self.run_cli()[0], 0, ats)
             self.assertEqual(self.discovered()[0], DISCOVERED, ats)
+
+    def test_a_list_without_workable_is_not_rediscovered(self):
+        self.seed_discovery("acme", at=self.days_ago(1))
+        conn = store.open_db(self.home)
+        with conn:
+            conn.execute("DELETE FROM boards WHERE ats = 'workable'")
+        conn.close()
+        self.assertEqual(self.run_cli()[1][1], "2")
+        self.assertEqual(self.cc.requests, [])
 
     def test_fresh_install_whose_crawl_fails_has_no_boards(self):
         conn = store.open_db(self.home)
