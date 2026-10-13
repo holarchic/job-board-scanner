@@ -4,13 +4,12 @@ email.toml when the user sets up email. `jobscan email` asks the same email ques
 Nothing is written until every answer is in and the install it makes loads; a failure part-way through tries to
 remove whatever this invocation created and names anything it couldn't. Email settings are saved only after a test
 email is accepted."""
-import contextlib
 import getpass
 import json
 import os
 import re
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 
@@ -23,6 +22,7 @@ from jobscan.config import (
     is_host,
     is_mailbox,
     is_password,
+    is_port,
     load_config,
     load_email,
     load_profile,
@@ -57,11 +57,18 @@ NEAR_MISSES = MappingProxyType({
     "account executive": ("Account Manager", "Executive Assistant", "Sales Development"),
 })
 PROFILE_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
-# Mail servers by the sending address's domain: (host, port).
-MAIL_SERVERS = MappingProxyType({
-    "gmail.com": ("smtp.gmail.com", 465), "googlemail.com": ("smtp.gmail.com", 465),
-    "icloud.com": ("smtp.mail.me.com", 587), "me.com": ("smtp.mail.me.com", 587), "mac.com": ("smtp.mail.me.com", 587),
-})
+
+
+@dataclass(frozen=True)
+class MailServer:
+    host: str
+    port: int
+
+
+GMAIL, ICLOUD = MailServer("smtp.gmail.com", 465), MailServer("smtp.mail.me.com", 587)
+# Known providers by the sending address's domain; any other is asked for its server.
+MAIL_SERVERS = MappingProxyType({"gmail.com": GMAIL, "googlemail.com": GMAIL,
+                                 "icloud.com": ICLOUD, "me.com": ICLOUD, "mac.com": ICLOUD})
 # Personal Microsoft accounts take only OAuth sign-in from mail apps, which jobscan doesn't do.
 OAUTH_ONLY = frozenset({"outlook.com", "hotmail.com", "live.com", "msn.com"})
 APP_PASSWORDS = MappingProxyType({
@@ -80,7 +87,7 @@ class Setup:
     profile: Path
     key: Path
     email: Path | None  # None: email skipped, or its test failed
-    email_error: str | None  # why the test email wasn't accepted
+    email_error: mail.MailError | None  # why the test email wasn't accepted
 
 
 @dataclass(frozen=True)
@@ -97,7 +104,7 @@ class Answers:
     locations: list[str]
     eligible_where: str
     tags: list[str]
-    key: str  # always written to the key file: a scheduled run has no shell environment
+    key: str = field(repr=False)  # always written to the key file: a scheduled run has no shell environment
 
 
 def init(home: Path) -> Setup:
@@ -109,10 +116,13 @@ def init(home: Path) -> Setup:
         raise ConfigError(f"{home} is already set up ({existing[0].name} exists); edit its files instead")
     try:
         answers = _ask()
-        print("\nEmail: jobscan can send each digest from your own mail account.")
-        email_toml, email_error = email_setup(answers.name, skippable=True), None
-    except mail.MailError as e:
-        email_toml, email_error = None, str(e)
+        email_toml, email_error = None, None
+        if _answer("\nEmail each digest to you, from your own mail account? [y/n]", "n",
+                   lambda a: a in ("y", "n")) == "y":
+            try:
+                email_toml = email_setup(answers.name)
+            except mail.MailError as e:
+                email_error = e
     except (KeyboardInterrupt, EOFError):
         raise InitCancelled from None
     setup = Setup(config=home / "config.toml", profile=home / "profiles" / f"{answers.name}.toml",
@@ -129,20 +139,17 @@ def init(home: Path) -> Setup:
     return setup
 
 
-def email_setup(profile: str, skippable: bool) -> str | None:
-    """Asks for the mail account and sends a test email through it; returns email.toml's text, or None when the
-    user skips. Raises mail.MailError when the test email isn't accepted, ConfigError when it can't be checked."""
-    answers = _ask_email(skippable)
-    if answers is None:
-        return None
-    text = email_text(answers)
+def email_setup(profile: str) -> str:
+    """Asks for the mail account and sends a test email through it; returns email.toml's text. Raises
+    mail.MailError when the test email isn't accepted, ConfigError when the settings can't be checked."""
+    text = email_text(_ask_email())
     try:
         email = _check_email(text)
     except OSError as e:
         raise ConfigError(f"could not check the email settings in a temporary directory ({type(e).__name__})") \
             from None
     print(f"Sending a test email to {email.to} ...")
-    mail.send(email, mail.test_message(email, profile))
+    mail.send_test(email, profile)
     return text
 
 
@@ -170,14 +177,28 @@ def save_email(home: Path, text: str) -> Path:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
         os.replace(temp, path)
-    except BaseException as e:
-        with contextlib.suppress(OSError):
-            os.unlink(temp)
+    except BaseException as e:  # Ctrl-C included: the temporary file holds the password
+        left = _remove([Path(temp)])
+        kept = f"; delete {temp}, which holds the password" if left else ""
         if isinstance(e, OSError):
-            raise ConfigError(f"could not write {path} ({type(e).__name__}); the previous settings are kept") \
+            raise ConfigError(f"could not write {path} ({type(e).__name__}); the previous settings are kept{kept}") \
                 from None
+        if left:
+            e.add_note(f"jobscan email{kept}")
         raise
     return path
+
+
+def remove_email(home: Path) -> bool:
+    """False when no email was set up. Never reads the file, so a broken one can be removed too."""
+    path = home / EMAIL_FILE
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        raise ConfigError(f"could not remove {path} ({type(e).__name__})") from None
+    return True
 
 
 def profile_text(answers: Answers) -> str:
@@ -229,11 +250,8 @@ def _ask_key() -> str:
         print("  That isn't a key: paste it again, with no spaces.")
 
 
-def _ask_email(skippable: bool) -> EmailConfig | None:
-    to = _answer("Email each digest to" + (" (- for no email)" if skippable else ""), "-" if skippable else None,
-                 lambda a: (skippable and a == "-") or is_mailbox(a))
-    if to == "-":
-        return None
+def _ask_email() -> EmailConfig:
+    to = _answer("Email each digest to", None, is_mailbox)
     while True:
         sender = _answer("Send it from your mail account", to, is_mailbox)
         domain = sender.rpartition("@")[2].lower()
@@ -241,16 +259,16 @@ def _ask_email(skippable: bool) -> EmailConfig | None:
             break
         print("  Outlook.com only lets mail apps sign in with OAuth, which jobscan can't do. Use a Gmail or iCloud "
               "address, or another provider's mail server.")
-    host, port = MAIL_SERVERS.get(domain) or (
+    server = MAIL_SERVERS.get(domain) or MailServer(
         _answer("Your provider's mail (SMTP) server", f"smtp.{domain}", is_host),
-        int(_answer("Its port: 465 or 587", "587", lambda a: a.isdigit() and 0 < int(a) < 65536)))
-    hint = APP_PASSWORDS.get(host.lower(), "your provider's app password for mail apps")
+        int(_answer("Its port: 465 or 587", "587", lambda a: a.isdigit() and is_port(int(a)))))
+    hint = APP_PASSWORDS.get(server.host.lower(), "your provider's app password for mail apps")
     while True:
         password = getpass.getpass(f"App password (hidden; {hint}): ")
-        if host.lower() == "smtp.gmail.com":
+        if server.host.lower() == GMAIL.host:
             password = password.replace(" ", "")  # Google shows it in groups of four
         if is_password(password):
-            return EmailConfig(to=to, sender=sender, host=host, port=port, password=password)
+            return EmailConfig(to=to, sender=sender, host=server.host, port=server.port, password=password)
         print("  That isn't a password jobscan can send: paste it again.")
 
 
@@ -260,7 +278,10 @@ def _check_email(text: str) -> EmailConfig:
         path = Path(scratch) / EMAIL_FILE
         path.write_text(text, encoding="utf-8")
         path.chmod(0o600)
-        return load_email(Path(scratch))
+        email = load_email(Path(scratch))
+    if email is None:
+        raise ConfigError(f"the email settings didn't read back from {path.name}")
+    return email
 
 
 def _choose_tags() -> list[str]:

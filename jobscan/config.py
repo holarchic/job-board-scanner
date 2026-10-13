@@ -1,4 +1,5 @@
 """Config and profile loading: TOML under $JOBSCAN_HOME parsed into typed records, or ConfigError."""
+import email.policy
 import os
 import re
 import tomllib
@@ -67,8 +68,7 @@ class EmailConfig:
 KEY_FILE = "openrouter.key"
 EMAIL_FILE = "email.toml"
 EMAIL_KEYS = frozenset({"to", "from", "host", "port", "password"})
-# One bare mailbox, so a value can never become two header addresses.
-MAILBOX = re.compile(r'[^\s@,;<>()\[\]\\"]+@[^\s@,;<>()\[\]\\".]+(?:\.[^\s@,;<>()\[\]\\".]+)+')
+MAILBOX = re.compile(r'[^\s@,:;<>()\[\]\\"]+@[^\s@,:;<>()\[\]\\".]+(?:\.[^\s@,:;<>()\[\]\\".]+)+')
 CUSTOM_TAG_NAME = re.compile(r"[a-z][a-z0-9_]*")
 CUSTOM_TAG_VALUES = ("yes", "no", "unknown")
 
@@ -121,8 +121,8 @@ def usable_key(key: str) -> bool:
 
 
 def load_email(home: Path) -> EmailConfig | None:
-    """None when the install doesn't email digests. Read by `run` and `schedule` only. Errors name the field, never
-    the password."""
+    """None when the install doesn't email digests. `eval` and `discover` never read it, so a broken file stops only
+    what emails. Errors name the field, never the password."""
     path = home / EMAIL_FILE
     try:
         text = _secret_text(path)
@@ -142,7 +142,7 @@ def load_email(home: Path) -> EmailConfig | None:
     host, port, password = data["host"], data["port"], data["password"]
     if not is_host(host):
         raise ConfigError(f"{path}: `host` must be a server name, like smtp.gmail.com")
-    if not (isinstance(port, int) and not isinstance(port, bool) and 0 < port < 65536):
+    if not is_port(port):
         raise ConfigError(f"{path}: `port` must be a number from 1 to 65535")
     if not is_password(password):
         raise ConfigError(f"{path}: `password` must be the app password, in plain ASCII")
@@ -150,7 +150,16 @@ def load_email(home: Path) -> EmailConfig | None:
 
 
 def is_mailbox(value) -> bool:
-    return isinstance(value, str) and value.isascii() and value.isprintable() and bool(MAILBOX.fullmatch(value))
+    """One bare address that the mail library reads back unchanged: never a group, a list or a display name, so the
+    message can't go anywhere but the address written (`a:b@x.com` would be the group `a:` sending to b@x.com)."""
+    if not (isinstance(value, str) and value.isascii() and value.isprintable() and MAILBOX.fullmatch(value)):
+        return False
+    header = email.policy.default.header_factory("To", value)
+    return not header.defects and [a.addr_spec for a in header.addresses] == [value]
+
+
+def is_port(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 0 < value < 65536
 
 
 def is_host(value) -> bool:

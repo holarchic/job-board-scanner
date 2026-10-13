@@ -5,6 +5,7 @@ import re
 import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest import mock
 
 
 class FakeServer:
@@ -167,15 +168,13 @@ def tags_quoting_the_posting(payload):
             "tech_company": {"value": "unknown", "quote": None}}
 
 
-def fake_smtp(calls: list, fail: dict | None = None):
-    """A stand-in for smtplib.SMTP / SMTP_SSL recording each call as (name, args) in `calls`; `fail[name]` is raised
-    by that call (`connect` is the constructor), read when the call happens."""
+def fake_smtp(calls: list, fail: dict | None = None, *, tls: bool):
+    """A stand-in for smtplib.SMTP_SSL (`tls`) or smtplib.SMTP, with the real constructor's signature, recording each
+    call as (name, args) in `calls`; the constructor records as "SMTP_SSL" or "SMTP". `fail[name]` is raised by that
+    call, read when the call happens; "quit" fails on leaving the `with` block, as a refused QUIT does."""
     fail = {} if fail is None else fail
 
     class FakeSMTP:
-        def __init__(self, host, port, timeout=None, context=None):
-            self._call("connect", host=host, port=port, timeout=timeout, context=context)
-
         def _call(self, name, **args):
             calls.append((name, args))
             if name in fail:
@@ -185,7 +184,7 @@ def fake_smtp(calls: list, fail: dict | None = None):
             return self
 
         def __exit__(self, *exc):
-            calls.append(("quit", {}))
+            self._call("quit")
 
         def starttls(self, context=None):
             self._call("starttls", context=context)
@@ -196,7 +195,20 @@ def fake_smtp(calls: list, fail: dict | None = None):
         def send_message(self, message):
             self._call("send", message=message)
 
+    def tls_init(self, host="", port=0, local_hostname=None, *, timeout=None, source_address=None, context=None):
+        self._call("SMTP_SSL", host=host, port=port, timeout=timeout, context=context)
+
+    def plain_init(self, host="", port=0, local_hostname=None, timeout=None, source_address=None):
+        self._call("SMTP", host=host, port=port, timeout=timeout)
+
+    FakeSMTP.__init__ = tls_init if tls else plain_init
     return FakeSMTP
+
+
+def patch_smtp(calls: list, fail: dict | None = None) -> list:
+    """Patchers replacing both smtplib constructors with recording fakes; the caller starts and stops them."""
+    return [mock.patch("smtplib.SMTP_SSL", fake_smtp(calls, fail, tls=True)),
+            mock.patch("smtplib.SMTP", fake_smtp(calls, fail, tls=False))]
 
 
 class PlainSMTPServer:

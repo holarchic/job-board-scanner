@@ -156,6 +156,8 @@ class EmailConfigTest(unittest.TestCase):
             (0o640, {}), (0o604, {}),
             (0o600, {"to": '"@example.com"'}), (0o600, {"to": '"you@example"'}),
             (0o600, {"to": '"a@example.com, b@example.com"'}), (0o600, {"to": '"You <you@example.com>"'}),
+            (0o600, {"to": '"a:b@example.com"'}), (0o600, {"to": '"a@example:org.com"'}),
+            (0o600, {"to": '"a..b@example.com"'}), (0o600, {"to": '"\\"a\\"@example.com"'}),
             (0o600, {"from": '"me@gmäil.com"'}), (0o600, {"from": '"me\\u0001@gmail.com"'}), (0o600, {"to": "3"}),
             (0o600, {"host": '""'}), (0o600, {"host": '"smtp gmail.com"'}), (0o600, {"port": "0"}),
             (0o600, {"port": "65536"}), (0o600, {"port": '"465"'}), (0o600, {"port": "true"}),

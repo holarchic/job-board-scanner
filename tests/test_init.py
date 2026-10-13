@@ -11,14 +11,14 @@ from unittest import mock
 
 from jobscan import cli, init, mail
 from jobscan.config import ConfigError, EmailConfig, load_config, load_email, load_profile
-from tests.fakes import fake_smtp
+from tests.fakes import patch_smtp
 
 TAG_COUNT = 5
 
 
 def answers(name="my-pm", titles="Product Manager, Senior Product Manager", exclude="", locations="London, UK",
             where="the UK, working from London", tags=("y", "y", "n", "y", "y"), email=("",)):
-    """`email`: the answers to the email questions; Enter alone skips email."""
+    """`email`: the answers to the email questions; Enter alone says no to email."""
     return [name, titles, exclude, locations, where, *tags, *email]
 
 
@@ -71,7 +71,7 @@ class InitTest(unittest.TestCase):
 
     def test_invalid_answers_are_asked_again(self):
         typed = ["My PM", "my-pm", " , ", "Product Manager", "", "London", "", "the UK",
-                 *["n"] * TAG_COUNT, "maybe", "y", *["n"] * (TAG_COUNT - 1), "not an address", "-"]
+                 *["n"] * TAG_COUNT, "maybe", "y", *["n"] * (TAG_COUNT - 1), "maybe", "n"]
         self.run_init(typed)
         self.assertEqual(load_profile(self.home).tags, ("founding",))
 
@@ -140,8 +140,7 @@ class EmailSetupTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name) / "jobscan-home"
         self.calls, self.refuse = [], {}
-        for constructor in ("SMTP_SSL", "SMTP"):
-            patcher = mock.patch.object(mail.smtplib, constructor, fake_smtp(self.calls, self.refuse))
+        for patcher in patch_smtp(self.calls, self.refuse):
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -163,7 +162,7 @@ class EmailSetupTest(unittest.TestCase):
         return [args["message"] for name, args in self.calls if name == "send"]
 
     def test_init_with_gmail_tests_then_saves_it(self):
-        typed = answers(email=("you@gmail.com", ""))
+        typed = answers(email=("y", "you@gmail.com", ""))
         with mock.patch("builtins.input", side_effect=typed), \
                 mock.patch.object(init.getpass, "getpass", side_effect=["sk-or-v1-abc", "abcd efgh ijkl mnop"]), \
                 contextlib.redirect_stdout(io.StringIO()):
@@ -178,12 +177,13 @@ class EmailSetupTest(unittest.TestCase):
 
     def test_init_whose_test_email_fails_is_written_without_email(self):
         self.refuse["login"] = smtplib.SMTPAuthenticationError(535, b"5.7.8 not accepted")
-        with mock.patch("builtins.input", side_effect=answers(email=("you@gmail.com", ""))), \
+        with mock.patch("builtins.input", side_effect=answers(email=("y", "you@gmail.com", ""))), \
                 mock.patch.object(init.getpass, "getpass", side_effect=["sk-or-v1-abc", "wrong"]), \
                 contextlib.redirect_stdout(io.StringIO()):
             setup = init.init(self.home)
         self.assertIsNone(setup.email)
-        self.assertIn("SMTPAuthenticationError", setup.email_error)
+        self.assertIsInstance(setup.email_error, mail.MailError)
+        self.assertIn("SMTPAuthenticationError", str(setup.email_error))
         self.assertFalse((self.home / "email.toml").exists())
         self.assertEqual(load_profile(self.home).name, "my-pm")
 
@@ -199,7 +199,7 @@ class EmailSetupTest(unittest.TestCase):
         code, out, _ = self.email_cli(["you@icloud.com", ""], ("abcd-efgh-ijkl-mnop",))
         self.assertEqual(code, 0)
         self.assertIn("saved", out)
-        self.assertEqual([name for name, _ in self.calls], ["connect", "starttls", "login", "send", "quit"])
+        self.assertEqual([name for name, _ in self.calls], ["SMTP", "starttls", "login", "send", "quit"])
         email = load_email(self.home)
         self.assertEqual((email.host, email.port, email.password), ("smtp.mail.me.com", 587, "abcd-efgh-ijkl-mnop"))
 
@@ -222,7 +222,7 @@ class EmailSetupTest(unittest.TestCase):
         self.installed()
         self.email_cli(["you@gmail.com", ""])
         before = (self.home / "email.toml").read_text()
-        self.refuse["connect"] = TimeoutError("timed out")
+        self.refuse["SMTP_SSL"] = TimeoutError("timed out")
         code, _, err = self.email_cli(["new@gmail.com", ""])
         self.assertEqual(code, 1)
         self.assertIn("test email wasn't sent (TimeoutError: timed out); nothing was saved", err)
@@ -244,6 +244,21 @@ class EmailSetupTest(unittest.TestCase):
         self.assertIn("the previous settings are kept", err)
         self.assertEqual(load_email(self.home).to, "you@gmail.com")
         self.assertEqual(sorted(p.name for p in self.home.iterdir()), ["email.toml", "profiles"])
+
+    def test_a_temporary_file_left_behind_is_named(self):
+        self.installed()
+        real_unlink = os.unlink
+
+        def stuck_unlink(path, *args, **kwargs):
+            if ".email-" in str(path):
+                raise PermissionError(1, "Operation not permitted")
+            return real_unlink(path, *args, **kwargs)
+
+        with mock.patch.object(init.os, "replace", side_effect=OSError(28, "No space left on device")), \
+                mock.patch.object(Path, "unlink", lambda path, missing_ok=False: stuck_unlink(path)):
+            code, _, err = self.email_cli(["new@gmail.com", ""])
+        self.assertEqual(code, 2)
+        self.assertRegex(err, r"delete .*\.email-.*\.tmp, which holds the password")
 
     def test_off_removes_even_a_broken_file_and_is_idempotent(self):
         self.installed()

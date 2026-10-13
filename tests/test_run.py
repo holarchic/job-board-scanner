@@ -16,7 +16,7 @@ from email.parser import BytesParser
 from pathlib import Path
 from unittest import mock
 
-from jobscan import ashby, cli, crawl, digest, fetch, greenhouse, mail, notify, scan, store, tag
+from jobscan import ashby, cli, crawl, digest, fetch, greenhouse, notify, scan, store, tag
 from jobscan.records import Board
 from tests.fakes import (
     FakeFiles,
@@ -25,9 +25,9 @@ from tests.fakes import (
     cdx_line,
     crawl_files,
     crawl_list,
-    fake_smtp,
     greenhouse_job,
     model_reply,
+    patch_smtp,
     tags_quoting_the_posting,
 )
 
@@ -293,7 +293,8 @@ class EmailRunTest(RunFixture):
         super().setUp()
         self.write_email()
         self.calls, self.refuse = [], {}
-        mock.patch.object(mail.smtplib, "SMTP_SSL", fake_smtp(self.calls, self.refuse)).start()
+        for patcher in patch_smtp(self.calls, self.refuse):
+            patcher.start()
 
     def write_email(self, mode=0o600, password=PASSWORD):
         path = self.home / "email.toml"
@@ -320,7 +321,9 @@ class EmailRunTest(RunFixture):
         self.assertEqual((message["Subject"], message["From"], message["To"]),
                          ("jobscan: 2 new for ae", "me@gmail.com", "you@example.com"))
         self.assertEqual(message.get_content().replace("\r\n", "\n"), Path(path).read_text(encoding="utf-8"))
-        self.assertIn("email_sent to=you@example.com", (self.home / "runs.log").read_text())
+        log = (self.home / "runs.log").read_text()
+        self.assertIn("INFO email_sent\n", log)
+        self.assertNotIn("you@example.com", log)
         self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
         self.assertEqual(len(self.sent()), 1)
 

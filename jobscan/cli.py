@@ -76,25 +76,24 @@ def _run(home: Path, notifying: bool) -> int:
             notify.notify(f"jobscan stopped with an error ({type(e).__name__}); see {home / 'launchd.log'}")
         raise
     print(f"{outcome.profile}\t{outcome.new}\t{outcome.digest_path or '-'}")
-    emailed = _email_digest(email, outcome)
-    news = _news(outcome, emailed)
+    email_error = _email_digest(email, outcome)
+    news = _news(outcome, email_error)
     if notifying and news:
         notify.notify(news)
-    return EXIT_OK if outcome.complete and emailed else EXIT_INCOMPLETE
+    return EXIT_OK if outcome.complete and email_error is None else EXIT_INCOMPLETE
 
 
-def _email_digest(email: EmailConfig | None, outcome: scan.ScanOutcome) -> bool:
-    """False only when there was a digest to email and it couldn't be: the file stays, and no later run resends it."""
+def _email_digest(email: EmailConfig | None, outcome: scan.ScanOutcome) -> mail.MailError | None:
+    """A digest that couldn't be emailed stays on disk, and no later run resends it."""
     if email is None or outcome.digest_path is None:
-        return True
+        return None
     try:
-        text = outcome.digest_path.read_text(encoding="utf-8")
-        mail.send(email, mail.digest_message(email, outcome.profile, outcome.new, outcome.carried_over, text))
-    except (OSError, UnicodeDecodeError, mail.MailError) as e:
-        log.error("email_failed reason=%r", str(e) or type(e).__name__)
-        return False
-    log.info("email_sent to=%s", email.to)
-    return True
+        mail.send_digest(email, outcome.digest_path, outcome.profile, outcome.new, outcome.carried_over)
+    except mail.MailError as e:
+        log.error("email_failed reason=%r", str(e))
+        return e
+    log.info("email_sent")
+    return None
 
 
 def _refused(reason: str, notifying: bool) -> int:
@@ -104,7 +103,7 @@ def _refused(reason: str, notifying: bool) -> int:
     return EXIT_USAGE
 
 
-def _news(outcome: scan.ScanOutcome, emailed: bool) -> str | None:
+def _news(outcome: scan.ScanOutcome, email_error: mail.MailError | None) -> str | None:
     parts = []
     if outcome.new:
         parts.append(f"{outcome.new} new posting{'' if outcome.new == 1 else 's'} in {outcome.digest_path.parent}")
@@ -112,7 +111,7 @@ def _news(outcome: scan.ScanOutcome, emailed: bool) -> str | None:
         parts.append(f"{outcome.carried_over} couldn't be tagged yet; see runs.log")
     if outcome.digest_failed:
         parts.append("the digest couldn't be written; see runs.log")
-    if not emailed:
+    if email_error:
         parts.append("the digest couldn't be emailed; see runs.log")
     return "; ".join(parts) or None
 
@@ -155,22 +154,11 @@ def _schedule(home: Path, at: time | None) -> int:
 
 def _email(home: Path, off: bool) -> int:
     """Saves the settings only once a test email is accepted; `--off` works however broken the saved file is."""
-    path = home / EMAIL_FILE
-    if off:
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            print("jobscan: no email set up")
-            return EXIT_OK
-        except OSError as e:
-            print(f"jobscan: could not remove {path} ({type(e).__name__})", file=sys.stderr)
-            return EXIT_INCOMPLETE
-        print(f"removed\t{path}")
-        return EXIT_OK
     try:
-        profile = load_profile(home)
-        text = init.email_setup(profile.name, skippable=False)
-        init.save_email(home, text)
+        if off:
+            print(f"removed\t{home / EMAIL_FILE}" if init.remove_email(home) else "jobscan: no email set up")
+            return EXIT_OK
+        init.save_email(home, init.email_setup(load_profile(home).name))
     except ConfigError as e:
         print(f"jobscan: {e}", file=sys.stderr)
         return EXIT_USAGE
@@ -180,7 +168,7 @@ def _email(home: Path, off: bool) -> int:
     except mail.MailError as e:
         print(f"jobscan: the test email wasn't sent ({e}); nothing was saved", file=sys.stderr)
         return EXIT_INCOMPLETE
-    print(f"Sent a test email; saved {path}. Each digest will be emailed from now on.")
+    print(f"Sent a test email; saved {home / EMAIL_FILE}. Each digest will be emailed from now on.")
     return EXIT_OK
 
 
