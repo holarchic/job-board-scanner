@@ -28,7 +28,7 @@ It finds the job boards itself, reads them directly and has a language model tag
 
 **When not to use it:**
 
-- You want something hosted, free and set up in a minute. [HiringCafe](https://hiring.cafe) reads company career pages, Workday included, and emails alerts. It ranks by CV match rather than filtering on what the posting says.
+- You want something hosted, free and set up in a minute. [HiringCafe](https://hiring.cafe) reads company career pages, Workday included, and emails alerts.
 - You need LinkedIn, Indeed or Glassdoor. This reads company boards only; [JobSpy](https://github.com/speedyapply/JobSpy) scrapes those sites.
 - You want the widest list of companies and no model in the loop. [job-board-aggregator](https://github.com/Feashliaa/job-board-aggregator) indexes 20,000+ companies, Workday and Lever included, refreshed daily.
 
@@ -110,7 +110,7 @@ jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line f
 | `jobscan email` · `--off` | Sets up or stops emailing each digest |
 | `jobscan eval <set.json>` | Scores the tags against your own labelled postings |
 
-Exit codes: 0 done, 1 some postings left untagged or the digest couldn't be written or emailed, 2 a config or usage error. Logs: `~/.jobscan/runs.log`.
+`run` exit codes: 0 done, 1 some postings left untagged or the digest couldn't be written or emailed, 2 a config or usage error. Logs: `~/.jobscan/runs.log`.
 
 **Schedule.** On a Mac, `jobscan schedule --at 08:00` runs daily while you're logged in, and notifies you of new postings or a problem; a quiet day stays quiet. Asleep at 08:00: it runs when the Mac wakes, and several missed days make one run. Powered off: the next day's slot. Notifications may need allowing in System Settings › Notifications.
 
