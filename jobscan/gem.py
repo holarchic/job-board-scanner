@@ -2,6 +2,7 @@
 
 The payload is a bare list of jobs, shaped like Greenhouse's. Parsing is all-or-nothing per board, as for the
 others."""
+import re
 from urllib.parse import quote
 
 from jobscan.payload import board_slug, html_to_text, http_url, text_field
@@ -10,9 +11,10 @@ from jobscan.records import Board, BoardError, Posting
 ATS = "gem"
 DISPLAY_NAME = "Gem"
 CRAWL_HOSTS = ("jobs.gem.com",)
-API_PATH = ["job_board", "v0"]
-API = "https://api.gem.com/job_board/v0/"
+API_PATH = ("job_board", "v0")
+API = "https://api.gem.com/" + "/".join(API_PATH) + "/"
 LIST = "/job_posts/"
+REMOTE = re.compile(r"(?<!\w)remote(?!\w)")  # word-adjacent, as `prefilter` matches a `Remote` term
 
 
 # Gem board paths are case-sensitive (`BigPanda` is a 404 where `bigpanda` reads), so a slug keeps its case.
@@ -23,7 +25,7 @@ def api_board(company: str, url: str) -> Board | None:
     """A job board API URL on any host (how tests point at a fake server); the host is kept."""
     parsed = http_url(url)
     path = [p for p in parsed.path.split("/") if p] if parsed else []
-    if path[:2] != API_PATH or len(path) < 3:
+    if tuple(path[:2]) != API_PATH or len(path) < 3:
         return None
     return _board(company, board_slug(path[2]), f"{parsed.scheme}://{parsed.netloc}/{'/'.join(API_PATH)}/")
 
@@ -84,7 +86,7 @@ def _locations(job: dict, index: int) -> list[str]:
         if name and name not in places:
             places.append(name)
     kind = text_field(job, "location_type", index)
-    if kind == "remote" and not any("remote" in p.casefold() for p in places):
+    if kind == "remote" and not any(REMOTE.search(p.casefold()) for p in places):
         places.append("Remote")
     return places
 

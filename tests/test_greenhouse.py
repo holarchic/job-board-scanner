@@ -27,6 +27,9 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(fetch.board_for("", "https://job-boards.greenhouse.io/harrison%26star").api_url,
                          API + "harrison%26star/jobs?content=true")
 
+    def test_a_token_is_folded_before_it_is_checked(self):
+        self.assertEqual(fetch.board_for("", "https://job-boards.greenhouse.io/%E2%84%AAlarna").id, "greenhouse:klarna")
+
     def test_semicolons_stay_in_the_token(self):
         for url in ["https://job-boards.greenhouse.io/x;y", "https://job-boards.greenhouse.io/x%3By",
                     "https://job-boards.greenhouse.io/x;y/jobs/1"]:

@@ -1,7 +1,8 @@
 """Gem adapter: board URLs → boards, and job board API payloads → postings."""
 import unittest
 
-from jobscan import gem, tag
+from jobscan import gem, prefilter, tag
+from jobscan.config import Profile
 from jobscan.records import BoardError
 from tests.fakes import gem_job
 
@@ -53,6 +54,14 @@ class ParseTest(unittest.TestCase):
                                    ("United States - Remote", "United States - Remote")]:
             job = gem_job("1", "AE", location, location_type="remote")
             self.assertEqual(gem.parse(self.board, [job])[0].location, expected)
+
+    def test_remote_is_added_unless_a_name_says_remote_as_a_word(self):
+        remote_only = Profile(name="r", titles=("AE",), exclude_titles=(), locations=("Remote",), eligible_where="",
+                              tags=(), custom_tags=())
+        for location, offices in [("Work remotely", ()), ("United States", [("RemoteHQ", "")])]:
+            (p,) = gem.parse(self.board, [gem_job("1", "AE", location, offices=offices, location_type="remote")])
+            self.assertTrue(p.location.endswith(" / Remote"), p.location)
+            self.assertTrue(prefilter.matches(p, remote_only), p.location)
 
     def test_missing_location_and_offices_are_empty(self):
         for change in [{"location": None, "offices": None}, {"location": {"name": ""}, "offices": []}]:

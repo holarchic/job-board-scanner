@@ -3,7 +3,7 @@
 One API host serves US and EU boards. Parsing is all-or-nothing per board, as for Ashby."""
 import html
 import re
-from urllib.parse import parse_qs, quote
+from urllib.parse import parse_qs, quote, unquote
 
 from jobscan.payload import board_slug, html_to_text, http_url, text_field
 from jobscan.records import Board, BoardError, Posting
@@ -56,8 +56,8 @@ def _board(company: str, slug: str | None, base: str) -> Board | None:
 
 
 def _slug(raw: str, decoded: bool = False) -> str | None:
-    slug = board_slug(raw, decoded)
-    return slug.lower() if slug is not None else None
+    """Case-folded before the check: `%E2%84%AA` (the Kelvin sign) folds to `k`."""
+    return board_slug((raw if decoded else unquote(raw)).lower(), decoded=True)
 
 
 def parse(board: Board, data) -> tuple[Posting, ...]:

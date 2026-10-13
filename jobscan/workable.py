@@ -11,8 +11,8 @@ from jobscan.records import Board, BoardError, Posting
 ATS = "workable"
 DISPLAY_NAME = "Workable"
 CRAWL_HOSTS = ("apply.workable.com",)
-API_PATH = ["api", "v1", "widget", "accounts"]
-API = "https://apply.workable.com/api/v1/widget/accounts/"
+API_PATH = ("api", "v1", "widget", "accounts")
+API = f"https://{CRAWL_HOSTS[0]}/" + "/".join(API_PATH) + "/"
 DETAILS = "?details=true"  # descriptions in the list, requirements and benefits included
 NOT_BOARDS = frozenset({"j", "api"})  # apply.workable.com/j/<shortcode> links a job without naming its account
 
@@ -25,7 +25,7 @@ def api_board(company: str, url: str) -> Board | None:
     """A widget-API URL on any host (how tests point at a fake server); the host is kept."""
     parsed = http_url(url)
     path = [p for p in parsed.path.split("/") if p] if parsed else []
-    if path[:4] != API_PATH or len(path) < 5:
+    if tuple(path[:4]) != API_PATH or len(path) < 5:
         return None
     return _board(company, board_slug(path[4]), f"{parsed.scheme}://{parsed.netloc}/{'/'.join(API_PATH)}/")
 
@@ -61,20 +61,18 @@ def parse(board: Board, data) -> tuple[Posting, ...]:
     jobs = data.get("jobs") if isinstance(data, dict) else None
     if not isinstance(jobs, list):
         raise BoardError("response has no `jobs` list")
-    jobs_by_code: dict[str, tuple[_Entry, list[str]]] = {}
+    firsts: dict[str, _Entry] = {}  # by shortcode, in first-seen order
+    places: dict[str, list[str]] = {}
     for index, job in enumerate(jobs):
         entry = _entry(index, job)
-        if entry.shortcode not in jobs_by_code:
-            jobs_by_code[entry.shortcode] = (entry, [])
-        first, places = jobs_by_code[entry.shortcode]
+        first = firsts.setdefault(entry.shortcode, entry)
         if (entry.title, entry.description) != (first.title, first.description):
             raise BoardError(f"job {index}: shortcode {entry.shortcode} repeats with a different title or description")
-        for place in entry.places:
-            if place not in places:
-                places.append(place)
-    return tuple(Posting(key=f"{board.id}:{entry.shortcode}", ats=ATS, board=board.id, company=board.company,
-                         title=entry.title, location=" / ".join(places), url=entry.url, description=entry.description)
-                 for entry, places in jobs_by_code.values())
+        known = places.setdefault(entry.shortcode, [])
+        known += [p for p in dict.fromkeys(entry.places) if p not in known]
+    return tuple(Posting(key=f"{board.id}:{code}", ats=ATS, board=board.id, company=board.company, title=entry.title,
+                         location=" / ".join(places[code]), url=entry.url, description=entry.description)
+                 for code, entry in firsts.items())
 
 
 def _entry(index: int, job) -> _Entry:
