@@ -31,12 +31,13 @@ assert not failed, f"preflight: boards failed {[f.board.slug for f in failed]}"
 assert 1 <= len(matched) <= 3, f"preflight: {len(matched)} postings match; the fixture needs 1-3 (update tests/smoke/)"
 assert all(len(p.description) <= 15000 for p in matched), "preflight: a matched description exceeds 15,000 chars"
 print(f"preflight: {len(matched)} matching postings")
-# A fresh discovered list holding one dead board: `run` reads exactly the boards file's three, without crawling.
+# A fresh discovered list holding one dead board per ATS (an ATS with none is rediscovered): `run` reads exactly the
+# boards file's three, without crawling.
 from datetime import UTC, datetime
-from jobscan import store
+from jobscan import fetch, store
 from jobscan.records import Board
 conn = store.open_db(home)
-store.replace_discovered(conn, [Board("ashby", "sentinel", "sentinel", "http://127.0.0.1:9/never")],
+store.replace_discovered(conn, [Board(ats, "sentinel", "sentinel", "http://127.0.0.1:9/never") for ats in fetch.ADAPTERS],
                          datetime.now(UTC).isoformat(timespec="microseconds"))
 with conn:
     conn.execute("UPDATE boards SET not_found = ?", (store.DEAD_AFTER,))
