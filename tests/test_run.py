@@ -5,15 +5,18 @@ import io
 import json
 import os
 import re
+import smtplib
 import subprocess
 import sys
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 from unittest import mock
 
-from jobscan import ashby, cli, crawl, digest, fetch, greenhouse, notify, scan, store, tag
+from jobscan import ashby, cli, crawl, digest, fetch, greenhouse, mail, notify, scan, store, tag
 from jobscan.records import Board
 from tests.fakes import (
     FakeFiles,
@@ -22,6 +25,7 @@ from tests.fakes import (
     cdx_line,
     crawl_files,
     crawl_list,
+    fake_smtp,
     greenhouse_job,
     model_reply,
     tags_quoting_the_posting,
@@ -260,7 +264,8 @@ class NotifyTest(RunFixture):
 
     def test_crash(self):
         with mock.patch.object(notify, "notify") as sent, self.assertRaises(RuntimeError), \
-                mock.patch.object(scan, "scan", side_effect=RuntimeError("boom")):
+                mock.patch.object(scan, "scan", side_effect=RuntimeError("boom")), \
+                contextlib.redirect_stderr(io.StringIO()):
             cli.main(["run", "--notify"])
         self.assertIn("stopped with an error (RuntimeError)", sent.call_args.args[0])
 
@@ -277,6 +282,96 @@ class NotifyTest(RunFixture):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             code = cli.main(["run", "--notify"])
         return code, out.getvalue().strip().split("\t")
+
+
+class EmailRunTest(RunFixture):
+    """With email.toml, a run that publishes a digest emails its text; a failed send is reported, never resent."""
+
+    PASSWORD = "abcdefghijklmnop"
+
+    def setUp(self):
+        super().setUp()
+        self.write_email()
+        self.calls, self.refuse = [], {}
+        mock.patch.object(mail.smtplib, "SMTP_SSL", fake_smtp(self.calls, self.refuse)).start()
+
+    def write_email(self, mode=0o600, password=PASSWORD):
+        path = self.home / "email.toml"
+        path.write_text('to = "you@example.com"\nfrom = "me@gmail.com"\nhost = "smtp.gmail.com"\nport = 465\n'
+                        + (f'password = "{password}"\n' if password else ""))
+        path.chmod(mode)
+
+    def sent(self):
+        """Each sent message as the recipient's client reads it."""
+        return [BytesParser(policy=policy.default).parsebytes(args["message"].as_bytes(policy=policy.SMTP))
+                for name, args in self.calls if name == "send"]
+
+    def run_notified(self):
+        out = io.StringIO()
+        with mock.patch.object(notify, "notify") as notified, contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = cli.main(["run", "--notify"])
+        return code, out.getvalue().strip().split("\t"), [c.args[0] for c in notified.call_args_list]
+
+    def test_the_digest_is_emailed_and_a_quiet_run_sends_nothing(self):
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        (message,) = self.sent()
+        self.assertEqual((message["Subject"], message["From"], message["To"]),
+                         ("jobscan: 2 new for ae", "me@gmail.com", "you@example.com"))
+        self.assertEqual(message.get_content().replace("\r\n", "\n"), Path(path).read_text(encoding="utf-8"))
+        self.assertIn("email_sent to=you@example.com", (self.home / "runs.log").read_text())
+        self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
+        self.assertEqual(len(self.sent()), 1)
+
+    def test_a_digest_of_untagged_postings_is_emailed_too(self):
+        self.model.routes["/chat/completions"] = (503, {"error": "down"})
+        self.assertEqual(self.run_cli()[0], 1)
+        (message,) = self.sent()
+        self.assertEqual(message["Subject"], "jobscan: 0 new for ae · 2 untagged")
+
+    def test_no_digest_written_no_email(self):
+        (self.home / "digests").mkdir()
+        (self.home / "digests" / "ae").write_text("a file where the directory should be")
+        self.assertEqual(self.run_cli()[0], 1)
+        self.assertEqual(self.calls, [])
+
+    def test_a_failed_send_is_reported_and_never_resent(self):
+        self.refuse["login"] = smtplib.SMTPAuthenticationError(535, b"5.7.8 Username and Password not accepted")
+        code, (_, new, path), notified = self.run_notified()
+        self.assertEqual((code, new), (1, "2"))
+        self.assertEqual(notified, [f"2 new postings in {self.home / 'digests' / 'ae'}; "
+                                    "the digest couldn't be emailed; see runs.log"])
+        self.assertTrue(Path(path).exists())
+        log = (self.home / "runs.log").read_text()
+        self.assertRegex(log, r"ERROR email_failed reason=.SMTPAuthenticationError: \(535, ")
+        self.assertNotIn(self.PASSWORD, log)
+        del self.refuse["login"]
+        self.assertEqual(self.run_notified(), (0, ["ae", "0", "-"], []))
+        self.assertEqual(self.sent(), [])
+        self.assertEqual(len(self.digests()), 1)
+
+    def test_a_digest_that_cant_be_read_back_is_a_failed_send(self):
+        readable = Path.read_text
+
+        def unreadable_digests(path, *args, **kwargs):
+            if path.parent == self.home / "digests" / "ae":
+                raise PermissionError(13, "Permission denied")
+            return readable(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "read_text", autospec=True, side_effect=unreadable_digests):
+            code, _, notified = self.run_notified()
+        self.assertEqual(code, 1)
+        self.assertIn("the digest couldn't be emailed; see runs.log", notified[0])
+        self.assertEqual(self.sent(), [])
+
+    def test_a_broken_email_setup_stops_the_run_before_any_work(self):
+        for mode, password in [(0o644, self.PASSWORD), (0o600, None)]:
+            self.write_email(mode, password)
+            code, _, notified = self.run_notified()
+            self.assertEqual(code, 2, (mode, password))
+            self.assertIn("email.toml", notified[0])
+            self.assertEqual((self.ats.requests, self.calls), ([], []))
 
 
 class CustomTagsTest(RunFixture):

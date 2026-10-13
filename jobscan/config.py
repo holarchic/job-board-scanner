@@ -54,7 +54,21 @@ class Profile:
     custom_tags: tuple[CustomTag, ...]  # tagged after `tags`, in file order
 
 
+@dataclass(frozen=True)
+class EmailConfig:
+    """The user's own mail account, which sends each published digest to `to`; `sender` is also the SMTP login."""
+    to: str
+    sender: str
+    host: str
+    port: int  # 465: TLS from the start; any other port: STARTTLS, required
+    password: str = field(repr=False)
+
+
 KEY_FILE = "openrouter.key"
+EMAIL_FILE = "email.toml"
+EMAIL_KEYS = frozenset({"to", "from", "host", "port", "password"})
+# One bare mailbox, so a value can never become two header addresses.
+MAILBOX = re.compile(r'[^\s@,;<>()\[\]\\"]+@[^\s@,;<>()\[\]\\".]+(?:\.[^\s@,;<>()\[\]\\".]+)+')
 CUSTOM_TAG_NAME = re.compile(r"[a-z][a-z0-9_]*")
 CUSTOM_TAG_VALUES = ("yes", "no", "unknown")
 
@@ -106,14 +120,50 @@ def usable_key(key: str) -> bool:
     return bool(key) and key.isascii() and key.isprintable() and " " not in key
 
 
-def _key_file(path: Path) -> str:
-    """The key a scheduled run reads, since launchd passes no shell environment. Refused when anyone but the owner
-    can read it, as ssh refuses a loose private key; the mode is checked on the file that is then read."""
+def load_email(home: Path) -> EmailConfig | None:
+    """None when the install doesn't email digests. Read by `run` and `schedule` only. Errors name the field, never
+    the password."""
+    path = home / EMAIL_FILE
     try:
-        with path.open("rb") as f:
-            if os.fstat(f.fileno()).st_mode & 0o077:
-                raise ConfigError(f"{path}: other users can read it; run `chmod 600 {path}`")
-            key = f.read().decode().strip()
+        text = _secret_text(path)
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeDecodeError) as e:
+        raise ConfigError(f"{path}: not readable ({type(e).__name__})") from None
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError(f"{path}: {e}") from None
+    if set(data) != EMAIL_KEYS:
+        raise ConfigError(f"{path}: needs exactly {', '.join(sorted(EMAIL_KEYS))}")
+    for key in ("to", "from"):
+        if not (isinstance(data[key], str) and data[key].isascii() and data[key].isprintable()
+                and MAILBOX.fullmatch(data[key])):
+            raise ConfigError(f"{path}: `{key}` must be one email address, like name@example.com")
+    host, port, password = data["host"], data["port"], data["password"]
+    if not (isinstance(host, str) and host and host.isascii() and host.isprintable() and " " not in host):
+        raise ConfigError(f"{path}: `host` must be a server name, like smtp.gmail.com")
+    if not (isinstance(port, int) and not isinstance(port, bool) and 0 < port < 65536):
+        raise ConfigError(f"{path}: `port` must be a number from 1 to 65535")
+    # smtplib sends the login as ASCII; anything else would fail at send time, after the run.
+    if not (isinstance(password, str) and password and password.isascii() and password.isprintable()):
+        raise ConfigError(f"{path}: `password` must be the app password, in plain ASCII")
+    return EmailConfig(to=data["to"], sender=data["from"], host=host, port=port, password=password)
+
+
+def _secret_text(path: Path) -> str:
+    """A file holding a secret: refused when anyone but the owner can read it, as ssh refuses a loose private key;
+    the mode is checked on the file that is then read."""
+    with path.open("rb") as f:
+        if os.fstat(f.fileno()).st_mode & 0o077:
+            raise ConfigError(f"{path}: other users can read it; run `chmod 600 {path}`")
+        return f.read().decode()
+
+
+def _key_file(path: Path) -> str:
+    """The key a scheduled run reads, since launchd passes no shell environment."""
+    try:
+        key = _secret_text(path).strip()
     except FileNotFoundError:
         raise ConfigError(f"no OpenRouter key: set OPENROUTER_API_KEY or put the key in {path}") from None
     except (OSError, UnicodeDecodeError) as e:

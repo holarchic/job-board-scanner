@@ -1,7 +1,8 @@
-"""Local HTTP servers standing in for Ashby, the model endpoint and Common Crawl's index files in tests."""
+"""Local servers standing in for Ashby, the model endpoint, Common Crawl's index files and mail servers in tests."""
 import gzip
 import json
 import re
+import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -164,3 +165,67 @@ def tags_quoting_the_posting(payload):
             "segment": {"value": [], "quote": None},
             "language_required": {"value": "no", "quote": None},
             "tech_company": {"value": "unknown", "quote": None}}
+
+
+def fake_smtp(calls: list, fail: dict | None = None):
+    """A stand-in for smtplib.SMTP / SMTP_SSL recording each call as (name, args) in `calls`; `fail[name]` is raised
+    by that call (`connect` is the constructor), read when the call happens."""
+    fail = {} if fail is None else fail
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None, context=None):
+            self._call("connect", host=host, port=port, timeout=timeout, context=context)
+
+        def _call(self, name, **args):
+            calls.append((name, args))
+            if name in fail:
+                raise fail[name]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            calls.append(("quit", {}))
+
+        def starttls(self, context=None):
+            self._call("starttls", context=context)
+
+        def login(self, user, password):
+            self._call("login", user=user, password=password)
+
+        def send_message(self, message):
+            self._call("send", message=message)
+
+    return FakeSMTP
+
+
+class PlainSMTPServer:
+    """A real SMTP conversation over plain TCP that never offers STARTTLS; every line received is kept in `lines`."""
+
+    def __init__(self):
+        self.lines = []
+        server = self
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self):
+                self.wfile.write(b"220 fake ESMTP\r\n")
+                for raw in self.rfile:
+                    line = raw.decode("ascii", "replace").rstrip("\r\n")
+                    server.lines.append(line)
+                    verb = line.split(" ")[0].upper()
+                    if verb == "EHLO":
+                        self.wfile.write(b"250-fake\r\n250 AUTH PLAIN LOGIN\r\n")
+                    elif verb == "QUIT":
+                        self.wfile.write(b"221 bye\r\n")
+                        return
+                    else:
+                        self.wfile.write(b"250 ok\r\n")
+
+        self.server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()

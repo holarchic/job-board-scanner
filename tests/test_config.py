@@ -4,8 +4,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from jobscan.config import ConfigError, CustomTag, load_config, load_profile
+from jobscan.config import ConfigError, CustomTag, EmailConfig, load_config, load_email, load_profile
 
+EMAIL = {"to": '"you@example.com"', "from": '"me@gmail.com"', "host": '"smtp.gmail.com"', "port": "465",
+         "password": '"abcd efgh-ijkl"'}
 OPENROUTER = 'boards_file = "b.json"\n[model]\nbase_url = "https://openrouter.ai/api/v1"\nslug = "x/y"\n'
 
 
@@ -125,6 +127,53 @@ class ConfigTest(unittest.TestCase):
             'titles = ["AE"]\nlocations = ["London"]\neligible_where = "the UK"\ntags = ["founding", "founding"]\n')
         with self.assertRaises(ConfigError):
             load_profile(self.home)
+
+
+class EmailConfigTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name)
+
+    def load(self, mode=0o600, **fields):
+        values = {**EMAIL, **fields}
+        path = self.home / "email.toml"
+        path.write_text("".join(f"{k} = {v}\n" for k, v in values.items() if v is not None))
+        path.chmod(mode)
+        return load_email(self.home)
+
+    def test_no_file_no_email(self):
+        self.assertIsNone(load_email(self.home))
+
+    def test_settings_load_with_the_password_as_written(self):
+        email = self.load()
+        self.assertEqual(email, EmailConfig(to="you@example.com", sender="me@gmail.com", host="smtp.gmail.com",
+                                            port=465, password="abcd efgh-ijkl"))
+        self.assertNotIn("abcd", repr(email))
+
+    def test_bad_settings_are_refused_without_echoing_the_password(self):
+        for mode, fields in [
+            (0o640, {}), (0o604, {}),
+            (0o600, {"to": '"@example.com"'}), (0o600, {"to": '"you@example"'}),
+            (0o600, {"to": '"a@example.com, b@example.com"'}), (0o600, {"to": '"You <you@example.com>"'}),
+            (0o600, {"from": '"me@gmäil.com"'}), (0o600, {"from": '"me\\u0001@gmail.com"'}), (0o600, {"to": "3"}),
+            (0o600, {"host": '""'}), (0o600, {"host": '"smtp gmail.com"'}), (0o600, {"port": "0"}),
+            (0o600, {"port": "65536"}), (0o600, {"port": '"465"'}), (0o600, {"port": "true"}),
+            (0o600, {"password": '""'}), (0o600, {"password": '"pässword"'}),
+            (0o600, {"password": '"abc\\ndef"'}), (0o600, {"password": None}), (0o600, {"note": '"x"'}),
+        ]:
+            with self.assertRaises(ConfigError, msg=(mode, fields)) as caught:
+                self.load(mode, **fields)
+            self.assertNotIn("abcd", str(caught.exception))
+            self.assertIn("email.toml", str(caught.exception))
+
+    def test_unparseable_file_is_refused(self):
+        path = self.home / "email.toml"
+        path.write_text('password = "abcd efgh\n')
+        path.chmod(0o600)
+        with self.assertRaises(ConfigError) as caught:
+            load_email(self.home)
+        self.assertNotIn("abcd", str(caught.exception))
 
 
 if __name__ == "__main__":

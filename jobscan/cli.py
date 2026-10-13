@@ -7,8 +7,8 @@ from datetime import time
 from pathlib import Path
 from time import monotonic
 
-from jobscan import discover, evaluate, init, notify, scan, schedule, store, tag
-from jobscan.config import ConfigError, jobscan_home, load_config, load_profile
+from jobscan import discover, evaluate, init, mail, notify, scan, schedule, store, tag
+from jobscan.config import ConfigError, EmailConfig, jobscan_home, load_config, load_email, load_profile
 from jobscan.crawl import CrawlError
 
 EXIT_OK, EXIT_INCOMPLETE, EXIT_USAGE = 0, 1, 2
@@ -55,6 +55,7 @@ def _run(home: Path, notifying: bool) -> int:
     entered = monotonic()
     try:
         config = load_config(home)
+        email = load_email(home)
         profile = load_profile(home)
         defs = tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
         _setup_logging(home)
@@ -70,10 +71,25 @@ def _run(home: Path, notifying: bool) -> int:
             notify.notify(f"jobscan stopped with an error ({type(e).__name__}); see {home / 'launchd.log'}")
         raise
     print(f"{outcome.profile}\t{outcome.new}\t{outcome.digest_path or '-'}")
-    news = _news(outcome)
+    emailed = _email_digest(email, outcome)
+    news = _news(outcome, emailed)
     if notifying and news:
         notify.notify(news)
-    return EXIT_OK if outcome.complete else EXIT_INCOMPLETE
+    return EXIT_OK if outcome.complete and emailed else EXIT_INCOMPLETE
+
+
+def _email_digest(email: EmailConfig | None, outcome: scan.ScanOutcome) -> bool:
+    """False only when there was a digest to email and it couldn't be: the file stays, and no later run resends it."""
+    if email is None or outcome.digest_path is None:
+        return True
+    try:
+        text = outcome.digest_path.read_text(encoding="utf-8")
+        mail.send(email, mail.digest_message(email, outcome.profile, outcome.new, outcome.carried_over, text))
+    except (OSError, UnicodeDecodeError, mail.MailError) as e:
+        log.error("email_failed reason=%r", str(e) or type(e).__name__)
+        return False
+    log.info("email_sent to=%s", email.to)
+    return True
 
 
 def _refused(reason: str, notifying: bool) -> int:
@@ -83,7 +99,7 @@ def _refused(reason: str, notifying: bool) -> int:
     return EXIT_USAGE
 
 
-def _news(outcome: scan.ScanOutcome) -> str | None:
+def _news(outcome: scan.ScanOutcome, emailed: bool) -> str | None:
     parts = []
     if outcome.new:
         parts.append(f"{outcome.new} new posting{'' if outcome.new == 1 else 's'} in {outcome.digest_path.parent}")
@@ -91,6 +107,8 @@ def _news(outcome: scan.ScanOutcome) -> str | None:
         parts.append(f"{outcome.carried_over} couldn't be tagged yet; see runs.log")
     if outcome.digest_failed:
         parts.append("the digest couldn't be written; see runs.log")
+    if not emailed:
+        parts.append("the digest couldn't be emailed; see runs.log")
     return "; ".join(parts) or None
 
 
@@ -107,6 +125,7 @@ def _schedule(home: Path, at: time | None) -> int:
     if at is not None:
         try:
             load_config(home, environ={})
+            load_email(home)
             profile = load_profile(home)
             tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
         except ConfigError as e:

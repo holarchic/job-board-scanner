@@ -227,6 +227,16 @@ class ScheduleCliTest(unittest.TestCase):
         self.assertEqual((code, self.launchctl.calls), (2, []))
         self.assertIn("openrouter.key", err)
 
+    def test_a_broken_email_setup_is_refused(self):
+        self.key_file()
+        email = self.home / "email.toml"
+        for mode, text in [(0o644, 'password = "x"\n'), (0o600, 'to = "you@example.com"\n')]:
+            email.write_text(text)
+            email.chmod(mode)
+            code, _, err = self.run_cli("--at", "08:00")
+            self.assertEqual((code, self.launchctl.calls), (2, []), mode)
+            self.assertIn("email.toml", err)
+
     def test_schedule_and_unschedule(self):
         self.key_file()
         code, out, _ = self.run_cli("--at", "8:30")
