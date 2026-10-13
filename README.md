@@ -1,6 +1,6 @@
 # jobscan
 
-jobscan finds company job boards on Ashby and Greenhouse, keeps the postings that match your titles and locations, and has a language model tag each match. You run it yourself; it writes a markdown digest of what's new.
+jobscan finds company job boards on Ashby and Greenhouse, keeps the postings that match your titles and locations, and has a language model tag each match. You run it yourself; it writes a markdown digest of what's new and can email it to you.
 
 Answers that need evidence quote the posting, and jobscan checks the quote is really there; a missing or unmatched quote shows ⚠. A quote that's there doesn't prove the answer right.
 
@@ -25,7 +25,7 @@ macOS or Linux, and an [OpenRouter](https://openrouter.ai) API key with credit.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"
 uv tool install git+https://github.com/holarchic/jobscan   # fetches Python 3.11+ if needed
-jobscan init                   # asks for your search and your key
+jobscan init                   # asks for your search, your key and, optionally, an email account
 jobscan run                    # prints the path of your first digest
 jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line for `crontab -e`
 ```
@@ -47,6 +47,7 @@ jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line f
 - One search per install. A role posted separately per city, or reposted, appears each time.
 - Heavy: every run fetches about 216,000 postings, in about eight minutes; Greenhouse alone is roughly 2 GB of downloads. The database grows to about 1.4 GB.
 - Notifications are Mac only, and the schedule runs only while you're logged in.
+- Email needs an app password: Gmail and iCloud work; personal Outlook.com and Hotmail accounts don't (Microsoft allows only OAuth sign-in). A digest whose email fails isn't resent.
 
 ## Tags
 
@@ -95,9 +96,11 @@ For a second search, `export JOBSCAN_HOME="$HOME/.jobscan-pm"`, then run `init`,
 
 **Boards.** jobscan reads the three newest [Common Crawl](https://commoncrawl.org) crawls for Ashby and Greenhouse boards, in about twenty seconds. `run` does this itself every 30 days, and when jobscan learns a new job site; `jobscan discover` does it now. If any crawl can't be read, the old list stays. A discovered board is skipped after three "not found" answers without a successful read between them; boards you list are always tried.
 
-**Digests.** `run` prints the search name, the count of new postings and the digest's path, in `~/.jobscan/digests/<search>/`. A second digest on the same day gets `-2`, `-3`. A posting appears in one digest only; a repost under a new ID is new. Matches the model couldn't tag wait for a later run. No new matches, no file. Exit codes: 0 done, 1 some postings left untagged or the digest couldn't be written, 2 a config or usage error. Logs: `~/.jobscan/runs.log`.
+**Digests.** `run` prints the search name, the count of new postings and the digest's path, in `~/.jobscan/digests/<search>/`. A second digest on the same day gets `-2`, `-3`. A posting appears in one digest only; a repost under a new ID is new. Matches the model couldn't tag wait for a later run. No new matches, no file. Exit codes: 0 done, 1 some postings left untagged or the digest couldn't be written or emailed, 2 a config or usage error. Logs: `~/.jobscan/runs.log`.
 
 **Schedule.** On a Mac, `jobscan schedule --at 08:00` runs daily while you're logged in, and notifies you of new postings or a problem; a quiet day stays quiet. Asleep at 08:00: it runs when the Mac wakes, and several missed days make one run. Powered off: the next day's slot. Notifications may need allowing in System Settings › Notifications. `jobscan schedule --off` stops it.
+
+**Email.** `jobscan email` sets up emailing each digest from your own mail account, as `init` offers to. It asks for the address and an app password (Gmail: [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords), which needs 2-Step Verification; iCloud: [account.apple.com](https://account.apple.com), App-Specific Passwords), sends a test email, and saves the settings in `~/.jobscan/email.toml`, readable only by you, once the test arrives. Other providers work if their mail server takes the address as its login over TLS. From then on every run with a digest emails it; a quiet run sends nothing. If sending fails, the run exits 1, says so in the notification, and the digest stays on disk. `jobscan email` again changes the settings; `jobscan email --off` stops it.
 
 **Updating and troubleshooting.** `uv tool upgrade jobscan` updates it; the schedule keeps working. `jobscan: command not found`: run `uv tool update-shell` and open a new terminal. A fresh Mac may ask to install Apple's command-line developer tools; say yes. If daily runs stop after a uv update, run `uv tool install --reinstall git+https://github.com/holarchic/jobscan`, then `jobscan schedule --at 08:00` again.
 
