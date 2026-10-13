@@ -1,8 +1,11 @@
-# jobscan
+# job-board-scanner
 
-jobscan finds company job boards on Ashby and Greenhouse, keeps the postings that match your titles and locations, and has a language model tag each match. You run it yourself; it writes a markdown digest of what's new and can email it to you.
+[![CI](https://github.com/holarchic/job-board-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/holarchic/job-board-scanner/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/holarchic/job-board-scanner)](LICENSE)
 
-Answers that need evidence quote the posting, and jobscan checks the quote is really there; a missing or unmatched quote shows ⚠. A quote that's there doesn't prove the answer right.
+Self-hosted job-board scanner for tech roles: Ashby, Greenhouse, Gem and Workable, LLM-tagged, in a daily email digest.
+
+> **Status:** running daily on my own search since October 2026, version 0.1.0. Pre-1.0: the config, the database and the digest format can still change.
 
 ```
 # ae-london — 2026-10-12 · 1 new
@@ -17,43 +20,24 @@ https://jobs.ashbyhq.com/acme/1 · Ashby · first seen 2026-10-12 · 14 open rol
 - language_required: no
 ```
 
-## Attribution
+## Why
 
-For those who care about such things, the majority of the analysis and code in this repo was produced by Claude Opus 5.5 (Anthropic), with david guiding Claude, providing insights, direction and critical review throughout the process.
+For anyone after a role at tech companies who wants every new posting that matches their titles, each morning, including from companies they'd never have thought to check. I built it for my London Account Executive search.
 
-## Quick start
+It finds the job boards itself, reads them directly and has a language model tag each match. Answers that need evidence quote the posting, and it checks the quote is really there. It runs on your machine with your own model key, at about $0.0005 a posting.
 
-macOS or Linux, and an [OpenRouter](https://openrouter.ai) API key with credit.
+**When not to use it:**
 
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source "$HOME/.local/bin/env"
-uv tool install git+https://github.com/holarchic/jobscan   # fetches Python 3.11+ if needed
-jobscan init                   # asks for your search, your key and, optionally, an email account
-jobscan run                    # prints the path of your first digest
-jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line for `crontab -e`
-```
+- You want something hosted, free and set up in a minute. [HiringCafe](https://hiring.cafe) reads company career pages, Workday included, and emails alerts. It ranks by CV match rather than filtering on what the posting says.
+- You need LinkedIn, Indeed or Glassdoor. This reads company boards only; [JobSpy](https://github.com/speedyapply/JobSpy) scrapes those sites.
+- You want the widest list of companies and no model in the loop. [job-board-aggregator](https://github.com/Feashliaa/job-board-aggregator) indexes 20,000+ companies, Workday and Lever included, refreshed daily.
 
-## Strengths and gaps
+## What it does
 
-**Good at**
-- Searches where a few titles narrow the field and the posting answers the rest. I built it for my London Account Executive search.
-- Finding boards you didn't know about: about 4,000 on Ashby and 4,800 on Greenhouse, of which about 8,000 answer. Of my hand-built list it finds 111 of 114 Ashby boards and 33 of 37 Greenhouse ones.
-- Cost: about $0.0005 a posting with the default model. My first runs: AE, 233 postings, 47 minutes, at least $0.11; PM, 169 postings, 7 minutes, $0.08, then 118 more from Greenhouse for $0.05.
-- No runtime dependencies: standard-library Python and one SQLite file.
-
-**Gaps**
-- Ashby and Greenhouse only: no Lever, Workable, Workday (where Nvidia, Intel and Salesforce hire) or job sites. Companies that embed Greenhouse in their own careers page, such as Fivetran and Wiz, need the boards file.
-- Tags label matches; they don't filter the digest. There's no spend cap.
-- Tests cover AE and PM postings only, with just 8 founding roles. In the five-tag test, 8 of 11 `founding: yes` answers were right.
-- No funding stage or company age; the open-role count is a rough read on size.
-- Discovered companies show under their board name (`1password`, not `1Password`) unless you list them in a boards file.
-- One search per install. A role posted separately per city, or reposted, appears each time.
-- Heavy: every run fetches about 216,000 postings, in about eight minutes; Greenhouse alone is roughly 2 GB of downloads. The database grows to about 1.4 GB.
-- Notifications are Mac only, and the schedule runs only while you're logged in.
-- Email needs an app password: Gmail and iCloud work; personal Outlook.com and Hotmail accounts don't (Microsoft allows only OAuth sign-in). A digest whose email fails isn't resent.
-
-## Tags
+- **Finds boards** in the three newest [Common Crawl](https://commoncrawl.org) crawls: about 4,000 on Ashby, 4,800 on Greenhouse and 1,100 on Gem. About 8,000 of the Ashby and Greenhouse ones answer. Of my hand-built list it finds 111 of 114 Ashby boards, 33 of 37 Greenhouse ones and all 4 on Gem.
+- **Reads Workable boards you list** in a boards file. Discovery would find about 5,300, but Workable rate-limits a full daily sweep, so it doesn't attempt one.
+- **Filters** postings by your titles and locations, then **tags** each match with the model. Answers that need evidence quote the posting; a missing or unmatched quote shows ⚠. A quote that's there doesn't prove the answer right.
+- **Writes a markdown digest** of what's new, and can email it and raise a Mac notification.
 
 | Tag | Answers |
 |-----|---------|
@@ -65,9 +49,85 @@ jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line f
 
 ⓘ marks the tags no labelled set has checked: `segment`, `tech_company`, `location_eligible` outside the UK, and your own.
 
-## Your search
+It works best where a few titles narrow the field and the posting answers the rest. My first runs: AE, 233 postings, 47 minutes, at least $0.11; PM, 169 postings, 7 minutes, $0.08, then 118 more from Greenhouse for $0.05.
 
-Your search lives in `~/.jobscan/profiles/`, a TOML file `init` writes; edit it any time. `init` also writes `config.toml` and your key in `openrouter.key`, readable only by you.
+**Limits:**
+
+- No Lever, Workday (where Nvidia, Intel and Salesforce hire), Teamtailor, Personio or job sites. Companies that embed Greenhouse in their own careers page, such as Fivetran and Wiz, need the boards file.
+- Tags label matches; they don't filter the digest. There's no spend cap.
+- Tests cover AE and PM postings only, with just 8 founding roles. In the five-tag test, 8 of 11 `founding: yes` answers were right.
+- No funding stage or company age; the open-role count is a rough read on size.
+- One search per install.
+
+## Behaviour notes
+
+- **One digest per posting.** A posting appears in one digest only; a repost under a new ID is new, and a role posted separately per city appears once per city.
+- **Untagged matches wait.** Matches the model couldn't tag go into a later run's digest.
+- **No new matches, no file.** A second digest on the same day gets `-2`, `-3`.
+- **Company names** come from the board name (`1password`, not `1Password`) unless you list the company in a boards file.
+- **Dead boards:** a discovered board is skipped after three "not found" answers without a successful read between them. Boards you list are always tried.
+- **Failed emails** aren't resent; the digest stays on disk.
+
+## How it works
+
+- **Discovery:** reads each board host's captures straight from Common Crawl's index files, in about thirty seconds. `run` refreshes the list every 30 days and when an upgrade adds a job site. If any crawl can't be read, the old list stays.
+- **Fetch:** every board's public job API, eight at a time. One board's failure never stops the run.
+- **Filter:** titles and locations match whole words, ignoring case, before any model call.
+- **Tag:** one model call per posting with all your tags, a strict JSON schema, and each quote checked against the posting text.
+- **Store:** everything in one SQLite file under `~/.jobscan`; no runtime dependencies beyond standard-library Python.
+
+## Requirements
+
+macOS or Linux, and an [OpenRouter](https://openrouter.ai) API key with credit. uv fetches Python 3.11+ if you don't have it.
+
+Measured on my install: every run fetches about 216,000 postings from Ashby and Greenhouse in about eight minutes, plus about 5,000 from Gem. Greenhouse alone is roughly 2 GB of downloads. The database grows to about 1.4 GB.
+
+Notifications are Mac only, and the schedule runs only while you're logged in.
+
+## Quick start
+
+The repo is job-board-scanner; the command it installs is still `jobscan`.
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env"
+uv tool install git+https://github.com/holarchic/job-board-scanner   # fetches Python 3.11+ if needed
+jobscan init                   # asks for your search, your key and, optionally, an email account
+jobscan run                    # prints the path of your first digest
+jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line for `crontab -e`
+```
+
+`run` prints the search name, the count of new postings and the digest's path, in `~/.jobscan/digests/<search>/`.
+
+## Commands
+
+| Command | Does |
+|---|---|
+| `jobscan init` | Asks for your search, your OpenRouter key and, optionally, an email account; writes `~/.jobscan` |
+| `jobscan run [--notify]` | Fetch, filter, tag, write the digest. `--notify` raises a Mac notification on news or a problem |
+| `jobscan discover` | Rebuilds the board list now |
+| `jobscan schedule --at HH:MM` · `--off` | Daily run on a Mac; elsewhere prints a cron line |
+| `jobscan email` · `--off` | Sets up or stops emailing each digest |
+| `jobscan eval <set.json>` | Scores the tags against your own labelled postings |
+
+Exit codes: 0 done, 1 some postings left untagged or the digest couldn't be written or emailed, 2 a config or usage error. Logs: `~/.jobscan/runs.log`.
+
+**Schedule.** On a Mac, `jobscan schedule --at 08:00` runs daily while you're logged in, and notifies you of new postings or a problem; a quiet day stays quiet. Asleep at 08:00: it runs when the Mac wakes, and several missed days make one run. Powered off: the next day's slot. Notifications may need allowing in System Settings › Notifications.
+
+**Email.** `jobscan email` asks for the address, which of your accounts sends it (the same one, or another such as a Gmail account), and that account's app password (Gmail: [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords), which needs 2-Step Verification; iCloud: [account.apple.com](https://account.apple.com), App-Specific Passwords). It sends a test email and saves the settings in `~/.jobscan/email.toml`, readable only by you, once your mail server accepts it. From then on every run with a digest emails it; a quiet run sends nothing. If sending fails, the run exits 1 and says so in the notification. Gmail and iCloud work; personal Outlook.com and Hotmail accounts don't (Microsoft allows only OAuth sign-in). Google offers no app passwords to accounts under Advanced Protection or signing in only with security keys, and a Workspace admin can turn them off. Other providers work if their mail server takes the address as its login over TLS.
+
+**Updating and troubleshooting.** `uv tool upgrade jobscan` updates it; the schedule keeps working. `jobscan: command not found`: run `uv tool update-shell` and open a new terminal. A fresh Mac may ask to install Apple's command-line developer tools; say yes. If daily runs stop after a uv update, run `uv tool install --reinstall git+https://github.com/holarchic/job-board-scanner`, then `jobscan schedule --at 08:00` again.
+
+## Configuration
+
+| File | Controls |
+|---|---|
+| `~/.jobscan/profiles/<search>.toml` | Your search: titles, locations, tags. Edit it any time |
+| `~/.jobscan/config.toml` | The model, and an optional boards file |
+| `~/.jobscan/openrouter.key` | Your key, readable only by you |
+| `~/.jobscan/email.toml` | Mail settings and app password, readable only by you |
+
+`init` writes the first three.
 
 ```toml
 titles = ["Product Manager"]
@@ -80,11 +140,11 @@ tags = ["founding", "location_eligible", "language_required", "tech_company"]
 definition = "The company sells to businesses, not consumers."
 ```
 
-Titles and locations match whole words, ignoring case; `locations` is checked against the posting's location field only. `eligible_where` is what `location_eligible` asks the model about.
+`locations` is checked against the posting's location field only. `eligible_where` is what `location_eligible` asks the model about.
 
 Your own tags run on every matching posting. Say what each answer means; `jobscan/tags.toml` has examples. `values` defaults to yes, no, unknown; `multi = true` answers a list; `default` is the answer when the posting is silent.
 
-To add companies discovery misses, put `boards_file` above `[model]` in `config.toml`:
+To add companies discovery misses, or your Workable boards, put `boards_file` above `[model]` in `config.toml`:
 
 ```toml
 boards_file = "boards.json"          # relative to ~/.jobscan, or absolute
@@ -95,18 +155,6 @@ boards_file = "boards.json"          # relative to ~/.jobscan, or absolute
 ```
 
 For a second search, `export JOBSCAN_HOME="$HOME/.jobscan-pm"`, then run `init`, `run` and `schedule` with it set.
-
-## Running it
-
-**Boards.** jobscan reads the three newest [Common Crawl](https://commoncrawl.org) crawls for Ashby and Greenhouse boards, in about twenty seconds. `run` does this itself every 30 days, and when jobscan learns a new job site; `jobscan discover` does it now. If any crawl can't be read, the old list stays. A discovered board is skipped after three "not found" answers without a successful read between them; boards you list are always tried.
-
-**Digests.** `run` prints the search name, the count of new postings and the digest's path, in `~/.jobscan/digests/<search>/`. A second digest on the same day gets `-2`, `-3`. A posting appears in one digest only; a repost under a new ID is new. Matches the model couldn't tag wait for a later run. No new matches, no file. Exit codes: 0 done, 1 some postings left untagged or the digest couldn't be written or emailed, 2 a config or usage error. Logs: `~/.jobscan/runs.log`.
-
-**Schedule.** On a Mac, `jobscan schedule --at 08:00` runs daily while you're logged in, and notifies you of new postings or a problem; a quiet day stays quiet. Asleep at 08:00: it runs when the Mac wakes, and several missed days make one run. Powered off: the next day's slot. Notifications may need allowing in System Settings › Notifications. `jobscan schedule --off` stops it.
-
-**Email.** `jobscan email` sets up emailing each digest from your own mail account, as `init` offers to. It asks for the address, which of your accounts sends it (the same one, or another such as a Gmail account), and that account's app password (Gmail: [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords), which needs 2-Step Verification; iCloud: [account.apple.com](https://account.apple.com), App-Specific Passwords), sends a test email, and saves the settings in `~/.jobscan/email.toml`, readable only by you, once your mail server accepts it. Google offers no app passwords to accounts under Advanced Protection or signing in only with security keys, and a Workspace admin can turn them off. Other providers work if their mail server takes the address as its login over TLS. From then on every run with a digest emails it; a quiet run sends nothing. If sending fails, the run exits 1, says so in the notification, and the digest stays on disk. `jobscan email` again changes the settings; `jobscan email --off` stops it.
-
-**Updating and troubleshooting.** `uv tool upgrade jobscan` updates it; the schedule keeps working. `jobscan: command not found`: run `uv tool update-shell` and open a new terminal. A fresh Mac may ask to install Apple's command-line developer tools; say yes. If daily runs stop after a uv update, run `uv tool install --reinstall git+https://github.com/holarchic/jobscan`, then `jobscan schedule --at 08:00` again.
 
 ## Models
 
@@ -122,15 +170,14 @@ In the earlier test, turning reasoning off cut Flash's `founding` precision from
 
 `jobscan eval <set.json>` scores `founding`, `location_eligible` and `language_required` against your own labelled postings: a JSON list of `{id, title, location, description, labels}`, where `labels` maps tag names to answers. It judges eligibility for the UK and uses the five built-in tags, not your profile or your own tags.
 
-## Tests
+## Contributing
 
-In a clone, with Python 3.11+ on your path:
+Contributions are welcome: see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-```bash
-python3 -m unittest      # offline: fake boards, model and Common Crawl
-tests/smoke.sh           # live: three real boards; export OPENROUTER_API_KEY first; costs under $0.01
-```
+## Attribution
+
+For those who care about such things, the majority of the analysis and code in this repo was produced by Claude Opus 5.5 (Anthropic), with david guiding Claude, providing insights, direction and critical review throughout the process.
 
 ## License
 
-MIT
+[MIT](LICENSE)
