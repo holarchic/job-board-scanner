@@ -32,6 +32,7 @@ class BoardTest(unittest.TestCase):
 
     def test_other_urls_are_not_workable_boards(self):
         for url in ["https://apply.workable.com/", "https://apply.workable.com/j/599813E1DD",
+                    "https://apply.workable.com/%6a/599813E1DD", "https://apply.workable.com/api",
                     "https://apply.workable.com/api/v1/widget/accounts/", "https://apply.workable.com/a%3Ab",
                     "https://apply.workable.com/a%2Fb", "https://jobs.workable.com/company/x/jobs-at-acme",
                     "https://acme.workable.com/", "https://jobs.ashbyhq.com/acme", "not a url"]:
@@ -65,7 +66,8 @@ class ParseTest(unittest.TestCase):
     def test_locations_regions_hidden_records_and_remote(self):
         job = workable_job("AB12", "AE", telecommuting=True, locations=[
             {"city": "London", "region": "England", "country": "United Kingdom", "hidden": False},
-            {"city": "", "region": None, "country": "Ireland", "hidden": True}])
+            {"city": "", "region": None, "country": "Ireland", "hidden": True},
+            {"city": "London", "region": "England", "country": "United Kingdom", "hidden": True}])
         self.assertEqual(workable.parse(self.board, {"jobs": [job]})[0].location,
                          "London, England, United Kingdom / Ireland / Remote")
 

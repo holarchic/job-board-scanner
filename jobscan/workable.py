@@ -34,9 +34,10 @@ def page_board(company: str, url: str) -> Board | None:
     """A board page, apply.workable.com/<slug>[/…]."""
     parsed = http_url(url)
     path = [p for p in parsed.path.split("/") if p] if parsed else []
-    if not path or parsed.hostname != CRAWL_HOSTS[0] or path[0] in NOT_BOARDS:
+    if not path or parsed.hostname != CRAWL_HOSTS[0]:
         return None
-    return _board(company, board_slug(path[0]), API)
+    slug = board_slug(path[0])
+    return None if slug in NOT_BOARDS else _board(company, slug, API)
 
 
 def _board(company: str, slug: str | None, base: str) -> Board | None:
@@ -68,7 +69,9 @@ def parse(board: Board, data) -> tuple[Posting, ...]:
         first, places = jobs_by_code[entry.shortcode]
         if (entry.title, entry.description) != (first.title, first.description):
             raise BoardError(f"job {index}: shortcode {entry.shortcode} repeats with a different title or description")
-        places += [p for p in entry.places if p not in places]
+        for place in entry.places:
+            if place not in places:
+                places.append(place)
     return tuple(Posting(key=f"{board.id}:{entry.shortcode}", ats=ATS, board=board.id, company=board.company,
                          title=entry.title, location=" / ".join(places), url=entry.url, description=entry.description)
                  for entry, places in jobs_by_code.values())
