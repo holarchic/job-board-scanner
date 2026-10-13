@@ -211,6 +211,16 @@ class EmailSetupTest(unittest.TestCase):
         email = load_email(self.home)
         self.assertEqual((email.to, email.sender, email.host), ("you@outlook.com", "you@gmail.com", "smtp.gmail.com"))
 
+    def test_no_asks_which_account_sends_it(self):
+        self.installed()
+        code, out, _ = self.email_cli(["david@example.com", "yes", "n", "me@gmail.com"])
+        self.assertEqual(code, 0)
+        self.assertIn("Not a valid answer", out)
+        email = load_email(self.home)
+        self.assertEqual((email.to, email.sender, email.host), ("david@example.com", "me@gmail.com", "smtp.gmail.com"))
+        (message,) = self.sent()
+        self.assertEqual((message["From"], message["To"]), ("me@gmail.com", "david@example.com"))
+
     def test_another_provider_is_asked_for_its_server(self):
         self.installed()
         code, _, _ = self.email_cli(["you@fastmail.com", "", "", "²", "9" * 5000, "465"], ("pass word",))

@@ -251,13 +251,15 @@ def _ask_key() -> str:
 
 def _ask_email() -> EmailConfig:
     to = _answer("Email each digest to", None, is_mailbox)
+    same = _answer(f"Send it from {to} too? [y/n]", "y", lambda a: a in ("y", "n")) == "y"
     while True:
-        sender = _answer("Send it from your mail account", to, is_mailbox)
+        sender = to if same else _answer("Send it from which of your mail accounts", None, is_mailbox)
         domain = sender.rpartition("@")[2].lower()
         if domain not in OAUTH_ONLY:
             break
         print("  Outlook.com only lets mail apps sign in with OAuth, which jobscan can't do. Use a Gmail or iCloud "
               "address, or another provider's mail server.")
+        same = False
     server = MAIL_SERVERS.get(domain) or MailServer(
         _answer("Your provider's mail (SMTP) server", f"smtp.{domain}", is_host),
         int(_answer("Its port: 465 or 587", "587", lambda a: a.isascii() and a.isdigit() and len(a) <= 5
