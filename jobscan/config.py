@@ -137,18 +137,29 @@ def load_email(home: Path) -> EmailConfig | None:
     if set(data) != EMAIL_KEYS:
         raise ConfigError(f"{path}: needs exactly {', '.join(sorted(EMAIL_KEYS))}")
     for key in ("to", "from"):
-        if not (isinstance(data[key], str) and data[key].isascii() and data[key].isprintable()
-                and MAILBOX.fullmatch(data[key])):
+        if not is_mailbox(data[key]):
             raise ConfigError(f"{path}: `{key}` must be one email address, like name@example.com")
     host, port, password = data["host"], data["port"], data["password"]
-    if not (isinstance(host, str) and host and host.isascii() and host.isprintable() and " " not in host):
+    if not is_host(host):
         raise ConfigError(f"{path}: `host` must be a server name, like smtp.gmail.com")
     if not (isinstance(port, int) and not isinstance(port, bool) and 0 < port < 65536):
         raise ConfigError(f"{path}: `port` must be a number from 1 to 65535")
-    # smtplib sends the login as ASCII; anything else would fail at send time, after the run.
-    if not (isinstance(password, str) and password and password.isascii() and password.isprintable()):
+    if not is_password(password):
         raise ConfigError(f"{path}: `password` must be the app password, in plain ASCII")
     return EmailConfig(to=data["to"], sender=data["from"], host=host, port=port, password=password)
+
+
+def is_mailbox(value) -> bool:
+    return isinstance(value, str) and value.isascii() and value.isprintable() and bool(MAILBOX.fullmatch(value))
+
+
+def is_host(value) -> bool:
+    return isinstance(value, str) and bool(value) and value.isascii() and value.isprintable() and " " not in value
+
+
+def is_password(value) -> bool:
+    """smtplib sends the login as ASCII: anything else would fail at send time, after the run."""
+    return isinstance(value, str) and bool(value) and value.isascii() and value.isprintable()
 
 
 def _secret_text(path: Path) -> str:

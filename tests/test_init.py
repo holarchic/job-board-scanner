@@ -2,21 +2,24 @@
 import contextlib
 import io
 import os
+import smtplib
 import stat
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from jobscan import cli, init
-from jobscan.config import ConfigError, load_config, load_profile
+from jobscan import cli, init, mail
+from jobscan.config import ConfigError, EmailConfig, load_config, load_email, load_profile
+from tests.fakes import fake_smtp
 
 TAG_COUNT = 5
 
 
 def answers(name="my-pm", titles="Product Manager, Senior Product Manager", exclude="", locations="London, UK",
-            where="the UK, working from London", tags=("y", "y", "n", "y", "y")):
-    return [name, titles, exclude, locations, where, *tags]
+            where="the UK, working from London", tags=("y", "y", "n", "y", "y"), email=("",)):
+    """`email`: the answers to the email questions; Enter alone skips email."""
+    return [name, titles, exclude, locations, where, *tags, *email]
 
 
 class InitTest(unittest.TestCase):
@@ -68,7 +71,7 @@ class InitTest(unittest.TestCase):
 
     def test_invalid_answers_are_asked_again(self):
         typed = ["My PM", "my-pm", " , ", "Product Manager", "", "London", "", "the UK",
-                 *["n"] * TAG_COUNT, "maybe", "y", *["n"] * (TAG_COUNT - 1)]
+                 *["n"] * TAG_COUNT, "maybe", "y", *["n"] * (TAG_COUNT - 1), "not an address", "-"]
         self.run_init(typed)
         self.assertEqual(load_profile(self.home).tags, ("founding",))
 
@@ -127,6 +130,131 @@ class InitTest(unittest.TestCase):
             self.assertEqual(cli.main(["init"]), 2)
         self.assertIn("jobscan schedule --at 08:00", out.getvalue())
         self.assertIn("already set up", err.getvalue())
+
+
+class EmailSetupTest(unittest.TestCase):
+    """The email questions, from `init` and `jobscan email`: settings are saved only after a test email is accepted."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name) / "jobscan-home"
+        self.calls, self.refuse = [], {}
+        for constructor in ("SMTP_SSL", "SMTP"):
+            patcher = mock.patch.object(mail.smtplib, constructor, fake_smtp(self.calls, self.refuse))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def installed(self):
+        (self.home / "profiles").mkdir(parents=True)
+        (self.home / "profiles" / "my-pm.toml").write_text(
+            'titles = ["PM"]\nlocations = ["London"]\neligible_where = "the UK"\ntags = ["founding"]\n')
+
+    def email_cli(self, typed, passwords=("abcd efgh ijkl mnop",), *args):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, {"JOBSCAN_HOME": str(self.home)}), \
+                mock.patch("builtins.input", side_effect=typed), \
+                mock.patch.object(init.getpass, "getpass", side_effect=passwords), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(["email", *args])
+        return code, out.getvalue(), err.getvalue()
+
+    def sent(self):
+        return [args["message"] for name, args in self.calls if name == "send"]
+
+    def test_init_with_gmail_tests_then_saves_it(self):
+        typed = answers(email=("you@gmail.com", ""))
+        with mock.patch("builtins.input", side_effect=typed), \
+                mock.patch.object(init.getpass, "getpass", side_effect=["sk-or-v1-abc", "abcd efgh ijkl mnop"]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            setup = init.init(self.home)
+        self.assertEqual((setup.email, setup.email_error), (self.home / "email.toml", None))
+        self.assertEqual(stat.S_IMODE(setup.email.stat().st_mode), 0o600)
+        self.assertEqual(load_email(self.home), EmailConfig(to="you@gmail.com", sender="you@gmail.com",
+                                                            host="smtp.gmail.com", port=465,
+                                                            password="abcdefghijklmnop"))
+        (message,) = self.sent()
+        self.assertEqual((message["To"], message["Subject"]), ("you@gmail.com", "jobscan: email set up for my-pm"))
+
+    def test_init_whose_test_email_fails_is_written_without_email(self):
+        self.refuse["login"] = smtplib.SMTPAuthenticationError(535, b"5.7.8 not accepted")
+        with mock.patch("builtins.input", side_effect=answers(email=("you@gmail.com", ""))), \
+                mock.patch.object(init.getpass, "getpass", side_effect=["sk-or-v1-abc", "wrong"]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            setup = init.init(self.home)
+        self.assertIsNone(setup.email)
+        self.assertIn("SMTPAuthenticationError", setup.email_error)
+        self.assertFalse((self.home / "email.toml").exists())
+        self.assertEqual(load_profile(self.home).name, "my-pm")
+
+    def test_init_refuses_a_home_with_email_set_up(self):
+        self.home.mkdir()
+        (self.home / "email.toml").write_text("")
+        with mock.patch("builtins.input") as typed, self.assertRaises(ConfigError):
+            init.init(self.home)
+        typed.assert_not_called()
+
+    def test_icloud_starts_tls_and_keeps_the_password_as_typed(self):
+        self.installed()
+        code, out, _ = self.email_cli(["you@icloud.com", ""], ("abcd-efgh-ijkl-mnop",))
+        self.assertEqual(code, 0)
+        self.assertIn("saved", out)
+        self.assertEqual([name for name, _ in self.calls], ["connect", "starttls", "login", "send", "quit"])
+        email = load_email(self.home)
+        self.assertEqual((email.host, email.port, email.password), ("smtp.mail.me.com", 587, "abcd-efgh-ijkl-mnop"))
+
+    def test_outlook_is_refused_and_another_account_accepted(self):
+        self.installed()
+        code, out, _ = self.email_cli(["you@outlook.com", "", "you@gmail.com"])
+        self.assertEqual(code, 0)
+        self.assertIn("OAuth", out)
+        email = load_email(self.home)
+        self.assertEqual((email.to, email.sender, email.host), ("you@outlook.com", "you@gmail.com", "smtp.gmail.com"))
+
+    def test_another_provider_is_asked_for_its_server(self):
+        self.installed()
+        code, _, _ = self.email_cli(["you@fastmail.com", "", "", "465"], ("pass word",))
+        self.assertEqual(code, 0)
+        email = load_email(self.home)
+        self.assertEqual((email.host, email.port, email.password), ("smtp.fastmail.com", 465, "pass word"))
+
+    def test_a_failed_test_saves_nothing_and_keeps_the_previous_settings(self):
+        self.installed()
+        self.email_cli(["you@gmail.com", ""])
+        before = (self.home / "email.toml").read_text()
+        self.refuse["connect"] = TimeoutError("timed out")
+        code, _, err = self.email_cli(["new@gmail.com", ""])
+        self.assertEqual(code, 1)
+        self.assertIn("test email wasn't sent (TimeoutError: timed out); nothing was saved", err)
+        self.assertEqual((self.home / "email.toml").read_text(), before)
+
+    def test_success_replaces_the_previous_settings(self):
+        self.installed()
+        self.email_cli(["you@gmail.com", ""])
+        self.assertEqual(self.email_cli(["new@icloud.com", ""], ("app-pass",))[0], 0)
+        self.assertEqual(load_email(self.home).to, "new@icloud.com")
+        self.assertEqual(stat.S_IMODE((self.home / "email.toml").stat().st_mode), 0o600)
+
+    def test_a_failed_save_keeps_the_previous_file_and_no_temporary(self):
+        self.installed()
+        self.email_cli(["you@gmail.com", ""])
+        with mock.patch.object(init.os, "replace", side_effect=OSError(28, "No space left on device")):
+            code, _, err = self.email_cli(["new@gmail.com", ""])
+        self.assertEqual(code, 2)
+        self.assertIn("the previous settings are kept", err)
+        self.assertEqual(load_email(self.home).to, "you@gmail.com")
+        self.assertEqual(sorted(p.name for p in self.home.iterdir()), ["email.toml", "profiles"])
+
+    def test_off_removes_even_a_broken_file_and_is_idempotent(self):
+        self.installed()
+        (self.home / "email.toml").write_text("not toml [")
+        self.assertEqual(self.email_cli([], (), "--off")[:2], (0, f"removed\t{self.home / 'email.toml'}\n"))
+        self.assertEqual(self.email_cli([], (), "--off")[:2], (0, "jobscan: no email set up\n"))
+
+    def test_no_install_no_questions(self):
+        code, _, err = self.email_cli([])
+        self.assertEqual(code, 2)
+        self.assertIn("profiles", err)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ from pathlib import Path
 from time import monotonic
 
 from jobscan import discover, evaluate, init, mail, notify, scan, schedule, store, tag
-from jobscan.config import ConfigError, EmailConfig, jobscan_home, load_config, load_email, load_profile
+from jobscan.config import EMAIL_FILE, ConfigError, EmailConfig, jobscan_home, load_config, load_email, load_profile
 from jobscan.crawl import CrawlError
 
 EXIT_OK, EXIT_INCOMPLETE, EXIT_USAGE = 0, 1, 2
@@ -32,6 +32,9 @@ def main(argv: list[str] | None = None) -> int:
     when = schedule_parser.add_mutually_exclusive_group(required=True)
     when.add_argument("--at", type=_clock, metavar="HH:MM", help="daily run time, 24-hour clock")
     when.add_argument("--off", action="store_true", help="remove the scheduled run")
+    email_parser = commands.add_parser(
+        "email", help="email each digest from your own mail account: asks, sends a test email, then saves")
+    email_parser.add_argument("--off", action="store_true", help="stop emailing digests")
     eval_parser = commands.add_parser("eval", help="score the tagging path against a labelled posting set")
     eval_parser.add_argument("set", type=Path, help="JSON list of {id, title, location, description, labels}")
     try:
@@ -47,6 +50,8 @@ def main(argv: list[str] | None = None) -> int:
         return _discover(home)
     if args.command == "schedule":
         return _schedule(home, args.at)
+    if args.command == "email":
+        return _email(home, args.off)
     return _run(home, args.notify)
 
 
@@ -148,6 +153,37 @@ def _schedule(home: Path, at: time | None) -> int:
     return EXIT_OK
 
 
+def _email(home: Path, off: bool) -> int:
+    """Saves the settings only once a test email is accepted; `--off` works however broken the saved file is."""
+    path = home / EMAIL_FILE
+    if off:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            print("jobscan: no email set up")
+            return EXIT_OK
+        except OSError as e:
+            print(f"jobscan: could not remove {path} ({type(e).__name__})", file=sys.stderr)
+            return EXIT_INCOMPLETE
+        print(f"removed\t{path}")
+        return EXIT_OK
+    try:
+        profile = load_profile(home)
+        text = init.email_setup(profile.name, skippable=False)
+        init.save_email(home, text)
+    except ConfigError as e:
+        print(f"jobscan: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    except (KeyboardInterrupt, EOFError):
+        print("\njobscan: cancelled; nothing was saved", file=sys.stderr)
+        return EXIT_USAGE
+    except mail.MailError as e:
+        print(f"jobscan: the test email wasn't sent ({e}); nothing was saved", file=sys.stderr)
+        return EXIT_INCOMPLETE
+    print(f"Sent a test email; saved {path}. Each digest will be emailed from now on.")
+    return EXIT_OK
+
+
 def _init(home: Path) -> int:
     try:
         setup = init.init(home)
@@ -157,7 +193,9 @@ def _init(home: Path) -> int:
     except init.InitCancelled:
         print("\njobscan: cancelled; nothing was written", file=sys.stderr)
         return EXIT_USAGE
-    print(f"\nWrote {setup.config}, {setup.profile} and {setup.key}.")
+    print(f"\nWrote {setup.config}, {setup.profile}, {setup.key}" + (f" and {setup.email}." if setup.email else "."))
+    if setup.email_error:
+        print(f"The test email wasn't sent ({setup.email_error}), so email isn't set up; `jobscan email` tries again.")
     print(init.NEXT_STEPS.format(profile=setup.profile))
     return EXIT_OK
 
