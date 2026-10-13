@@ -80,8 +80,10 @@ def _reason(error: Exception, email: EmailConfig) -> str:
         detail = f"{error.smtp_code} {reply}"
     elif isinstance(error, smtplib.SMTPRecipientsRefused):
         detail = "refused, " + ", ".join(str(code) for code, _ in error.recipients.values())
+    elif isinstance(error, smtplib.SMTPException):
+        return type(error).__name__  # its text can hold a repr of a server reply (the AUTH loop's does)
     else:
-        detail = str(error)
+        detail = str(error)  # OSError, ValueError: written locally, not by the server
     for secret, mask in [(email.password, "<password>"), (email.to, "<to>"), (email.sender, "<from>")]:
         detail = detail.replace(secret, mask)
     return f"{type(error).__name__}: " + "".join(c if c.isprintable() else " " for c in detail)

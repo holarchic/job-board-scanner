@@ -82,6 +82,12 @@ class SendTest(SmtpTestCase):
                 mail.send_test(email, "pm")
             self.assertEqual(str(caught.exception), "SMTPAuthenticationError: 535 5.7.8 <password> not accepted")
             self.assertNotIn(password, repr(str(caught.exception)))
+            # smtplib's AUTH loop raises a plain SMTPException quoting repr((code, reply)), already escaped
+            self.refuse["login"] = smtplib.SMTPException(
+                "Server AUTH mechanism infinite loop. Last response: " + repr((334, f"xxx{password}".encode())))
+            with self.assertRaises(mail.MailError) as caught:
+                mail.send_test(email, "pm")
+            self.assertEqual(str(caught.exception), "SMTPException")
 
     def test_a_refused_goodbye_after_the_message_is_accepted_is_not_a_failure(self):
         self.refuse["quit"] = smtplib.SMTPResponseException(421, b"closing")
@@ -104,6 +110,31 @@ class SendTest(SmtpTestCase):
         with self.assertRaises(mail.MailError):
             mail.send_test(GMAIL, "pm\nBcc: x@example.com")
         self.assertEqual(self.calls, [])
+
+
+class RealAuthLoopTest(unittest.TestCase):
+    def test_the_auth_loops_escaped_reply_never_reaches_the_error_or_log(self):
+        """smtplib's own login, with only the transport stubbed: a server that keeps challenging makes it raise a
+        plain SMTPException quoting the reply's repr, where a backslash password is escaped."""
+        password = "app\\secret"
+
+        class Challenging(smtplib.SMTP):
+            def __init__(self, *args, **kwargs):
+                super().__init__()  # no host: no connection
+                self.esmtp_features = {"auth": "PLAIN"}
+                self.does_esmtp = True
+
+            def ehlo_or_helo_if_needed(self):
+                pass
+
+            def docmd(self, cmd, args=""):
+                return 334, f"xxx{password}".encode()
+
+        email = EmailConfig(to="you@example.com", sender="me@gmail.com", host="smtp.gmail.com", port=465,
+                            password=password)
+        with mock.patch.object(mail.smtplib, "SMTP_SSL", Challenging), self.assertRaises(mail.MailError) as caught:
+            mail.send_test(email, "pm")
+        self.assertEqual(str(caught.exception), "SMTPException")
 
 
 class StartTlsRequiredTest(unittest.TestCase):
