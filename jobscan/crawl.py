@@ -25,7 +25,7 @@ MAX_PAGE = 4 << 20
 TIMEOUT = 60
 RETRY_PAUSES = (5, 20, 60)  # Common Crawl asks clients to back off on 503
 RETRYABLE = {429, 500, 502, 503, 504}
-HEADERS = {"User-Agent": "jobscan (+https://github.com/holarchic/jobscan)"}
+HEADERS = {"User-Agent": "jobscan (+https://github.com/holarchic/job-board-scanner)"}
 CONTENT_RANGE = re.compile(r"bytes (\d{1,15})-(\d{1,15})/(\d{1,15})")
 # cluster.idx line: "<SURT key> <14-digit timestamp>\t<cdx file>\t<offset>\t<length>\t<sequence>"
 CDX_HEADER = re.compile(rb"\S+ \d{14} ")  # SURT key and timestamp before the JSON record

@@ -22,7 +22,7 @@ RETRY_PAUSES = (2, 10)  # seconds before the 2nd and 3rd tries
 RETRYABLE = {429, 500, 502, 503, 504}
 WORKERS = 8
 IN_FLIGHT = 2 * WORKERS  # boards fetching or fetched but not yet consumed: bounds postings held in memory
-HEADERS = {"User-Agent": "jobscan (+https://github.com/holarchic/jobscan)"}
+HEADERS = {"User-Agent": "jobscan (+https://github.com/holarchic/job-board-scanner)"}
 log = logging.getLogger("jobscan")
 
 
