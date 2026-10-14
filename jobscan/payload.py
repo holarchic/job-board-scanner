@@ -50,8 +50,8 @@ def with_remote(places: list[str]) -> list[str]:
 
 
 def xml_root(body: bytes) -> ElementTree.Element:
-    """An XML feed's root element, as an adapter's DECODE. ElementTree resolves no external entities, and the expat
-    it links (≥ 2.4.1) bounds entity expansion."""
+    """An XML feed's root element, as an adapter's DECODE. ElementTree resolves no external entities; entity
+    expansion is bounded only when Python links expat 2.4.1 or later (every build tested links 2.6 or later)."""
     try:
         return ElementTree.fromstring(body)
     # LookupError: an encoding Python doesn't know; ValueError: a multibyte encoding expat can't read.

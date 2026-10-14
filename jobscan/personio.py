@@ -14,10 +14,11 @@ from jobscan.records import Board, BoardError, Posting
 ATS = "personio"
 DISPLAY_NAME = "Personio"
 DECODE = xml_root
-DOMAINS = ("jobs.personio.de", "jobs.personio.com")
+HOST = "jobs.personio.com"  # where every board is read, whichever host named it
+DOMAINS = ("jobs.personio.de", HOST)
 CRAWL_HOSTS = tuple(f"*.{domain}" for domain in DOMAINS)
-FEED = "https://{slug}.jobs.personio.com/xml?language=en"
-JOB = "https://{slug}.jobs.personio.com/job/{id}"
+FEED = "https://{slug}." + HOST + "/xml?language=en"
+JOB = "https://{slug}." + HOST + "/job/{id}"
 
 
 def api_board(company: str, url: str) -> Board | None:

@@ -325,14 +325,16 @@ class TeamtailorPersonioRunTest(RunFixture):
             "/teamtailor/initech/jobs.rss?per_page=1000"]
         with mock.patch.object(teamtailor, "PER_PAGE", 3):
             self.assertEqual(self.run_cli()[1][1], "2")  # one per board
-            self.feed.append(teamtailor_item("tt3", "Designer"))
+            self.feed[:] = [teamtailor_item("tt1", "Account Executive"), teamtailor_item("tt3", "Designer"),
+                            teamtailor_item("tt4", "Analyst")]  # a full page that leaves tt2 out
             self.run_cli()
         self.assertIn("board_failed company='Initech' board=teamtailor:initech", (self.home / "runs.log").read_text())
         conn = store.open_db(self.home)
         try:
-            self.assertEqual(store.open_counts(conn, {"teamtailor:initech"}), {"teamtailor:initech": 2})
+            rows = dict(conn.execute("SELECT key, closed FROM postings WHERE board = 'teamtailor:initech'").fetchall())
         finally:
             conn.close()
+        self.assertEqual(rows, {"teamtailor:initech:tt1": 0, "teamtailor:initech:tt2": 0})
 
 
 class NotifyTest(RunFixture):
@@ -641,6 +643,9 @@ class DiscoveryRefreshTest(RunFixture):
                                                         cdx_line("https://pe-acme.jobs.personio.com/"),
                                                         cdx_line("https://www.example.com/")]))
         self.write_config(boards_file=False)
+        self.ats.routes["/teamtailor/tt-acme/jobs.rss?per_page=1000"] = (200, teamtailor_feed(
+            teamtailor_item("t1", "Engineer")))
+        self.ats.routes["/personio/pe-acme/xml"] = (200, personio_feed(personio_position("p1", "Engineer")))
 
     def days_ago(self, days):
         return (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="microseconds")
@@ -693,6 +698,12 @@ class DiscoveryRefreshTest(RunFixture):
             conn.close()
             self.assertEqual(self.run_cli()[0], 0, ats)
             self.assertEqual(self.discovered()[0], DISCOVERED, ats)
+        conn = store.open_db(self.home)
+        try:
+            boards = {r[0] for r in conn.execute("SELECT DISTINCT board FROM postings")}
+        finally:
+            conn.close()
+        self.assertLessEqual({"teamtailor:tt-acme", "personio:pe-acme"}, boards)  # the new ATSes' feeds were read
 
     def test_a_list_without_workable_is_not_rediscovered(self):
         self.seed_discovery("acme", at=self.days_ago(1))
