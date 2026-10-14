@@ -3,10 +3,9 @@
 The payload is a bare list of jobs, shaped like Greenhouse's. Parsing is all-or-nothing per board, as for the
 others."""
 import json
-import re
 from urllib.parse import quote
 
-from jobscan.payload import board_slug, html_to_text, http_url, text_field
+from jobscan.payload import board_slug, html_to_text, http_url, text_field, with_remote
 from jobscan.records import Board, BoardError, Posting
 
 ATS = "gem"
@@ -16,7 +15,6 @@ CRAWL_HOSTS = ("jobs.gem.com",)
 API_PATH = ("job_board", "v0")
 API = "https://api.gem.com/" + "/".join(API_PATH) + "/"
 LIST = "/job_posts/"
-REMOTE = re.compile(r"(?<!\w)remote(?!\w)")  # word-adjacent, as `prefilter` matches a `Remote` term
 
 
 # Gem board paths are case-sensitive (`BigPanda` is a 404 where `bigpanda` reads), so a slug keeps its case.
@@ -87,10 +85,7 @@ def _locations(job: dict, index: int) -> list[str]:
     for name in names:
         if name and name not in places:
             places.append(name)
-    kind = text_field(job, "location_type", index)
-    if kind == "remote" and not any(REMOTE.search(p.casefold()) for p in places):
-        places.append("Remote")
-    return places
+    return with_remote(places) if text_field(job, "location_type", index) == "remote" else places
 
 
 def _place_name(record: dict, index: int) -> str:

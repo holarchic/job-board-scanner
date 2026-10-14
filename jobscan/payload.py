@@ -14,6 +14,7 @@ ANY_TAG = re.compile(r"<[^>]*>")
 # Board tokens include `ep+co` and `harrison&star`; ':' is the posting-key separator.
 SLUG = re.compile(r"[!-~]+")
 NOT_IN_SLUG = frozenset("/:?#")
+REMOTE = re.compile(r"(?<!\w)remote(?!\w)")  # word-adjacent, as `prefilter` matches a `Remote` term
 
 
 def http_url(url: str) -> SplitResult | None:
@@ -36,6 +37,11 @@ def board_slug(raw: str, decoded: bool = False) -> str | None:
     if not SLUG.fullmatch(slug) or NOT_IN_SLUG & set(slug):
         return None
     return slug
+
+
+def with_remote(places: list[str]) -> list[str]:
+    """A remote job's places, plus `Remote` unless one of them already says remote as a word."""
+    return places if any(REMOTE.search(p.casefold()) for p in places) else [*places, "Remote"]
 
 
 def xml_root(body: bytes) -> ElementTree.Element:

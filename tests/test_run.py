@@ -16,7 +16,22 @@ from email.parser import BytesParser
 from pathlib import Path
 from unittest import mock
 
-from jobscan import ashby, cli, crawl, digest, fetch, gem, greenhouse, notify, scan, store, tag, workable
+from jobscan import (
+    ashby,
+    cli,
+    crawl,
+    digest,
+    fetch,
+    gem,
+    greenhouse,
+    notify,
+    personio,
+    scan,
+    store,
+    tag,
+    teamtailor,
+    workable,
+)
 from jobscan.records import Board
 from tests.fakes import (
     FakeFiles,
@@ -29,7 +44,11 @@ from tests.fakes import (
     greenhouse_job,
     model_reply,
     patch_smtp,
+    personio_feed,
+    personio_position,
     tags_quoting_the_posting,
+    teamtailor_feed,
+    teamtailor_item,
     workable_job,
 )
 
@@ -254,6 +273,54 @@ class WorkableGemRunTest(RunFixture):
                       text)
         self.assertEqual(text.count("· 2 open roles"), 2)  # one per new board: jobs, not Workable's entries
         self.assertEqual(self.run_cli()[1][1:], ["0", "-"])
+
+
+class TeamtailorPersonioRunTest(RunFixture):
+    def setUp(self):
+        super().setUp()
+        for adapter, feed in [(teamtailor, "/teamtailor/{slug}/jobs.rss"), (personio, "/personio/{slug}/xml")]:
+            mock.patch.object(adapter, "FEED", self.ats.url + feed).start()
+        (self.home / "boards.json").write_text(json.dumps({"companies": [
+            {"company": "Initech", "board_url": "https://initech.teamtailor.com/jobs"},
+            {"company": "Hooli", "board_url": "https://hooli.jobs.personio.de/"},
+        ]}))
+        self.feed = [teamtailor_item("tt1", "Account Executive"), teamtailor_item("tt2", "Engineer")]
+        self.ats.routes["/teamtailor/initech/jobs.rss?per_page=1000"] = (
+            200, lambda _: (200, teamtailor_feed(*self.feed)))
+        self.ats.routes["/personio/hooli/xml"] = (200, personio_feed(
+            personio_position("p1", "Account Executive", "London", additional=["Berlin"]),
+            personio_position("p2", "Engineer")))
+
+        def quoting_the_description(payload):
+            tags = tags_quoting_the_posting(payload)
+            return model_reply({**tags, "tech_company": {"value": "yes", "quote": "We sell software."}})
+        self.model.routes["/chat/completions"] = (200, quoting_the_description)
+
+    def test_teamtailor_and_personio_boards_reach_the_digest_with_verified_quotes(self):
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        text = Path(path).read_text()
+        self.assertIn("## Initech — Account Executive · London, United Kingdom\n"
+                      "https://acme.teamtailor.com/jobs/tt1-job · Teamtailor · first seen", text)
+        self.assertIn("## Hooli — Account Executive · London / Berlin\n"
+                      "https://hooli.jobs.personio.com/job/p1 · Personio · first seen", text)
+        self.assertEqual(text.count('- tech_company ⓘ: **yes** — "We sell software."\n'), 2)
+        self.assertNotIn("⚠", text)
+        self.assertEqual(self.run_cli()[1][1:], ["0", "-"])
+
+    def test_a_feed_that_may_be_cut_leaves_its_open_postings_open(self):
+        self.ats.routes["/teamtailor/initech/jobs.rss?per_page=3"] = self.ats.routes[
+            "/teamtailor/initech/jobs.rss?per_page=1000"]
+        with mock.patch.object(teamtailor, "PER_PAGE", 3):
+            self.assertEqual(self.run_cli()[1][1], "2")  # one per board
+            self.feed.append(teamtailor_item("tt3", "Designer"))
+            self.run_cli()
+        self.assertIn("board_failed company='Initech' board=teamtailor:initech", (self.home / "runs.log").read_text())
+        conn = store.open_db(self.home)
+        try:
+            self.assertEqual(store.open_counts(conn, {"teamtailor:initech"}), {"teamtailor:initech": 2})
+        finally:
+            conn.close()
 
 
 class NotifyTest(RunFixture):
@@ -529,7 +596,8 @@ class BoardSourcesTest(RunFixture):
         self.assertEqual(self.run_cli()[1][1], "2")
 
 
-DISCOVERED = ["ashby:acme", "gem:gem-acme", "greenhouse:gh-acme", "greenhouse:gh-eu"]  # never Workable
+DISCOVERED = ["ashby:acme", "gem:gem-acme", "greenhouse:gh-acme", "greenhouse:gh-eu", "personio:pe-acme",
+              "teamtailor:tt-acme"]  # never Workable
 
 
 class DiscoveryRefreshTest(RunFixture):
@@ -544,7 +612,9 @@ class DiscoveryRefreshTest(RunFixture):
                                     (ashby, "API", f"{self.ats.url}/posting-api/job-board/"),
                                     (greenhouse, "API", f"{self.ats.url}/v1/boards/"),
                                     (workable, "API", f"{self.ats.url}/api/v1/widget/accounts/"),
-                                    (gem, "API", f"{self.ats.url}/job_board/v0/")]:
+                                    (gem, "API", f"{self.ats.url}/job_board/v0/"),
+                                    (teamtailor, "FEED", self.ats.url + "/teamtailor/{slug}/jobs.rss"),
+                                    (personio, "FEED", self.ats.url + "/personio/{slug}/xml")]:
             mock.patch.object(target, name, value).start()
         crawls = ("CC-MAIN-2026-39", "CC-MAIN-2026-34", "CC-MAIN-2026-30")
         self.cc.files.update(crawl_list(*crawls))
@@ -554,6 +624,9 @@ class DiscoveryRefreshTest(RunFixture):
                                                         cdx_line("https://job-boards.eu.greenhouse.io/gh-eu"),
                                                         cdx_line("https://apply.workable.com/wk-acme"),
                                                         cdx_line("https://jobs.gem.com/gem-acme"),
+                                                        cdx_line("https://tt-acme.teamtailor.com/jobs"),
+                                                        cdx_line("https://pe-acme.jobs.personio.de/"),
+                                                        cdx_line("https://pe-acme.jobs.personio.com/"),
                                                         cdx_line("https://www.example.com/")]))
         self.write_config(boards_file=False)
 
@@ -600,7 +673,7 @@ class DiscoveryRefreshTest(RunFixture):
         self.assertIn("discover_failed", (self.home / "runs.log").read_text())
 
     def test_a_newly_supported_ats_is_discovered_on_the_next_run(self):
-        for ats in ("greenhouse", "gem"):
+        for ats in ("greenhouse", "gem", "teamtailor", "personio"):
             self.seed_discovery("acme", at=self.days_ago(1))
             conn = store.open_db(self.home)
             with conn:

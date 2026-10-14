@@ -6,6 +6,7 @@ import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
+from xml.sax.saxutils import escape
 
 
 class FakeServer:
@@ -167,6 +168,39 @@ def gem_job(job_id, title, location="London", offices=(), content_plain=None, **
             "content_plain": text, "content": f"<p>{text}</p>", "location": {"name": location},
             "offices": [{"name": name, "location": {"name": place}} for name, place in offices],
             "location_type": "in_office", **extra}
+
+
+def teamtailor_feed(*items):
+    """A Teamtailor jobs.rss feed holding `items` (from teamtailor_item)."""
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0" xmlns:tt="https://teamtailor.com/locations">'
+            f"<channel><title>Acme</title><link>https://acme.teamtailor.com/jobs</link>{''.join(items)}</channel></rss>")
+
+
+def teamtailor_item(guid, title, places=(("London", "United Kingdom"),), remote="none", description=None):
+    """One feed item: `places` are (city, country[, name]); the description is HTML, escaped into the XML."""
+    text = description if description is not None else f"<p>{title} role. We sell software.</p>"
+    locations = "".join(f"<tt:location><tt:name>{(*rest, f'{city} office')[0]}</tt:name><tt:city>{city}</tt:city>"
+                        f"<tt:country>{country}</tt:country></tt:location>" for city, country, *rest in places)
+    return (f"<item><title>{escape(title)}</title><description>{escape(text)}</description>"
+            f"<link>https://acme.teamtailor.com/jobs/{guid}-job</link><remoteStatus>{remote}</remoteStatus>"
+            f"<guid>{guid}</guid><tt:locations>{locations}</tt:locations></item>")
+
+
+def personio_feed(*positions):
+    """A Personio /xml feed holding `positions` (from personio_position)."""
+    return f'<?xml version="1.0" encoding="UTF-8"?>\n<workzag-jobs>{"".join(positions)}</workzag-jobs>'
+
+
+def personio_position(job_id, name, office="London", additional=(), sections=None):
+    """One position: `sections` are (heading, HTML) pairs, the HTML escaped into the XML."""
+    sections = sections if sections is not None else [("Your role", f"<p>{name} role. We sell software.</p>")]
+    extra = "".join(f"<office>{escape(o)}</office>" for o in additional)
+    descriptions = "".join(f"<jobDescription><name>{escape(h)}</name><value>{escape(v)}</value></jobDescription>"
+                           for h, v in sections)
+    return (f"<position><id>{job_id}</id><subcompany>Acme GmbH</subcompany><office>{escape(office)}</office>"
+            f"<additionalOffices>{extra}</additionalOffices><name>{escape(name)}</name>"
+            f"<jobDescriptions>{descriptions}</jobDescriptions><createdAt>2026-10-01T09:00:00+00:00</createdAt>"
+            "</position>")
 
 
 def model_reply(tags: dict, cost: float = 0.0005):
