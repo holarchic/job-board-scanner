@@ -219,11 +219,12 @@ def smartrecruiters_page(jobs, offset=0, total=None):
 
 
 def smartrecruiters_detail(title, sections=None):
-    """A SmartRecruiters posting detail: `sections` are (title, HTML) pairs."""
-    sections = sections if sections is not None else [("Company Description", "<p>We sell software.</p>"),
-                                                      ("Job Description", f"<p>{title} role.</p>")]
-    return {"id": "1", "name": title,
-            "jobAd": {"sections": {f"section{i}": {"title": t, "text": h} for i, (t, h) in enumerate(sections)}}}
+    """A SmartRecruiters posting detail: `sections` are (key, title, HTML), in the ad's order; an ad always has a
+    `jobDescription`."""
+    sections = sections if sections is not None else [
+        ("companyDescription", "Company Description", "<p>We sell software.</p>"),
+        ("jobDescription", "Job Description", f"<p>{title} role.</p>")]
+    return {"id": "1", "name": title, "jobAd": {"sections": {key: {"title": t, "text": h} for key, t, h in sections}}}
 
 
 def rippling_item(job_id, title, place="London, United Kingdom", country="United Kingdom", workplace="ON_SITE"):

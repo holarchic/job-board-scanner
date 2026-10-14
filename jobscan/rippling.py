@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import quote
 
-from jobscan.payload import board_slug, html_to_text, http_url, text_field, with_remote
+from jobscan.payload import board_slug, detail_text, html_to_text, http_url, text_field, with_remote
 from jobscan.records import Board, BoardError, Get, Posting
 
 ATS = "rippling"
@@ -57,6 +57,12 @@ def _board(company: str, slug: str | None, base: str) -> Board | None:
 
 
 @dataclass(frozen=True)
+class _Totals:
+    items: int
+    pages: int
+
+
+@dataclass(frozen=True)
 class _Row:
     job_id: str
     title: str
@@ -69,29 +75,29 @@ def read(board: Board, get: Get) -> tuple[Posting, ...]:
     checked for overlap: lists repeat identical rows within one page (6 of 60 boards sampled on 14 Oct). Only a
     board of over PAGE rows pages at all."""
     rows, totals, page = [], None, 0
-    while totals is None or page < totals[1]:
+    while totals is None or page < totals.pages:
         page_totals, items = _page(json.loads(get(f"{board.api_url}?page={page}&pageSize={PAGE}")), page)
         if totals is not None and page_totals != totals:
             raise BoardError("list changed while paging: the totals moved")
         totals = page_totals
-        if not items and page + 1 < totals[1]:
+        if not items and page + 1 < totals.pages:
             raise BoardError("list changed while paging: a page came back empty")
         rows += [_row(len(rows) + index, item) for index, item in enumerate(items)]
         page += 1
-    if len(rows) != totals[0]:
+    if len(rows) != totals.items:
         raise BoardError("list changed while paging: the rows read don't match the total")
     return tuple(_posting(board, job_rows) for job_rows in _by_job(rows))
 
 
-def _page(data, page: int) -> tuple[tuple[int, int], list]:
+def _page(data, page: int) -> tuple[_Totals, list]:
     if not isinstance(data, dict):
         raise BoardError("response is not an object")
     items, total_items, total_pages = data.get("items"), data.get("totalItems"), data.get("totalPages")
     if not isinstance(items, list) or not all(type(n) is int and n >= 0 for n in (total_items, total_pages)):
         raise BoardError("response has no `items` list or `totalItems` and `totalPages` counts")
-    if data.get("page") != page:
+    if type(data.get("page")) is not int or data["page"] != page:
         raise BoardError("list changed while paging: a page answered as another")
-    return (total_items, total_pages), items
+    return _Totals(items=total_items, pages=total_pages), items
 
 
 def _row(index: int, item) -> _Row:
@@ -137,11 +143,12 @@ def _posting(board: Board, rows: list[_Row]) -> Posting:
 
 
 def describe(board: Board, posting: Posting, get: Get) -> str:
-    """The job's detail: the company's description, then the role's."""
+    """The job's detail: the company's description, then the role's. A detail without a `role` fails the posting:
+    it would be tagged and delivered with no description, and never described again."""
     job_id = posting.key.removeprefix(f"{board.id}:")
     data = json.loads(get(f"{board.api_url}/{quote(job_id, safe='')}"))
     description = data.get("description") if isinstance(data, dict) else None
-    if not isinstance(description, dict):
-        raise BoardError("detail has no `description` object")
-    parts = [html_to_text(text_field(description, part, 0) or "") for part in ("company", "role")]
+    if not isinstance(description, dict) or description.get("role") is None:
+        raise BoardError("detail has no `description` object with a `role`")
+    parts = [html_to_text(detail_text(description, part, "description")) for part in ("company", "role")]
     return "\n".join(part for part in parts if part)

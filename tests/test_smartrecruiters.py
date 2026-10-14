@@ -101,6 +101,7 @@ class ReadTest(unittest.TestCase):
         good = smartrecruiters_job("1", "AE")
         for page in [[], {"offset": 0, "content": [good]}, {**smartrecruiters_page([good]), "totalFound": True},
                      {**smartrecruiters_page([good]), "totalFound": -1}, {**smartrecruiters_page([]), "content": {}},
+                     {**smartrecruiters_page([good]), "offset": False}, {**smartrecruiters_page([good]), "offset": 0.0},
                      smartrecruiters_page(["job"]), smartrecruiters_page([{**good, "name": " "}]),
                      smartrecruiters_page([{**good, "id": 1}]), smartrecruiters_page([{**good, "location": "London"}]),
                      smartrecruiters_page([{**good, "location": {"fullLocation": 3}}])]:
@@ -112,18 +113,25 @@ class DescribeTest(unittest.TestCase):
     def test_sections_become_titled_text_from_the_boards_own_api(self):
         board = board_for("http://127.0.0.1:9/v1/companies/acme/postings")
         (posting,) = read(smartrecruiters_page([smartrecruiters_job("74/1", "AE")]))
-        detail = smartrecruiters_detail("AE", [("Company Description", "<p>We sell <b>software</b> &amp; more.</p>"),
-                                               ("Empty", ""), ("", "<ul><li>Equity</li></ul>")])
+        detail = smartrecruiters_detail("AE", [
+            ("companyDescription", "Company Description", "<p>We sell <b>software</b> &amp; more.</p>"),
+            ("jobDescription", "Job Description", ""), ("videos", "Videos", None),
+            ("additionalInformation", "", "<ul><li>Equity</li></ul>")])
         get, asked = getter({"http://127.0.0.1:9/v1/companies/acme/postings/74%2F1": detail})
         text = smartrecruiters.describe(board, posting, get)
-        self.assertEqual(text, "Company Description\nWe sell software & more.\nEmpty\nEquity")
+        self.assertEqual(text, "Company Description\nWe sell software & more.\nEquity")  # text-less sections go
         self.assertEqual(asked, ["http://127.0.0.1:9/v1/companies/acme/postings/74%2F1"])
         self.assertTrue(tag.verify_quote("We sell software & more.", replace(posting, description=text)))
 
     def test_a_malformed_detail_fails_the_posting(self):
         (posting,) = read(smartrecruiters_page([smartrecruiters_job("1", "AE")]))
-        for detail in [[], {}, {"jobAd": {}}, {"jobAd": {"sections": []}}, {"jobAd": {"sections": {"a": "text"}}},
-                       {"jobAd": {"sections": {"a": {"title": "T", "text": 3}}}}]:
+        ad = smartrecruiters_detail("AE")["jobAd"]["sections"]
+        for detail in [[], {}, {"jobAd": {}}, {"jobAd": {"sections": []}}, {"jobAd": {"sections": {}}},
+                       {"jobAd": {"sections": {"companyDescription": ad["companyDescription"]}}},
+                       {"jobAd": {"sections": {**ad, "a": "text"}}},
+                       {"jobAd": {"sections": {**ad, "a": {"title": "T", "text": 3}}}},
+                       {"jobAd": {"sections": {**ad, "a": {"title": 3, "text": "x"}}}},
+                       {"jobAd": {"sections": {**ad, "a": {"title": "T", "text": "\ud800"}}}}]:
             get, _ = getter({f"{API}/1": detail})
             with self.assertRaises(BoardError, msg=detail):
                 smartrecruiters.describe(BOARD, posting, get)

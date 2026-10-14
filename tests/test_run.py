@@ -376,7 +376,7 @@ class SmartRecruitersRunTest(RunFixture):
             self.ats.routes[f"{self.LIST}?limit=2&offset={page['offset']}"] = (200, page)
 
     def detail(self, lines, status=200):
-        sections = [("About Initrode", f"<p>{line}</p>") for line in lines]
+        sections = [("jobDescription", "About Initrode", f"<p>{line}</p>") for line in lines]
         self.ats.routes[f"{self.LIST}/sr1"] = (status, smartrecruiters_detail("Account Executive", sections))
 
     def asked(self, path):
@@ -425,6 +425,15 @@ class SmartRecruitersRunTest(RunFixture):
         self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
         log = (self.home / "runs.log").read_text()
         self.assertIn("describe_failed posting=smartrecruiters:initrode:sr1 reason='HTTP 500'", log)
+        self.assertEqual(self.model_calls(), 0)
+        self.detail(["We sell software."])
+        self.assertEqual(self.run_cli()[1][1], "1")
+
+    def test_a_detail_without_its_job_description_waits_for_the_next_run(self):
+        self.ats.routes[f"{self.LIST}/sr1"] = (200, {"jobAd": {"sections": {}}})
+        self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
+        self.assertIn("describe_failed posting=smartrecruiters:initrode:sr1 reason='detail has no `jobDescription` "
+                      "section'", (self.home / "runs.log").read_text())
         self.assertEqual(self.model_calls(), 0)
         self.detail(["We sell software."])
         self.assertEqual(self.run_cli()[1][1], "1")

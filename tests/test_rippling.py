@@ -98,6 +98,7 @@ class ReadTest(unittest.TestCase):
         good = rippling_item("j1", "AE")
         for page in [[], {"items": [good], "page": 0, "totalItems": 1}, {**rippling_page([good]), "totalItems": "1"},
                      {**rippling_page([good]), "items": {}}, rippling_page(["job"]),
+                     {**rippling_page([good]), "page": False}, {**rippling_page([good]), "page": 0.0},
                      rippling_page([{**good, "name": ""}]), rippling_page([{**good, "id": 7}]),
                      rippling_page([{**good, "locations": {}}]), rippling_page([{**good, "locations": ["London"]}]),
                      rippling_page([{**good, "locations": [{"name": 3}]}]),
@@ -122,7 +123,9 @@ class DescribeTest(unittest.TestCase):
 
     def test_a_malformed_detail_fails_the_posting(self):
         (posting,) = read(rippling_page([rippling_item("j1", "AE")]))
-        for detail in [[], {}, {"description": "text"}, {"description": {"company": 3}}]:
+        for detail in [[], {}, {"description": "text"}, {"description": {}}, {"description": {"company": "<p>Hi</p>"}},
+                       {"description": {"company": 3, "role": ""}}, {"description": {"company": "", "role": 3}},
+                       {"description": {"company": "", "role": "\ud800"}}]:
             with self.assertRaises(BoardError, msg=detail):
                 rippling.describe(BOARD, posting, getter({f"{API}/j1": detail}))
 

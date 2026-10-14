@@ -59,6 +59,21 @@ def xml_root(body: bytes) -> ElementTree.Element:
         raise BoardError("malformed XML") from None
 
 
+def detail_text(record: dict, name: str, where: str) -> str:
+    """A string field of one posting's detail, "" when absent; a BoardError naming `where` when it is anything else
+    or can't be stored."""
+    value = record.get(name)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise BoardError(f"detail {where}: `{name}` is not a string")
+    try:
+        value.encode()  # a lone surrogate from a JSON escape can't be stored
+    except UnicodeEncodeError:
+        raise BoardError(f"detail {where}: `{name}` is not valid Unicode") from None
+    return value
+
+
 def text_field(record: dict, name: str, index: int, required: bool = False) -> str | None:
     value = record.get(name)
     if value is None and not required:

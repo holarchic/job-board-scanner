@@ -7,7 +7,7 @@ an empty list, never a 404, so a board that has gone reads as empty and is never
 import json
 from urllib.parse import quote
 
-from jobscan.payload import board_slug, html_to_text, http_url, text_field, with_remote
+from jobscan.payload import board_slug, detail_text, html_to_text, http_url, text_field, with_remote
 from jobscan.records import Board, BoardError, Get, Posting
 
 ATS = "smartrecruiters"
@@ -80,7 +80,7 @@ def _page(data, offset: int) -> tuple[int, list]:
     total, content = data.get("totalFound"), data.get("content")
     if type(total) is not int or total < 0 or not isinstance(content, list):
         raise BoardError("response has no `totalFound` count or `content` list")
-    if data.get("offset") != offset:
+    if type(data.get("offset")) is not int or data["offset"] != offset:
         raise BoardError("list changed while paging: a page answered another offset")
     return total, content
 
@@ -110,15 +110,20 @@ def _location(row: dict, index: int) -> str:
 
 
 def describe(board: Board, posting: Posting, get: Get) -> str:
-    """Each section of the posting's job ad (company, job, qualifications, more) as its title, then its text."""
+    """Each section of the posting's job ad with text (company, job, qualifications, more) as its title, then its
+    text. An ad without a `jobDescription` section fails the posting: it would be tagged and delivered with no
+    description, and never described again."""
     job_id = posting.key.removeprefix(f"{board.id}:")
     data = json.loads(get(f"{board.api_url}/{quote(job_id, safe='')}"))
     ad = data.get("jobAd") if isinstance(data, dict) else None
     sections = ad.get("sections") if isinstance(ad, dict) else None
     if not isinstance(sections, dict) or not all(isinstance(s, dict) for s in sections.values()):
         raise BoardError("detail has no `jobAd.sections` object")
+    if "jobDescription" not in sections:
+        raise BoardError("detail has no `jobDescription` section")
     lines = []
-    for index, section in enumerate(sections.values()):
-        title, text = text_field(section, "title", index) or "", text_field(section, "text", index) or ""
-        lines += [title.strip(), html_to_text(text)]
+    for name, section in sections.items():
+        text = html_to_text(detail_text(section, "text", f"section {name}"))
+        if text:
+            lines += [detail_text(section, "title", f"section {name}").strip(), text]
     return "\n".join(line for line in lines if line)

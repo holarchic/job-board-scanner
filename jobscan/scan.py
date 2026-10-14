@@ -1,4 +1,4 @@
-"""One scan for the install's profile: fetch → store → prefilter → tag → digest."""
+"""One scan for the install's profile: fetch → store → prefilter → describe → tag → digest."""
 import logging
 import sqlite3
 import time

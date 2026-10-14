@@ -31,4 +31,4 @@ class Posting:
 
 
 class BoardError(Exception):
-    """The board answered, but not with a usable, well-formed job list."""
+    """The board answered, but not with a usable, well-formed job list, or a posting's detail."""
