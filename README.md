@@ -7,18 +7,7 @@ Self-hosted job-board scanner for tech roles: Ashby, Greenhouse, Gem and Workabl
 
 > **Status:** running daily on my own search since October 2026, version 0.1.0. Pre-1.0: the config, the database and the digest format can still change.
 
-```
-# ae-london — 2026-10-12 · 1 new
-
-ⓘ marks a tag that hasn't been validated against labelled postings.
-
-## Acme AI — Founding Account Executive · London
-https://jobs.ashbyhq.com/acme/1 · Ashby · first seen 2026-10-12 · 14 open roles
-- founding: **yes** — "our first and only sales hire"
-- location_eligible: **yes** — "London (hybrid)"
-- segment ⓘ: **mid_market, enterprise** — "mid-market and enterprise accounts"
-- language_required: no
-```
+![A digest email in Gmail: "jobscan: 18 new for david-ae", listing Account Executive roles at carwow, Funding Circle and HiveMQ, each with its link, open-role count and tags with quotes from the posting](docs/digest-email.png)
 
 ## Why
 
