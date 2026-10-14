@@ -3,7 +3,7 @@
 [![CI](https://github.com/holarchic/job-board-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/holarchic/job-board-scanner/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/holarchic/job-board-scanner)](LICENSE)
 
-Self-hosted job-board scanner for tech roles: Ashby, Greenhouse, Gem and Workable, LLM-tagged, in a daily email digest.
+Self-hosted scanner for tech roles on Ashby, Greenhouse, Gem, Workable, Teamtailor, Personio: LLM-tagged, emailed daily.
 
 > **Status:** running daily on my own search since October 2026, version 0.1.0. Pre-1.0: the config, the database and the digest format can still change.
 
