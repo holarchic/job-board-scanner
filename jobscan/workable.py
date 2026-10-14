@@ -5,6 +5,7 @@ locations. Parsing is all-or-nothing per board, as for the others.
 
 Boards come from the boards file only: Workable rate-limits (HTTP 429 on every request) a daily sweep of the ~5,300
 boards Common Crawl holds, so discovery leaves it out."""
+import json
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -13,6 +14,7 @@ from jobscan.records import Board, BoardError, Posting
 
 ATS = "workable"
 DISPLAY_NAME = "Workable"
+DECODE = json.loads
 BOARD_HOST = "apply.workable.com"
 CRAWL_HOSTS = ()  # not discovered: see the module docstring
 API_PATH = ("api", "v1", "widget", "accounts")

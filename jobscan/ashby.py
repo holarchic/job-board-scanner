@@ -2,11 +2,14 @@
 
 Parsing is all-or-nothing per board: one malformed listed job fails the board, so a partial snapshot
 never closes postings that are still live."""
+import json
+
 from jobscan.payload import html_to_text, http_url, text_field
 from jobscan.records import Board, BoardError, Posting
 
 ATS = "ashby"
 DISPLAY_NAME = "Ashby"
+DECODE = json.loads
 CRAWL_HOSTS = ("jobs.ashbyhq.com",)
 API = "https://api.ashbyhq.com/posting-api/job-board/"
 

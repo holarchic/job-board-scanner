@@ -2,6 +2,7 @@
 
 One API host serves US and EU boards. Parsing is all-or-nothing per board, as for Ashby."""
 import html
+import json
 import re
 from urllib.parse import parse_qs, quote, unquote
 
@@ -10,6 +11,7 @@ from jobscan.records import Board, BoardError, Posting
 
 ATS = "greenhouse"
 DISPLAY_NAME = "Greenhouse"
+DECODE = json.loads
 # boards.greenhouse.io redirects to these, so Common Crawl holds no status-200 pages of its own.
 CRAWL_HOSTS = ("job-boards.greenhouse.io", "job-boards.eu.greenhouse.io")
 BOARD_HOSTS = frozenset({*CRAWL_HOSTS, "boards.greenhouse.io", "boards.eu.greenhouse.io"})

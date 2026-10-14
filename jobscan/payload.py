@@ -1,9 +1,10 @@
-"""Helpers for reading ATS data, shared by the adapters: board URLs and slugs, string fields that fail the board
-when malformed, and job-description HTML → plain text."""
+"""Helpers for reading ATS data, shared by the adapters: board URLs and slugs, XML payloads, string fields that fail
+the board when malformed, and job-description HTML → plain text."""
 import html
 import re
 from html.parser import HTMLParser
 from urllib.parse import SplitResult, unquote, urlsplit
+from xml.etree import ElementTree
 
 from jobscan.records import BoardError
 
@@ -35,6 +36,16 @@ def board_slug(raw: str, decoded: bool = False) -> str | None:
     if not SLUG.fullmatch(slug) or NOT_IN_SLUG & set(slug):
         return None
     return slug
+
+
+def xml_root(body: bytes) -> ElementTree.Element:
+    """An XML feed's root element, as an adapter's DECODE. ElementTree resolves no external entities, and the expat
+    it links (≥ 2.4.1) bounds entity expansion."""
+    try:
+        return ElementTree.fromstring(body)
+    # LookupError: an encoding Python doesn't know; ValueError: a multibyte encoding expat can't read.
+    except (ElementTree.ParseError, LookupError, ValueError):
+        raise BoardError("malformed XML") from None
 
 
 def text_field(record: dict, name: str, index: int, required: bool = False) -> str | None:

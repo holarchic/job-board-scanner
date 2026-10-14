@@ -2,6 +2,7 @@
 
 The payload is a bare list of jobs, shaped like Greenhouse's. Parsing is all-or-nothing per board, as for the
 others."""
+import json
 import re
 from urllib.parse import quote
 
@@ -10,6 +11,7 @@ from jobscan.records import Board, BoardError, Posting
 
 ATS = "gem"
 DISPLAY_NAME = "Gem"
+DECODE = json.loads
 CRAWL_HOSTS = ("jobs.gem.com",)
 API_PATH = ("job_board", "v0")
 API = "https://api.gem.com/" + "/".join(API_PATH) + "/"

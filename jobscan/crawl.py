@@ -70,7 +70,8 @@ def latest_crawls(n: int, base: str = BASE) -> list[str]:
 
 
 def captures(crawl: str, host: str, base: str = BASE) -> list[str]:
-    """URLs on `host` that `crawl` fetched with status 200 as text/html."""
+    """URLs on `host` (`*.example.com`: on any subdomain of example.com) that `crawl` fetched with status 200 as
+    text/html."""
     prefix = surt_prefix(host).encode()
     indexes = f"{base}cc-index/collections/{crawl}/indexes/"
     urls = []
@@ -82,6 +83,10 @@ def captures(crawl: str, host: str, base: str = BASE) -> list[str]:
 
 
 def surt_prefix(host: str) -> str:
+    """`jobs.example.com` → `com,example,jobs)/`. `*.example.com` → `com,example,`, which every subdomain's key
+    starts with, and neither the apex's (`com,example)/`) nor a look-alike's (`com,examplex,`)."""
+    if host.startswith("*."):
+        return ",".join(reversed(host[2:].lower().split("."))) + ","
     return ",".join(reversed(host.lower().split("."))) + ")/"
 
 

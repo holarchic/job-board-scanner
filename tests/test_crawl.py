@@ -67,6 +67,15 @@ class CapturesTest(unittest.TestCase):
                     cdx_line("https://app.ashbyhq.com/x")])
         self.assertEqual(self.captures(), ["https://jobs.ashbyhq.com/a/1"])
 
+    def test_wildcard_host_reads_every_subdomain_and_nothing_else(self):
+        inside = ["https://acme.teamtailor.com/jobs", "https://beta.teamtailor.com/jobs/1-ae",
+                  "https://x.y.teamtailor.com/"]
+        self.serve([cdx_line(u) for u in inside] + [cdx_line("https://teamtailor.com/en"),
+                                                     cdx_line("https://teamtailorx.com/a"),
+                                                     cdx_line("https://www.teamtailor.co/b")])
+        self.assertEqual(sorted(crawl.captures(CRAWL, "*.teamtailor.com", base=self.server.url)), sorted(inside))
+        self.assertEqual(crawl.surt_prefix("*.Jobs.Personio.de"), "de,personio,jobs,")
+
     def test_no_captures_is_an_error(self):
         self.serve([cdx_line("https://app.ashbyhq.com/x"), cdx_line("https://jobs.ashbyhq.com/a/1", status="404")])
         with self.assertRaisesRegex(CrawlError, "no captures"):

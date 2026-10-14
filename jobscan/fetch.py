@@ -98,22 +98,23 @@ def fetch_each(boards: list[Board]) -> Iterator[BoardFetch | BoardFailure]:
 
 
 def _fetch_isolated(board: Board) -> BoardFetch | BoardFailure:
+    adapter = ADAPTERS[board.ats]
     try:
-        return BoardFetch(board, ADAPTERS[board.ats].parse(board, _get_json(board)))
+        return BoardFetch(board, adapter.parse(board, adapter.DECODE(_get(board))))
     # OSError covers URLError, timeouts and resets; ValueError covers bad JSON and bad UTF-8;
-    # RecursionError covers deeply nested JSON on Python < 3.14.
+    # RecursionError covers deeply nested JSON on Python < 3.14. XML decoding raises BoardError itself.
     except (OSError, http.client.HTTPException, ValueError, RecursionError, BoardError) as e:
         return BoardFailure(board, _reason(e), e.code if isinstance(e, urllib.error.HTTPError) else None)
 
 
-def _get_json(board: Board):
+def _get(board: Board) -> bytes:
     request = urllib.request.Request(board.api_url, headers=HEADERS)
     for attempt, pause in enumerate((*RETRY_PAUSES, None), start=1):
         try:
             with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
                 if response.status != 200:
                     raise BoardError(f"HTTP {response.status}")
-                return json.load(response)
+                return response.read()
         except urllib.error.HTTPError as e:
             e.close()
             if e.code == 429:  # every one, so rate limiting shows even when a retry then succeeds

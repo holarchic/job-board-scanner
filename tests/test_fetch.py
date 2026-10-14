@@ -7,7 +7,7 @@ from unittest import mock
 
 from jobscan import fetch, payload
 from jobscan.config import ConfigError
-from jobscan.records import Board
+from jobscan.records import Board, BoardError
 from tests.fakes import FakeServer, ashby_job
 
 
@@ -70,6 +70,14 @@ class AshbyBoardTest(unittest.TestCase):
             self.assertEqual(payload.html_to_text(markup), "Our first hire\nNext")
         with mock.patch.object(payload._Text, "feed", side_effect=AssertionError):
             self.assertEqual(payload.html_to_text("<p>Before <![bogus]> after</p>"), "Before after")
+
+    def test_xml_root_reads_a_feed_and_fails_the_board_on_anything_else(self):
+        self.assertEqual(payload.xml_root(b'<?xml version="1.0" encoding="UTF-8"?><rss><channel/></rss>').tag, "rss")
+        for body in [b"", b"<rss>", b"{}", b"<a>\xff</a>", b'<?xml version="1.0" encoding="x-unknown"?><a/>',
+                     b'<?xml version="1.0" encoding="shift_jis"?><a/>',
+                     b'<!DOCTYPE a [<!ENTITY e SYSTEM "file:///etc/passwd">]><a>&e;</a>']:
+            with self.assertRaisesRegex(BoardError, "^malformed XML$", msg=body):
+                payload.xml_root(body)
 
     def test_api_paths_win_over_board_pages(self):
         for url, ats in [("https://jobs.ashbyhq.com/acme", "ashby"),
