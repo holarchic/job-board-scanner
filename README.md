@@ -23,7 +23,7 @@ It finds the job boards itself, reads them directly and has a language model tag
 
 ## What it does
 
-- **Finds boards** in the three newest [Common Crawl](https://commoncrawl.org) crawls: about 4,000 on Ashby, 4,800 on Greenhouse and 1,100 on Gem. About 8,000 of the Ashby and Greenhouse ones answer. Of my hand-built list it finds 111 of 114 Ashby boards, 33 of 37 Greenhouse ones and all 4 on Gem.
+- **Finds boards** in the three newest [Common Crawl](https://commoncrawl.org) crawls: about 4,000 on Ashby, 4,800 on Greenhouse, 1,100 on Gem, 1,000 on Teamtailor and 2,800 on Personio. About 8,000 of the Ashby and Greenhouse ones answer. Of my hand-built list it finds 111 of 114 Ashby boards, 33 of 37 Greenhouse ones and all 4 on Gem.
 - **Reads Workable boards you list** in a boards file. Discovery would find about 5,300, but Workable rate-limits a full daily sweep, so it doesn't attempt one.
 - **Filters** postings by your titles and locations, then **tags** each match with the model. Answers that need evidence quote the posting; a missing or unmatched quote shows ⚠. A quote that's there doesn't prove the answer right.
 - **Writes a markdown digest** of what's new, and can email it and raise a Mac notification.
@@ -42,9 +42,10 @@ It works best where a few titles narrow the field and the posting answers the re
 
 **Limits:**
 
-- No Lever, Workday (where Nvidia, Intel and Salesforce hire), Teamtailor, Personio or job sites. Companies that embed Greenhouse in their own careers page, such as Fivetran and Wiz, need the boards file.
+- No Lever, Workday (where Nvidia, Intel and Salesforce hire), SmartRecruiters, Rippling or job sites. Teamtailor and Personio boards on a company's own domain aren't found either. Companies that embed Greenhouse in their own careers page, such as Fivetran and Wiz, need the boards file.
 - Tags label matches; they don't filter the digest. There's no spend cap.
 - Tests cover AE and PM postings only, with just 8 founding roles. In the five-tag test, 8 of 11 `founding: yes` answers were right.
+- Personio jobs written only in German come without a description, so their tags answer from the title and location.
 - No funding stage or company age; the open-role count is a rough read on size.
 - One search per install.
 
@@ -60,7 +61,7 @@ It works best where a few titles narrow the field and the posting answers the re
 ## How it works
 
 - **Discovery:** reads each board host's captures straight from Common Crawl's index files, in about thirty seconds. `run` refreshes the list every 30 days and when an upgrade adds a job site. If any crawl can't be read, the old list stays.
-- **Fetch:** every board's public job API, eight at a time. One board's failure never stops the run.
+- **Fetch:** every board's public job API or feed, eight at a time. One board's failure never stops the run.
 - **Filter:** titles and locations match whole words, ignoring case, before any model call.
 - **Tag:** one model call per posting with all your tags, a strict JSON schema, and each quote checked against the posting text.
 - **Store:** everything in one SQLite file under `~/.jobscan`; no runtime dependencies beyond standard-library Python.
@@ -69,7 +70,7 @@ It works best where a few titles narrow the field and the posting answers the re
 
 macOS or Linux, and an [OpenRouter](https://openrouter.ai) API key with credit. uv fetches Python 3.11+ if you don't have it.
 
-Measured on my install: every run fetches about 216,000 postings from Ashby and Greenhouse in about eight minutes, plus about 5,000 from Gem. Greenhouse alone is roughly 2 GB of downloads. The database grows to about 1.4 GB.
+Measured on my install: every run fetches about 216,000 postings from Ashby and Greenhouse in about eight minutes, plus about 5,000 from Gem. A test read of every Teamtailor and Personio board fetched about 32,000 more in about three minutes. Greenhouse alone is roughly 2 GB of downloads. The database grows to about 1.4 GB.
 
 Notifications are Mac only, and the schedule runs only while you're logged in.
 
