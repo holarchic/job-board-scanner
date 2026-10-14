@@ -2,13 +2,14 @@ import json
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
 from jobscan import fetch, payload
 from jobscan.config import ConfigError
 from jobscan.records import Board, BoardError
-from tests.fakes import FakeServer, ashby_job
+from tests.fakes import FakeServer, ashby_job, smartrecruiters_detail, smartrecruiters_job, smartrecruiters_page
 
 
 def split(boards):
@@ -232,6 +233,32 @@ class FetchBoardTest(unittest.TestCase):
         _, (failure,) = split([board])
         self.assertTrue(failure.reason.startswith("network"))
 
+
+
+class DescribeAllTest(unittest.TestCase):
+    def setUp(self):
+        self.server = FakeServer()
+        self.addCleanup(self.server.close)
+        patcher = mock.patch.object(fetch, "RETRY_PAUSES", (0, 0))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_each_posting_is_described_in_order_and_a_failure_stays_its_own(self):
+        board = fetch.board_for("Acme", f"{self.server.url}/v1/companies/acme/postings")
+        self.server.routes["/v1/companies/acme/postings?limit=100&offset=0"] = (200, smartrecruiters_page(
+            [smartrecruiters_job(n, "AE") for n in ("1", "2", "3", "4")]))
+        ((fetched,), _) = split([board])
+        self.server.routes["/v1/companies/acme/postings/1"] = (200, smartrecruiters_detail("AE"))
+        self.server.routes["/v1/companies/acme/postings/3"] = (500, {"error": "boom"})
+        self.server.routes["/v1/companies/acme/postings/4"] = (200, {"jobAd": None})
+        outcomes = fetch.describe_all([(board, p) for p in fetched.postings])
+        self.assertEqual([o.posting.key for o in outcomes], [p.key for p in fetched.postings])
+        self.assertIsInstance(outcomes[0], fetch.Described)
+        self.assertEqual(outcomes[0].posting, replace(
+            fetched.postings[0], description="Company Description\nWe sell software.\nJob Description\nAE role."))
+        self.assertEqual([(o.reason, o.http_status) for o in outcomes[1:]],
+                         [("HTTP 404", 404), ("HTTP 500", 500), ("detail has no `jobAd.sections` object", None)])
+        self.assertEqual(sum(1 for r in self.server.requests if r[1] == "/v1/companies/acme/postings/3"), 3)
 
 if __name__ == "__main__":
     unittest.main()

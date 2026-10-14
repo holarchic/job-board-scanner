@@ -205,6 +205,26 @@ def personio_position(job_id, name, office="London", additional=(), sections=Non
             "</position>")
 
 
+
+def smartrecruiters_job(job_id, title, location="London, , United Kingdom", remote=False):
+    """A SmartRecruiters postings-list entry: no description, and `fullLocation` with an empty region."""
+    return {"id": job_id, "name": title, "uuid": f"uuid-{job_id}", "company": {"identifier": "Acme", "name": "Acme"},
+            "location": {"city": location.split(",")[0], "country": "gb", "remote": remote, "fullLocation": location},
+            "ref": f"https://api.smartrecruiters.com/v1/companies/Acme/postings/{job_id}"}
+
+
+def smartrecruiters_page(jobs, offset=0, total=None):
+    """One page of a SmartRecruiters postings list; `total` defaults to the jobs on this page."""
+    return {"offset": offset, "limit": 100, "totalFound": len(jobs) if total is None else total, "content": list(jobs)}
+
+
+def smartrecruiters_detail(title, sections=None):
+    """A SmartRecruiters posting detail: `sections` are (title, HTML) pairs."""
+    sections = sections if sections is not None else [("Company Description", "<p>We sell software.</p>"),
+                                                      ("Job Description", f"<p>{title} role.</p>")]
+    return {"id": "1", "name": title,
+            "jobAd": {"sections": {f"section{i}": {"title": t, "text": h} for i, (t, h) in enumerate(sections)}}}
+
 def model_reply(tags: dict, cost: float = 0.0005):
     """An OpenRouter-shaped chat-completions response carrying `tags` as the message content."""
     return 200, {"choices": [{"message": {"content": json.dumps(tags)}}], "usage": {"cost": cost}}

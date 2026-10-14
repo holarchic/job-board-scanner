@@ -37,8 +37,8 @@ def scan(config: Config, profile: Profile, defs: list[tag.TagDef]) -> ScanOutcom
         log.info("prefetch db_open_seconds=%.1f discovery_check_seconds=%.1f", checking - opening,
                  time.monotonic() - checking)
         fetched = _fetch(conn, config, started)
-        matched = [p for p in store.pending(conn, profile.name, fetched.eligible)
-                   if prefilter.matches(p.posting, profile)]
+        matched = _describe([p for p in store.pending(conn, profile.name, set(fetched.eligible))
+                             if prefilter.matches(p.posting, profile)], fetched.eligible)
         entries, tagged, usage = _tag(conn, matched, defs, config)
         outcome = _digest(conn, config, profile, entries, carried_over=len(matched) - len(entries),
                           unvalidated=frozenset(d.name for d in defs if not d.validated))
@@ -55,13 +55,15 @@ def scan(config: Config, profile: Profile, defs: list[tag.TagDef]) -> ScanOutcom
 class FetchSummary:
     read: int
     failed: int
-    eligible: set[str]  # boards whose postings may be delivered: read, or failing for a reason that may clear
+    eligible: dict[str, Board]  # by id: boards whose postings may be delivered (read, or failing for a reason that
+    # may clear), each as this run read it, so a boards-file entry's endpoint wins
 
 
 def _fetch(conn: sqlite3.Connection, config: Config, now: str) -> FetchSummary:
     """Fetches and stores every board. A 404 isn't a reason that may clear: that board is gone."""
+    boards = _boards(conn, config)
     read, not_found, transient, postings = [], [], [], 0
-    for outcome in fetch.fetch_each(_boards(conn, config)):
+    for outcome in fetch.fetch_each(list(boards.values())):
         if isinstance(outcome, fetch.BoardFetch):
             store.apply_fetch(conn, outcome.board.id, outcome.postings, now)
             read.append(outcome.board.id)
@@ -76,10 +78,11 @@ def _fetch(conn: sqlite3.Connection, config: Config, now: str) -> FetchSummary:
     store.record_board_outcomes(conn, read, not_found)
     log.info("fetch_done boards_read=%d boards_not_found=%d boards_failed=%d postings=%d", len(read),
              len(not_found), len(transient), postings)
-    return FetchSummary(read=len(read), failed=len(not_found) + len(transient), eligible=set(read) | set(transient))
+    return FetchSummary(read=len(read), failed=len(not_found) + len(transient),
+                        eligible={b: boards[b] for b in read + transient})
 
 
-def _boards(conn: sqlite3.Connection, config: Config) -> list[Board]:
+def _boards(conn: sqlite3.Connection, config: Config) -> dict[str, Board]:
     """The boards file's boards plus the live discovered ones; on the same board the file's entry wins, for its
     company name. File boards are never skipped, however often they 404."""
     listed, skipped = fetch.load_boards(config.boards_file) if config.boards_file else ([], 0)
@@ -89,7 +92,32 @@ def _boards(conn: sqlite3.Connection, config: Config) -> list[Board]:
         raise ConfigError("no boards to read: discovery found none (see runs.log), and config.toml sets no boards_file")
     log.info("fetch_start boards=%d listed=%d discovered=%d skipped_unrecognised=%d", len(boards), len(listed),
              len(discovered), skipped)
-    return list(boards.values())
+    return boards
+
+
+def _describe(matched: list[store.StoredPosting], boards: dict[str, Board]) -> list[store.StoredPosting]:
+    """The matched postings, each of an ATS whose list carries no descriptions with its description fetched; the
+    tag cache keys on that text. A posting whose detail request fails sits this run out: still pending, described
+    again next run, and not carried over, since nothing was tried on it."""
+    wanted = [s for s in matched if fetch.ADAPTERS[s.posting.ats].describe is not None]
+    if not wanted:
+        return matched
+    described = {}
+    for outcome in fetch.describe_all([(boards[s.posting.board], s.posting) for s in wanted]):
+        if isinstance(outcome, fetch.Described):
+            described[outcome.posting.key] = outcome.posting
+        elif outcome.http_status == 404:
+            log.info("describe_not_found posting=%s", outcome.posting.key)
+        else:
+            log.warning("describe_failed posting=%s reason=%r", outcome.posting.key, outcome.reason)
+    log.info("describe_done described=%d failed=%d", len(described), len(wanted) - len(described))
+    kept = []
+    for s in matched:
+        if fetch.ADAPTERS[s.posting.ats].describe is None:
+            kept.append(s)
+        elif (posting := described.get(s.posting.key)) is not None:
+            kept.append(store.StoredPosting(posting, store.input_hash(posting), s.first_seen))
+    return kept
 
 
 def _tag(conn: sqlite3.Connection, matched: list[store.StoredPosting], defs: list[tag.TagDef], config: Config,

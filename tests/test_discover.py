@@ -15,13 +15,15 @@ CRAWLS = ("CC-MAIN-2026-39", "CC-MAIN-2026-34", "CC-MAIN-2026-30")
 
 
 FIRST_LIST = ["ashby:acme", "ashby:beta", "ashby:gamma", "gem:gem-acme", "greenhouse:gh-eu", "greenhouse:gh-us",
-              "personio:pe-acme", "teamtailor:tt-acme"]
+              "personio:pe-acme", "smartrecruiters:sr-acme", "teamtailor:tt-acme"]
 
 
 def captures(*slugs, greenhouse=("gh-us",), greenhouse_eu=("gh-eu",), workable=("wk-acme",), gem=("gem-acme",),
-             teamtailor=("tt-acme",), personio_de=("pe-acme",), personio_com=("pe-acme",)):
+             teamtailor=("tt-acme",), personio_de=("pe-acme",), personio_com=("pe-acme",), sr_jobs=("SR-Acme",),
+             sr_careers=("sr-acme",)):
     """One crawl's index lines: Ashby boards, Greenhouse boards on both hosts, Gem boards, Teamtailor and Personio
-    subdomains, and noise, including Workable boards, which are never discovered."""
+    subdomains, SmartRecruiters boards on both hosts, and noise, including Workable boards, which are never
+    discovered."""
     return [cdx_line(f"https://jobs.ashbyhq.com/{slug}/job-1") for slug in slugs] + \
         [cdx_line(f"https://job-boards.greenhouse.io/{slug}/jobs/1") for slug in greenhouse] + \
         [cdx_line(f"https://job-boards.eu.greenhouse.io/{slug}") for slug in greenhouse_eu] + \
@@ -31,6 +33,9 @@ def captures(*slugs, greenhouse=("gh-us",), greenhouse_eu=("gh-eu",), workable=(
         [cdx_line(f"https://{slug}.teamtailor.com/jobs/1-ae") for slug in teamtailor] + \
         [cdx_line(f"https://{slug}.jobs.personio.de/job/1") for slug in personio_de] + \
         [cdx_line(f"https://{slug}.jobs.personio.com/") for slug in personio_com] + \
+        [cdx_line(f"https://jobs.smartrecruiters.com/{slug}/744000155574869-account-executive") for slug in sr_jobs] + \
+        [cdx_line(f"https://careers.smartrecruiters.com/{slug}") for slug in sr_careers] + \
+        [cdx_line("https://jobs.smartrecruiters.com/"), cdx_line("https://jobs.smartrecruiters.com/?company=Acme")] + \
         [cdx_line("https://app.teamtailor.com/login"), cdx_line("https://teamtailor.com/en")] + \
         [cdx_line("https://app.ashbyhq.com/login"), cdx_line("https://www.example.com/")]
 
@@ -73,7 +78,7 @@ class DiscoverTest(unittest.TestCase):
             conn.close()
 
     def test_union_of_three_crawls_case_folded(self):
-        self.assertEqual(self.run_cli(), (0, "discovered\t8\t" + ",".join(CRAWLS)))
+        self.assertEqual(self.run_cli(), (0, "discovered\t9\t" + ",".join(CRAWLS)))
         self.assertEqual(self.discovered(), [
             ("ashby:acme", "https://api.ashbyhq.com/posting-api/job-board/acme"),
             ("ashby:beta", "https://api.ashbyhq.com/posting-api/job-board/beta"),
@@ -82,6 +87,7 @@ class DiscoverTest(unittest.TestCase):
             ("greenhouse:gh-eu", "https://boards-api.greenhouse.io/v1/boards/gh-eu/jobs?content=true"),
             ("greenhouse:gh-us", "https://boards-api.greenhouse.io/v1/boards/gh-us/jobs?content=true"),
             ("personio:pe-acme", "https://pe-acme.jobs.personio.com/xml?language=en"),
+            ("smartrecruiters:sr-acme", "https://api.smartrecruiters.com/v1/companies/sr-acme/postings"),
             ("teamtailor:tt-acme", "https://tt-acme.teamtailor.com/jobs.rss?per_page=1000"),
         ])
 
@@ -92,7 +98,8 @@ class DiscoverTest(unittest.TestCase):
         self.assertEqual(self.run_cli()[0], 0)
         self.assertEqual([b for b, _ in self.discovered()],
                          ["ashby:acme", "gem:gem-acme", "greenhouse:ep+co", "greenhouse:eu-only", "greenhouse:gh-eu",
-                          "greenhouse:shared", "greenhouse:us-only", "personio:pe-acme", "teamtailor:tt-acme"])
+                          "greenhouse:shared", "greenhouse:us-only", "personio:pe-acme", "smartrecruiters:sr-acme",
+                          "teamtailor:tt-acme"])
 
     def test_gem_slugs_keep_their_case_and_workable_is_never_discovered(self):
         self.serve({CRAWLS[0]: captures("acme", workable=("Mixed", "mixed"), gem=("Gem-B", "gem-b")),
@@ -109,6 +116,20 @@ class DiscoverTest(unittest.TestCase):
         self.assertEqual([b for b, _ in self.discovered() if b.startswith(("personio", "teamtailor"))],
                          ["personio:both", "personio:com-only", "personio:de-only", "personio:pe-acme",
                           "teamtailor:acme-tt", "teamtailor:tt-acme"])
+
+    def test_smartrecruiters_boards_on_both_hosts_fold_and_ni_links_name_their_board(self):
+        self.serve({CRAWLS[0]: captures("acme", sr_jobs=("ni/Nexthink", "Both"), sr_careers=("both", "careers-only")),
+                    CRAWLS[1]: captures("acme"), CRAWLS[2]: captures("acme")})
+        self.assertEqual(self.run_cli()[0], 0)
+        self.assertEqual([b for b, _ in self.discovered() if b.startswith("smartrecruiters")],
+                         ["smartrecruiters:both", "smartrecruiters:careers-only", "smartrecruiters:nexthink",
+                          "smartrecruiters:sr-acme"])
+
+    def test_a_crawl_without_careers_smartrecruiters_captures_keeps_the_whole_list(self):
+        self.assertEqual(self.run_cli()[0], 0)
+        self.serve({c: captures("delta", **({"sr_careers": ()} if c == CRAWLS[0] else {})) for c in CRAWLS})
+        self.assertEqual(self.run_cli(), (1, ""))
+        self.assertEqual([b for b, _ in self.discovered()], FIRST_LIST)
 
     def test_a_crawl_without_one_personio_host_keeps_the_whole_list(self):
         self.assertEqual(self.run_cli()[0], 0)

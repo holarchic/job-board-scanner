@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from email import policy
 from email.parser import BytesParser
@@ -27,6 +28,7 @@ from jobscan import (
     notify,
     personio,
     scan,
+    smartrecruiters,
     store,
     tag,
     teamtailor,
@@ -46,6 +48,9 @@ from tests.fakes import (
     patch_smtp,
     personio_feed,
     personio_position,
+    smartrecruiters_detail,
+    smartrecruiters_job,
+    smartrecruiters_page,
     tags_quoting_the_posting,
     teamtailor_feed,
     teamtailor_item,
@@ -337,6 +342,127 @@ class TeamtailorPersonioRunTest(RunFixture):
         self.assertEqual(rows, {"teamtailor:initech:tt1": 0, "teamtailor:initech:tt2": 0})
 
 
+class SmartRecruitersRunTest(RunFixture):
+    """A list without descriptions: matched postings are described by a detail request, never stored."""
+
+    LIST = "/v1/companies/initrode/postings"
+
+    def setUp(self):
+        super().setUp()
+        mock.patch.object(smartrecruiters, "PAGE", 2).start()
+        (self.home / "boards.json").write_text(json.dumps({"companies": [
+            {"company": "Initrode", "board_url": f"{self.ats.url}{self.LIST}"}]}))
+        self.jobs = [smartrecruiters_job("sr1", "Account Executive"), smartrecruiters_job("sr2", "Engineer"),
+                     smartrecruiters_job("sr3", "Account Executive", "Berlin, , Germany")]
+        self.serve_list()
+        self.detail(["We sell software."])
+
+        def quoting_the_description(payload):
+            tags = tags_quoting_the_posting(payload)
+            text = payload["messages"][0]["content"].split("<description>", 1)[1]
+            claim = next(line for line in text.splitlines() if line.startswith("We sell"))
+            return model_reply({**tags, "tech_company": {"value": "yes", "quote": claim}})
+        self.model.routes["/chat/completions"] = (200, quoting_the_description)
+
+    def serve_list(self, pages=None):
+        """The board's list, two jobs a page; `pages` replaces the pages served."""
+        pages = pages or [smartrecruiters_page(self.jobs[o:o + 2], o, len(self.jobs))
+                          for o in range(0, len(self.jobs), 2)]
+        for page in pages:
+            self.ats.routes[f"{self.LIST}?limit=2&offset={page['offset']}"] = (200, page)
+
+    def detail(self, lines, status=200):
+        sections = [("About Initrode", f"<p>{line}</p>") for line in lines]
+        self.ats.routes[f"{self.LIST}/sr1"] = (status, smartrecruiters_detail("Account Executive", sections))
+
+    def asked(self, path):
+        return sum(1 for _, asked, _ in self.ats.requests if asked == path)
+
+    def model_calls(self):
+        return len(self.model.requests)
+
+    def stored(self):
+        conn = store.open_db(self.home)
+        try:
+            description = conn.execute("SELECT description FROM postings WHERE key = 'smartrecruiters:initrode:sr1'"
+                                       ).fetchone()[0]
+            hashes = {r[0] for r in conn.execute("SELECT input_hash FROM tag_results WHERE posting_key = ?",
+                                                 ("smartrecruiters:initrode:sr1",))}
+            closed = dict(conn.execute("SELECT key, closed FROM postings WHERE board = 'smartrecruiters:initrode'"))
+        finally:
+            conn.close()
+        return description, hashes, closed
+
+    def described_hash(self, text):
+        board = fetch.board_for("Initrode", f"{self.ats.url}{self.LIST}")
+        (posting,) = [p for p in smartrecruiters.read(board, lambda url: json.dumps(
+            self.ats.routes[url.removeprefix(self.ats.url)][1]).encode()) if p.key.endswith(":sr1")]
+        return store.input_hash(replace(posting, description=text))
+
+    def block_digests(self):
+        (self.home / "digests").mkdir(exist_ok=True)
+        (self.home / "digests" / "ae").write_text("a file where the directory should be")
+
+    def test_a_matched_posting_is_described_and_its_quote_verified_but_nothing_is_stored(self):
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "1"))
+        text = Path(path).read_text()
+        self.assertIn("## Initrode — Account Executive · London, United Kingdom\n"
+                      "https://jobs.smartrecruiters.com/initrode/sr1 · SmartRecruiters · first seen", text)
+        self.assertIn('- tech_company ⓘ: **yes** — "We sell software."\n', text)
+        self.assertNotIn("⚠", text)
+        self.assertEqual([self.asked(f"{self.LIST}/{key}") for key in ("sr1", "sr2", "sr3")], [1, 0, 0])
+        self.assertEqual(self.stored()[:2], ("", {self.described_hash("About Initrode\nWe sell software.")}))
+        self.assertIn("describe_done described=1 failed=0", (self.home / "runs.log").read_text())
+        self.assertEqual(self.run_cli()[1][1:], ["0", "-"])
+
+    def test_a_failed_detail_waits_for_the_next_run_without_failing_this_one(self):
+        self.detail(["We sell software."], status=500)
+        self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
+        log = (self.home / "runs.log").read_text()
+        self.assertIn("describe_failed posting=smartrecruiters:initrode:sr1 reason='HTTP 500'", log)
+        self.assertEqual(self.model_calls(), 0)
+        self.detail(["We sell software."])
+        self.assertEqual(self.run_cli()[1][1], "1")
+
+    def test_tags_are_reused_while_the_description_holds_and_redone_when_it_changes(self):
+        self.block_digests()
+        for run in (1, 2):  # nothing is delivered, so the posting stays pending and is described each run
+            self.assertEqual(self.run_cli(), (1, ["ae", "0", "-"]), run)
+            self.assertEqual((self.asked(f"{self.LIST}/sr1"), self.model_calls()), (run, 1))
+        (self.home / "digests" / "ae").unlink()
+        self.detail(["We sell hardware."])
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new, self.asked(f"{self.LIST}/sr1"), self.model_calls()), (0, "1", 3, 2))
+        self.assertIn('- tech_company ⓘ: **yes** — "We sell hardware."\n', Path(path).read_text())
+        self.assertIn(self.described_hash("About Initrode\nWe sell hardware."), self.stored()[1])
+
+    def test_a_list_that_shifts_while_paging_fails_the_board_and_keeps_its_postings_open(self):
+        self.assertEqual(self.run_cli()[1][1], "1")
+        jobs = self.jobs
+        self.serve_list([smartrecruiters_page(jobs[0:2], 0, 3), smartrecruiters_page(jobs[1:2], 2, 3)])
+        self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
+        self.assertIn("board_failed company='Initrode' board=smartrecruiters:initrode reason='duplicate job ids'",
+                      (self.home / "runs.log").read_text())
+        self.assertEqual(self.stored()[2], {f"smartrecruiters:initrode:sr{n}": 0 for n in (1, 2, 3)})
+
+    def test_the_boards_file_endpoint_describes_even_while_its_list_fails(self):
+        conn = store.open_db(self.home)
+        try:  # discovery names the same board on a host that answers nothing
+            store.replace_discovered(conn, [Board("smartrecruiters", "initrode", "initrode",
+                                                  "http://127.0.0.1:9/v1/companies/initrode/postings"), *SENTINELS],
+                                     datetime.now(UTC).isoformat(timespec="microseconds"))
+        finally:
+            conn.close()
+        self.block_digests()
+        self.assertEqual(self.run_cli()[0], 1)
+        (self.home / "digests" / "ae").unlink()
+        self.ats.routes[f"{self.LIST}?limit=2&offset=0"] = (500, {"error": "boom"})
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new, self.asked(f"{self.LIST}/sr1")), (0, "1", 2))
+        self.assertIn("## Initrode — Account Executive", Path(path).read_text())
+
+
 class NotifyTest(RunFixture):
     """`run --notify` tells the desktop about news and problems, never about a quiet run, and never changes the
     outcome."""
@@ -611,7 +737,7 @@ class BoardSourcesTest(RunFixture):
 
 
 DISCOVERED = ["ashby:acme", "gem:gem-acme", "greenhouse:gh-acme", "greenhouse:gh-eu", "personio:pe-acme",
-              "teamtailor:tt-acme"]  # never Workable
+              "smartrecruiters:sr-acme", "teamtailor:tt-acme"]  # never Workable
 
 
 class DiscoveryRefreshTest(RunFixture):
@@ -628,7 +754,8 @@ class DiscoveryRefreshTest(RunFixture):
                                     (workable, "API", f"{self.ats.url}/api/v1/widget/accounts/"),
                                     (gem, "API", f"{self.ats.url}/job_board/v0/"),
                                     (teamtailor, "FEED", self.ats.url + "/teamtailor/{slug}/jobs.rss"),
-                                    (personio, "FEED", self.ats.url + "/personio/{slug}/xml")]:
+                                    (personio, "FEED", self.ats.url + "/personio/{slug}/xml"),
+                                    (smartrecruiters, "API", f"{self.ats.url}/v1/companies/")]:
             mock.patch.object(target, name, value).start()
         crawls = ("CC-MAIN-2026-39", "CC-MAIN-2026-34", "CC-MAIN-2026-30")
         self.cc.files.update(crawl_list(*crawls))
@@ -641,11 +768,15 @@ class DiscoveryRefreshTest(RunFixture):
                                                         cdx_line("https://tt-acme.teamtailor.com/jobs"),
                                                         cdx_line("https://pe-acme.jobs.personio.de/"),
                                                         cdx_line("https://pe-acme.jobs.personio.com/"),
+                                                        cdx_line("https://jobs.smartrecruiters.com/sr-acme/1-ae"),
+                                                        cdx_line("https://careers.smartrecruiters.com/sr-acme"),
                                                         cdx_line("https://www.example.com/")]))
         self.write_config(boards_file=False)
         self.ats.routes["/teamtailor/tt-acme/jobs.rss?per_page=1000"] = (200, teamtailor_feed(
             teamtailor_item("t1", "Engineer")))
         self.ats.routes["/personio/pe-acme/xml"] = (200, personio_feed(personio_position("p1", "Engineer")))
+        self.ats.routes["/v1/companies/sr-acme/postings?limit=100&offset=0"] = (200, smartrecruiters_page(
+            [smartrecruiters_job("s1", "Engineer")]))
 
     def days_ago(self, days):
         return (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="microseconds")
@@ -690,7 +821,7 @@ class DiscoveryRefreshTest(RunFixture):
         self.assertIn("discover_failed", (self.home / "runs.log").read_text())
 
     def test_a_newly_supported_ats_is_discovered_on_the_next_run(self):
-        for ats in ("greenhouse", "gem", "teamtailor", "personio"):
+        for ats in ("greenhouse", "gem", "teamtailor", "personio", "smartrecruiters"):
             self.seed_discovery("acme", at=self.days_ago(1))
             conn = store.open_db(self.home)
             with conn:
@@ -703,7 +834,7 @@ class DiscoveryRefreshTest(RunFixture):
             boards = {r[0] for r in conn.execute("SELECT DISTINCT board FROM postings")}
         finally:
             conn.close()
-        self.assertLessEqual({"teamtailor:tt-acme", "personio:pe-acme"}, boards)  # the new ATSes' feeds were read
+        self.assertLessEqual({"teamtailor:tt-acme", "personio:pe-acme", "smartrecruiters:sr-acme"}, boards)  # read
 
     def test_a_list_without_workable_is_not_rediscovered(self):
         self.seed_discovery("acme", at=self.days_ago(1))

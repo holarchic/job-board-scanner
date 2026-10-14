@@ -9,22 +9,25 @@ import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 
-from jobscan import ashby, gem, greenhouse, personio, teamtailor, workable
+from jobscan import ashby, gem, greenhouse, personio, smartrecruiters, teamtailor, workable
 from jobscan.config import ConfigError
 from jobscan.records import Board, BoardError, Posting
 
 ADAPTERS = {ashby.ATS: ashby, greenhouse.ATS: greenhouse, workable.ATS: workable, gem.ATS: gem,
-            teamtailor.ATS: teamtailor, personio.ATS: personio}
+            teamtailor.ATS: teamtailor, personio.ATS: personio, smartrecruiters.ATS: smartrecruiters}
 TIMEOUT = 20
 RETRY_PAUSES = (2, 10)  # seconds before the 2nd and 3rd tries
 RETRYABLE = {429, 500, 502, 503, 504}
 WORKERS = 8
 IN_FLIGHT = 2 * WORKERS  # boards fetching or fetched but not yet consumed: bounds postings held in memory
 HEADERS = {"User-Agent": "jobscan (+https://github.com/holarchic/job-board-scanner)"}
+# OSError covers URLError, timeouts and resets; ValueError covers bad JSON and bad UTF-8;
+# RecursionError covers deeply nested JSON on Python < 3.14. XML decoding raises BoardError itself.
+FAILURES = (OSError, http.client.HTTPException, ValueError, RecursionError, BoardError)
 log = logging.getLogger("jobscan")
 
 
@@ -39,6 +42,18 @@ class BoardFailure:
     board: Board
     reason: str
     http_status: int | None = None  # 404 means the board is gone; anything else may clear by the next run
+
+
+@dataclass(frozen=True)
+class Described:
+    posting: Posting  # with the description its detail request returned
+
+
+@dataclass(frozen=True)
+class DescribeFailure:
+    posting: Posting
+    reason: str
+    http_status: int | None = None  # 404: the posting is gone from its board
 
 
 def load_boards(path: Path) -> tuple[list[Board], int]:
@@ -103,10 +118,24 @@ def _fetch_isolated(board: Board) -> BoardFetch | BoardFailure:
     adapter = ADAPTERS[board.ats]
     try:
         return BoardFetch(board, adapter.read(board, partial(_get, board)))
-    # OSError covers URLError, timeouts and resets; ValueError covers bad JSON and bad UTF-8;
-    # RecursionError covers deeply nested JSON on Python < 3.14. XML decoding raises BoardError itself.
-    except (OSError, http.client.HTTPException, ValueError, RecursionError, BoardError) as e:
-        return BoardFailure(board, _reason(e), e.code if isinstance(e, urllib.error.HTTPError) else None)
+    except FAILURES as e:
+        return BoardFailure(board, _reason(e), _status(e))
+
+
+def describe_all(pairs: list[tuple[Board, Posting]]) -> list[Described | DescribeFailure]:
+    """Each posting with the description its adapter's detail request returns, in order, WORKERS at a time. Only
+    for adapters whose `describe` isn't None; one posting's failure never stops the rest."""
+    with ThreadPoolExecutor(WORKERS) as pool:
+        return list(pool.map(_describe_isolated, pairs))
+
+
+def _describe_isolated(pair: tuple[Board, Posting]) -> Described | DescribeFailure:
+    board, posting = pair
+    try:
+        description = ADAPTERS[board.ats].describe(board, posting, partial(_get, board))
+        return Described(replace(posting, description=description))
+    except FAILURES as e:
+        return DescribeFailure(posting, _reason(e), _status(e))
 
 
 def _get(board: Board, url: str) -> bytes:
@@ -128,6 +157,10 @@ def _get(board: Board, url: str) -> bytes:
             if pause is None:
                 raise
         time.sleep(pause)
+
+
+def _status(e: Exception) -> int | None:
+    return e.code if isinstance(e, urllib.error.HTTPError) else None
 
 
 def _reason(e: Exception) -> str:
