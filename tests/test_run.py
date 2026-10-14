@@ -308,6 +308,18 @@ class TeamtailorPersonioRunTest(RunFixture):
         self.assertNotIn("⚠", text)
         self.assertEqual(self.run_cli()[1][1:], ["0", "-"])
 
+    def test_a_personio_job_that_loses_its_name_closes_and_reopens_without_a_second_delivery(self):
+        named = personio_position("p1", "Account Executive", "London")
+        for position, new, open_roles in [(named, "2", 1), (personio_position("p1", " ", "London"), "0", 0),
+                                          (named, "0", 1)]:
+            self.ats.routes["/personio/hooli/xml"] = (200, personio_feed(position))
+            self.assertEqual(self.run_cli()[1][1], new)
+            conn = store.open_db(self.home)
+            try:
+                self.assertEqual(store.open_counts(conn, {"personio:hooli"}), {"personio:hooli": open_roles})
+            finally:
+                conn.close()
+
     def test_a_feed_that_may_be_cut_leaves_its_open_postings_open(self):
         self.ats.routes["/teamtailor/initech/jobs.rss?per_page=3"] = self.ats.routes[
             "/teamtailor/initech/jobs.rss?per_page=1000"]

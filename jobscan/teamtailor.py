@@ -7,7 +7,7 @@ board, as for the others."""
 from urllib.parse import quote
 from xml.etree.ElementTree import Element
 
-from jobscan.payload import board_slug, html_to_text, http_url, with_remote, xml_root
+from jobscan.payload import board_slug, html_to_text, http_url, with_remote, xml_root, xml_text
 from jobscan.records import Board, BoardError, Posting
 
 ATS = "teamtailor"
@@ -16,7 +16,7 @@ DECODE = xml_root
 DOMAIN = "teamtailor.com"
 CRAWL_HOSTS = (f"*.{DOMAIN}",)
 FEED = "https://{slug}." + DOMAIN + "/jobs.rss"
-PER_PAGE = 1000  # the most jobs seen on one board is 313
+PER_PAGE = 1000  # Teamtailor documents no maximum; 1,000 returned every job of boards up to 874
 NOT_BOARDS = frozenset({"www", "app"})  # Teamtailor's own subdomains; `app` answers 200 with HTML, never a 404
 TT = "{https://teamtailor.com/locations}"  # namespace of the location elements
 
@@ -54,24 +54,20 @@ def parse(board: Board, root: Element) -> tuple[Posting, ...]:
 
 
 def _posting(board: Board, index: int, item: Element) -> Posting:
-    guid, title = _text(item, "guid"), _text(item, "title")
+    guid, title = xml_text(item, "guid"), xml_text(item, "title")
     if not guid or not title:
         raise BoardError(f"job {index}: no guid or title")
     return Posting(key=f"{board.id}:{guid}", ats=ATS, board=board.id, company=board.company, title=title,
-                   location=" / ".join(_places(item)), url=_text(item, "link"),
-                   description=html_to_text(_text(item, "description")))
+                   location=" / ".join(_places(item)), url=xml_text(item, "link"),
+                   description=html_to_text(xml_text(item, "description")))
 
 
 def _places(item: Element) -> list[str]:
     """`city, country` per location (its name when it has neither), each once; `Remote` for a fully remote job."""
     places = []
     for location in item.iter(TT + "location"):
-        parts = dict.fromkeys(p for p in (_text(location, TT + "city"), _text(location, TT + "country")) if p)
-        place = ", ".join(parts) or _text(location, TT + "name")
+        parts = dict.fromkeys(p for p in (xml_text(location, TT + "city"), xml_text(location, TT + "country")) if p)
+        place = ", ".join(parts) or xml_text(location, TT + "name")
         if place and place not in places:
             places.append(place)
-    return with_remote(places) if _text(item, "remoteStatus") == "fully" else places
-
-
-def _text(element: Element, path: str) -> str:
-    return (element.findtext(path) or "").strip()
+    return with_remote(places) if xml_text(item, "remoteStatus") == "fully" else places

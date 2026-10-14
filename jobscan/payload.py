@@ -39,6 +39,11 @@ def board_slug(raw: str, decoded: bool = False) -> str | None:
     return slug
 
 
+def xml_text(element: ElementTree.Element, path: str) -> str:
+    """The text at `path` under `element`, stripped; "" when the element or its text is absent."""
+    return (element.findtext(path) or "").strip()
+
+
 def with_remote(places: list[str]) -> list[str]:
     """A remote job's places, plus `Remote` unless one of them already says remote as a word."""
     return places if any(REMOTE.search(p.casefold()) for p in places) else [*places, "Remote"]

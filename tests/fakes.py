@@ -179,11 +179,13 @@ def teamtailor_feed(*items):
 def teamtailor_item(guid, title, places=(("London", "United Kingdom"),), remote="none", description=None):
     """One feed item: `places` are (city, country[, name]); the description is HTML, escaped into the XML."""
     text = description if description is not None else f"<p>{title} role. We sell software.</p>"
-    locations = "".join(f"<tt:location><tt:name>{(*rest, f'{city} office')[0]}</tt:name><tt:city>{city}</tt:city>"
-                        f"<tt:country>{country}</tt:country></tt:location>" for city, country, *rest in places)
+    locations = "".join(f"<tt:location><tt:name>{escape((*rest, f'{city} office')[0])}</tt:name>"
+                        f"<tt:city>{escape(city)}</tt:city><tt:country>{escape(country)}</tt:country></tt:location>"
+                        for city, country, *rest in places)
     return (f"<item><title>{escape(title)}</title><description>{escape(text)}</description>"
-            f"<link>https://acme.teamtailor.com/jobs/{guid}-job</link><remoteStatus>{remote}</remoteStatus>"
-            f"<guid>{guid}</guid><tt:locations>{locations}</tt:locations></item>")
+            f"<link>https://acme.teamtailor.com/jobs/{escape(guid)}-job</link>"
+            f"<remoteStatus>{escape(remote)}</remoteStatus><guid>{escape(guid)}</guid>"
+            f"<tt:locations>{locations}</tt:locations></item>")
 
 
 def personio_feed(*positions):
@@ -197,7 +199,7 @@ def personio_position(job_id, name, office="London", additional=(), sections=Non
     extra = "".join(f"<office>{escape(o)}</office>" for o in additional)
     descriptions = "".join(f"<jobDescription><name>{escape(h)}</name><value>{escape(v)}</value></jobDescription>"
                            for h, v in sections)
-    return (f"<position><id>{job_id}</id><subcompany>Acme GmbH</subcompany><office>{escape(office)}</office>"
+    return (f"<position><id>{escape(job_id)}</id><subcompany>Acme GmbH</subcompany><office>{escape(office)}</office>"
             f"<additionalOffices>{extra}</additionalOffices><name>{escape(name)}</name>"
             f"<jobDescriptions>{descriptions}</jobDescriptions><createdAt>2026-10-01T09:00:00+00:00</createdAt>"
             "</position>")

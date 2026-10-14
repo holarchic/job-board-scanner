@@ -55,7 +55,8 @@ class ParseTest(unittest.TestCase):
 
     def test_a_malformed_feed_or_job_fails_the_board(self):
         for positions in [(personio_position("1", "AE"), personio_position("1", "SE")),
-                          (personio_position(" ", "AE"),)]:
+                          (personio_position(" ", "AE"),), (personio_position(" ", " "), personio_position("2", "AE")),
+                          (personio_position("1", " "), personio_position("1", "AE"))]:
             with self.assertRaises(BoardError, msg=positions):
                 parse(*positions)
         with self.assertRaises(BoardError):
