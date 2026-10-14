@@ -27,6 +27,7 @@ from jobscan import (
     greenhouse,
     notify,
     personio,
+    rippling,
     scan,
     smartrecruiters,
     store,
@@ -48,6 +49,9 @@ from tests.fakes import (
     patch_smtp,
     personio_feed,
     personio_position,
+    rippling_detail,
+    rippling_item,
+    rippling_page,
     smartrecruiters_detail,
     smartrecruiters_job,
     smartrecruiters_page,
@@ -463,6 +467,57 @@ class SmartRecruitersRunTest(RunFixture):
         self.assertIn("## Initrode — Account Executive", Path(path).read_text())
 
 
+class RipplingRunTest(RunFixture):
+    """Rows of one job merge; a matched job is described by a detail request."""
+
+    LIST = "/api/v2/board/initrode/jobs"
+
+    def setUp(self):
+        super().setUp()
+        (self.home / "boards.json").write_text(json.dumps({"companies": [
+            {"company": "Initrode", "board_url": f"{self.ats.url}{self.LIST}"}]}))
+        self.ats.routes[f"{self.LIST}?page=0&pageSize=1000"] = (200, rippling_page([
+            rippling_item("r1", "Account Executive", "London, United Kingdom"),
+            rippling_item("r2", "Engineer"),
+            rippling_item("r1", "Account Executive", "Hybrid (Manchester, England, GB)")]))
+        self.ats.routes[f"{self.LIST}/r1"] = (200, rippling_detail(role="<p>You will be our first sales hire.</p>"))
+
+        def quoting_the_description(payload):
+            return model_reply({**tags_quoting_the_posting(payload),
+                                "tech_company": {"value": "yes", "quote": "We sell software."},
+                                "founding": {"value": "yes", "quote": "You will be our first sales hire."}})
+        self.model.routes["/chat/completions"] = (200, quoting_the_description)
+
+    def test_a_matched_job_reaches_the_digest_with_every_location_and_verified_quotes(self):
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "1"))
+        text = Path(path).read_text()
+        self.assertIn("## Initrode — Account Executive · London, United Kingdom / Hybrid (Manchester, England, GB), "
+                      "United Kingdom\nhttps://ats.rippling.com/initrode/jobs/r1 · Rippling · first seen", text)
+        self.assertIn("· 2 open roles", text)  # jobs, not rows
+        self.assertIn('- founding: **yes** — "You will be our first sales hire."\n', text)
+        self.assertIn('- tech_company ⓘ: **yes** — "We sell software."\n', text)
+        self.assertNotIn("⚠", text)
+        self.assertEqual([path for _, path, _ in self.ats.requests if "/jobs/" in path], [f"{self.LIST}/r1"])
+
+    def test_totals_that_move_between_pages_fail_the_board_and_keep_its_postings_open(self):
+        self.assertEqual(self.run_cli()[1][1], "1")
+        with mock.patch.object(rippling, "PAGE", 2):
+            self.ats.routes[f"{self.LIST}?page=0&pageSize=2"] = (200, rippling_page(
+                [rippling_item("r1", "Account Executive"), rippling_item("r3", "Designer")], 0, 3, 2))
+            self.ats.routes[f"{self.LIST}?page=1&pageSize=2"] = (200, rippling_page(
+                [rippling_item("r4", "Analyst")], 1, 4, 2))
+            self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
+        self.assertIn("board_failed company='Initrode' board=rippling:initrode reason='list changed while paging",
+                      (self.home / "runs.log").read_text())
+        conn = store.open_db(self.home)
+        try:
+            rows = dict(conn.execute("SELECT key, closed FROM postings WHERE board = 'rippling:initrode'"))
+        finally:
+            conn.close()
+        self.assertEqual(rows, {"rippling:initrode:r1": 0, "rippling:initrode:r2": 0})
+
+
 class NotifyTest(RunFixture):
     """`run --notify` tells the desktop about news and problems, never about a quiet run, and never changes the
     outcome."""
@@ -737,7 +792,7 @@ class BoardSourcesTest(RunFixture):
 
 
 DISCOVERED = ["ashby:acme", "gem:gem-acme", "greenhouse:gh-acme", "greenhouse:gh-eu", "personio:pe-acme",
-              "smartrecruiters:sr-acme", "teamtailor:tt-acme"]  # never Workable
+              "rippling:rp-acme", "smartrecruiters:sr-acme", "teamtailor:tt-acme"]  # never Workable
 
 
 class DiscoveryRefreshTest(RunFixture):
@@ -755,7 +810,8 @@ class DiscoveryRefreshTest(RunFixture):
                                     (gem, "API", f"{self.ats.url}/job_board/v0/"),
                                     (teamtailor, "FEED", self.ats.url + "/teamtailor/{slug}/jobs.rss"),
                                     (personio, "FEED", self.ats.url + "/personio/{slug}/xml"),
-                                    (smartrecruiters, "API", f"{self.ats.url}/v1/companies/")]:
+                                    (smartrecruiters, "API", f"{self.ats.url}/v1/companies/"),
+                                    (rippling, "API", f"{self.ats.url}/api/v2/board/")]:
             mock.patch.object(target, name, value).start()
         crawls = ("CC-MAIN-2026-39", "CC-MAIN-2026-34", "CC-MAIN-2026-30")
         self.cc.files.update(crawl_list(*crawls))
@@ -770,6 +826,7 @@ class DiscoveryRefreshTest(RunFixture):
                                                         cdx_line("https://pe-acme.jobs.personio.com/"),
                                                         cdx_line("https://jobs.smartrecruiters.com/sr-acme/1-ae"),
                                                         cdx_line("https://careers.smartrecruiters.com/sr-acme"),
+                                                        cdx_line("https://ats.rippling.com/rp-acme/jobs"),
                                                         cdx_line("https://www.example.com/")]))
         self.write_config(boards_file=False)
         self.ats.routes["/teamtailor/tt-acme/jobs.rss?per_page=1000"] = (200, teamtailor_feed(
@@ -777,6 +834,8 @@ class DiscoveryRefreshTest(RunFixture):
         self.ats.routes["/personio/pe-acme/xml"] = (200, personio_feed(personio_position("p1", "Engineer")))
         self.ats.routes["/v1/companies/sr-acme/postings?limit=100&offset=0"] = (200, smartrecruiters_page(
             [smartrecruiters_job("s1", "Engineer")]))
+        self.ats.routes["/api/v2/board/rp-acme/jobs?page=0&pageSize=1000"] = (200, rippling_page(
+            [rippling_item("r1", "Engineer")]))
 
     def days_ago(self, days):
         return (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="microseconds")
@@ -821,7 +880,7 @@ class DiscoveryRefreshTest(RunFixture):
         self.assertIn("discover_failed", (self.home / "runs.log").read_text())
 
     def test_a_newly_supported_ats_is_discovered_on_the_next_run(self):
-        for ats in ("greenhouse", "gem", "teamtailor", "personio", "smartrecruiters"):
+        for ats in ("greenhouse", "gem", "teamtailor", "personio", "smartrecruiters", "rippling"):
             self.seed_discovery("acme", at=self.days_ago(1))
             conn = store.open_db(self.home)
             with conn:
@@ -834,7 +893,8 @@ class DiscoveryRefreshTest(RunFixture):
             boards = {r[0] for r in conn.execute("SELECT DISTINCT board FROM postings")}
         finally:
             conn.close()
-        self.assertLessEqual({"teamtailor:tt-acme", "personio:pe-acme", "smartrecruiters:sr-acme"}, boards)  # read
+        self.assertLessEqual({"teamtailor:tt-acme", "personio:pe-acme", "smartrecruiters:sr-acme",
+                              "rippling:rp-acme"}, boards)  # the new ATSes' lists were read
 
     def test_a_list_without_workable_is_not_rediscovered(self):
         self.seed_discovery("acme", at=self.days_ago(1))

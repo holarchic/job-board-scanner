@@ -13,12 +13,13 @@ from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 
-from jobscan import ashby, gem, greenhouse, personio, smartrecruiters, teamtailor, workable
+from jobscan import ashby, gem, greenhouse, personio, rippling, smartrecruiters, teamtailor, workable
 from jobscan.config import ConfigError
 from jobscan.records import Board, BoardError, Posting
 
 ADAPTERS = {ashby.ATS: ashby, greenhouse.ATS: greenhouse, workable.ATS: workable, gem.ATS: gem,
-            teamtailor.ATS: teamtailor, personio.ATS: personio, smartrecruiters.ATS: smartrecruiters}
+            teamtailor.ATS: teamtailor, personio.ATS: personio, smartrecruiters.ATS: smartrecruiters,
+            rippling.ATS: rippling}
 TIMEOUT = 20
 RETRY_PAUSES = (2, 10)  # seconds before the 2nd and 3rd tries
 RETRYABLE = {429, 500, 502, 503, 504}

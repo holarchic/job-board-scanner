@@ -225,6 +225,27 @@ def smartrecruiters_detail(title, sections=None):
     return {"id": "1", "name": title,
             "jobAd": {"sections": {f"section{i}": {"title": t, "text": h} for i, (t, h) in enumerate(sections)}}}
 
+
+def rippling_item(job_id, title, place="London, United Kingdom", country="United Kingdom", workplace="ON_SITE"):
+    """A Rippling jobs-list row: one location (a job with several comes as several rows), no description."""
+    return {"id": job_id, "name": title, "url": f"https://ats.rippling.com/acme/jobs/{job_id}",
+            "department": {"name": "Sales"}, "language": "en-US",
+            "locations": [{"name": place, "country": country, "countryCode": "GB", "state": None, "stateCode": None,
+                           "city": None, "workplaceType": workplace}]}
+
+
+def rippling_page(items, page=0, total_items=None, total_pages=None):
+    """One page of a Rippling jobs list; the totals default to this page being the only one."""
+    return {"items": list(items), "page": page, "pageSize": 1000,
+            "totalItems": len(items) if total_items is None else total_items,
+            "totalPages": (1 if items else 0) if total_pages is None else total_pages}
+
+
+def rippling_detail(company="<p>We sell software.</p>", role="<p>Sell it.</p>"):
+    """A Rippling job detail: the company's and the role's descriptions, HTML."""
+    return {"uuid": "1", "name": "Account Executive", "companyName": "Acme", "workLocations": ["London"],
+            "description": {"company": company, "role": role}}
+
 def model_reply(tags: dict, cost: float = 0.0005):
     """An OpenRouter-shaped chat-completions response carrying `tags` as the message content."""
     return 200, {"choices": [{"message": {"content": json.dumps(tags)}}], "usage": {"cost": cost}}
