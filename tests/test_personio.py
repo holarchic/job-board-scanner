@@ -55,11 +55,15 @@ class ParseTest(unittest.TestCase):
 
     def test_a_malformed_feed_or_job_fails_the_board(self):
         for positions in [(personio_position("1", "AE"), personio_position("1", "SE")),
-                          (personio_position(" ", "AE"),), (personio_position("1", " "),)]:
+                          (personio_position(" ", "AE"),)]:
             with self.assertRaises(BoardError, msg=positions):
                 parse(*positions)
         with self.assertRaises(BoardError):
             personio.parse(BOARD, payload.xml_root(b"<rss><position/></rss>"))
+
+    def test_a_job_without_a_name_is_skipped_and_the_rest_of_the_board_read(self):
+        self.assertEqual([p.key for p in parse(personio_position("1", " "), personio_position("2", "AE"))],
+                         ["personio:acme:2"])
 
     def test_no_jobs_is_an_empty_board(self):
         self.assertEqual(parse(), ())

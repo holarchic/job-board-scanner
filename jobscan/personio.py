@@ -40,7 +40,10 @@ def page_board(company: str, url: str) -> Board | None:
 def parse(board: Board, root: Element) -> tuple[Posting, ...]:
     if root.tag != "workzag-jobs":
         raise BoardError("feed is not a Personio job list")
-    postings = tuple(_posting(board, index, position) for index, position in enumerate(root.findall("position")))
+    # Some boards leave a job's name empty in every language: no title filter can match it, so it is skipped
+    # rather than hiding the board's other jobs.
+    postings = tuple(_posting(board, index, position) for index, position in enumerate(root.findall("position"))
+                     if _text(position, "name"))
     if len({p.key for p in postings}) != len(postings):
         raise BoardError("duplicate job ids")
     return postings
@@ -48,8 +51,8 @@ def parse(board: Board, root: Element) -> tuple[Posting, ...]:
 
 def _posting(board: Board, index: int, position: Element) -> Posting:
     job_id, title = _text(position, "id"), _text(position, "name")
-    if not job_id or not title:
-        raise BoardError(f"job {index}: no id or name")
+    if not job_id:
+        raise BoardError(f"job {index}: no id")
     offices = [_text(position, "office")] + [_text(o, ".") for o in position.findall("additionalOffices/office")]
     return Posting(key=f"{board.id}:{job_id}", ats=ATS, board=board.id, company=board.company, title=title,
                    location=" / ".join(dict.fromkeys(o for o in offices if o)),
