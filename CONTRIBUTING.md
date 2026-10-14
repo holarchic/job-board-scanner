@@ -24,7 +24,7 @@ ruff check .             # config in pyproject.toml
 - Tests use synthetic fixtures. No real job-ad text, keys, profiles or digests in tracked files; the one exception is the README's sample digest screenshot, `docs/digest-email.png`.
 - One board's failure never stops a run, and a board's job list parses completely or not at all, so a partial read never closes live postings. The one exception is a job no title filter could ever match, such as a Personio job with no name: it is skipped.
 - Tag definitions are data (`jobscan/tags.toml`), not code.
-- A new job board is a new adapter file (`ATS`, `DISPLAY_NAME`, `DECODE`, `CRAWL_HOSTS`, `api_board()`, `page_board()`, `parse()`) plus one line in `fetch.ADAPTERS`. `DECODE` turns the response body into what `parse` reads: `json.loads`, or `payload.xml_root` for an XML feed. A crawl host written `*.example.com` covers every subdomain. Check its API's rate limits at full scale before giving it crawl hosts.
+- A new job board is a new adapter file (`ATS`, `DISPLAY_NAME`, `CRAWL_HOSTS`, `api_board()`, `page_board()`, `read()`, `describe`) plus one line in `fetch.ADAPTERS`. `read(board, get)` reads the board's whole job list through `get`, fetch's request with retries, paging if it must. `describe` is `None` when the list carries descriptions; otherwise `describe(board, posting, get)` returns one posting's description, fetched only for postings the profile matched. A crawl host written `*.example.com` covers every subdomain. Check its API's rate limits at full scale before giving it crawl hosts.
 
 ## Pull requests
 
