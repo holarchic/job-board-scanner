@@ -1,5 +1,9 @@
 """Records shared across the pipeline: boards and postings, independent of which ATS they came from."""
+from collections.abc import Callable
 from dataclasses import dataclass
+
+# An adapter's HTTP GET: the body of an HTTP 200 answer, after fetch's retries; raises on anything else.
+Get = Callable[[str], bytes]
 
 
 @dataclass(frozen=True)

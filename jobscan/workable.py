@@ -10,11 +10,11 @@ from dataclasses import dataclass
 from urllib.parse import quote
 
 from jobscan.payload import board_slug, html_to_text, http_url, text_field
-from jobscan.records import Board, BoardError, Posting
+from jobscan.records import Board, BoardError, Get, Posting
 
 ATS = "workable"
 DISPLAY_NAME = "Workable"
-DECODE = json.loads
+describe = None  # the list carries each job's description
 BOARD_HOST = "apply.workable.com"
 CRAWL_HOSTS = ()  # not discovered: see the module docstring
 API_PATH = ("api", "v1", "widget", "accounts")
@@ -59,6 +59,10 @@ class _Entry:
     url: str
     description: str
     places: list[str]
+
+
+def read(board: Board, get: Get) -> tuple[Posting, ...]:
+    return parse(board, json.loads(get(board.api_url)))
 
 
 def parse(board: Board, data) -> tuple[Posting, ...]:

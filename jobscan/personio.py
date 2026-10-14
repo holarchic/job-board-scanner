@@ -9,11 +9,11 @@ from urllib.parse import quote
 from xml.etree.ElementTree import Element
 
 from jobscan.payload import board_slug, html_to_text, http_url, xml_root, xml_text
-from jobscan.records import Board, BoardError, Posting
+from jobscan.records import Board, BoardError, Get, Posting
 
 ATS = "personio"
 DISPLAY_NAME = "Personio"
-DECODE = xml_root
+describe = None  # the list carries each job's description
 HOST = "jobs.personio.com"  # where every board is read, whichever host named it
 DOMAINS = ("jobs.personio.de", HOST)
 CRAWL_HOSTS = tuple(f"*.{domain}" for domain in DOMAINS)
@@ -37,6 +37,10 @@ def page_board(company: str, url: str) -> Board | None:
     if slug is None:
         return None
     return Board(ats=ATS, slug=slug, company=company or slug, api_url=FEED.format(slug=quote(slug, safe="")))
+
+
+def read(board: Board, get: Get) -> tuple[Posting, ...]:
+    return parse(board, xml_root(get(board.api_url)))
 
 
 def parse(board: Board, root: Element) -> tuple[Posting, ...]:

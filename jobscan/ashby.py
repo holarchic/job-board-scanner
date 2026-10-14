@@ -5,11 +5,11 @@ never closes postings that are still live."""
 import json
 
 from jobscan.payload import html_to_text, http_url, text_field
-from jobscan.records import Board, BoardError, Posting
+from jobscan.records import Board, BoardError, Get, Posting
 
 ATS = "ashby"
 DISPLAY_NAME = "Ashby"
-DECODE = json.loads
+describe = None  # the list carries each job's description
 CRAWL_HOSTS = ("jobs.ashbyhq.com",)
 API = "https://api.ashbyhq.com/posting-api/job-board/"
 
@@ -38,6 +38,10 @@ def page_board(company: str, url: str) -> Board | None:
         return None
     slug = path[0].lower()
     return Board(ats=ATS, slug=slug, company=company or slug, api_url=API + slug)
+
+
+def read(board: Board, get: Get) -> tuple[Posting, ...]:
+    return parse(board, json.loads(get(board.api_url)))
 
 
 def parse(board: Board, data) -> tuple[Posting, ...]:

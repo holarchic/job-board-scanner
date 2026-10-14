@@ -7,11 +7,11 @@ import re
 from urllib.parse import parse_qs, quote, unquote
 
 from jobscan.payload import board_slug, html_to_text, http_url, text_field
-from jobscan.records import Board, BoardError, Posting
+from jobscan.records import Board, BoardError, Get, Posting
 
 ATS = "greenhouse"
 DISPLAY_NAME = "Greenhouse"
-DECODE = json.loads
+describe = None  # the list carries each job's description
 # boards.greenhouse.io redirects to these, so Common Crawl holds no status-200 pages of its own.
 CRAWL_HOSTS = ("job-boards.greenhouse.io", "job-boards.eu.greenhouse.io")
 BOARD_HOSTS = frozenset({*CRAWL_HOSTS, "boards.greenhouse.io", "boards.eu.greenhouse.io"})
@@ -60,6 +60,10 @@ def _board(company: str, slug: str | None, base: str) -> Board | None:
 def _slug(raw: str, decoded: bool = False) -> str | None:
     """Case-folded before the check: `%E2%84%AA` (the Kelvin sign) folds to `k`."""
     return board_slug((raw if decoded else unquote(raw)).lower(), decoded=True)
+
+
+def read(board: Board, get: Get) -> tuple[Posting, ...]:
+    return parse(board, json.loads(get(board.api_url)))
 
 
 def parse(board: Board, data) -> tuple[Posting, ...]:

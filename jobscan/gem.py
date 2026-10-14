@@ -6,11 +6,11 @@ import json
 from urllib.parse import quote
 
 from jobscan.payload import board_slug, html_to_text, http_url, text_field, with_remote
-from jobscan.records import Board, BoardError, Posting
+from jobscan.records import Board, BoardError, Get, Posting
 
 ATS = "gem"
 DISPLAY_NAME = "Gem"
-DECODE = json.loads
+describe = None  # the list carries each job's description
 CRAWL_HOSTS = ("jobs.gem.com",)
 API_PATH = ("job_board", "v0")
 API = "https://api.gem.com/" + "/".join(API_PATH) + "/"
@@ -43,6 +43,10 @@ def _board(company: str, slug: str | None, base: str) -> Board | None:
     if slug is None:
         return None
     return Board(ats=ATS, slug=slug, company=company or slug, api_url=base + quote(slug, safe="") + LIST)
+
+
+def read(board: Board, get: Get) -> tuple[Posting, ...]:
+    return parse(board, json.loads(get(board.api_url)))
 
 
 def parse(board: Board, data) -> tuple[Posting, ...]:

@@ -8,11 +8,11 @@ from urllib.parse import quote
 from xml.etree.ElementTree import Element
 
 from jobscan.payload import board_slug, html_to_text, http_url, with_remote, xml_root, xml_text
-from jobscan.records import Board, BoardError, Posting
+from jobscan.records import Board, BoardError, Get, Posting
 
 ATS = "teamtailor"
 DISPLAY_NAME = "Teamtailor"
-DECODE = xml_root
+describe = None  # the list carries each job's description
 DOMAIN = "teamtailor.com"
 CRAWL_HOSTS = (f"*.{DOMAIN}",)
 FEED = "https://{slug}." + DOMAIN + "/jobs.rss"
@@ -38,6 +38,10 @@ def page_board(company: str, url: str) -> Board | None:
         return None
     return Board(ats=ATS, slug=slug, company=company or slug,
                  api_url=FEED.format(slug=quote(slug, safe="")) + f"?per_page={PER_PAGE}")
+
+
+def read(board: Board, get: Get) -> tuple[Posting, ...]:
+    return parse(board, xml_root(get(board.api_url)))
 
 
 def parse(board: Board, root: Element) -> tuple[Posting, ...]:

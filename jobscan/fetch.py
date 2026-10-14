@@ -10,6 +10,7 @@ import urllib.request
 from collections.abc import Iterator
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 from jobscan import ashby, gem, greenhouse, personio, teamtailor, workable
@@ -101,15 +102,16 @@ def fetch_each(boards: list[Board]) -> Iterator[BoardFetch | BoardFailure]:
 def _fetch_isolated(board: Board) -> BoardFetch | BoardFailure:
     adapter = ADAPTERS[board.ats]
     try:
-        return BoardFetch(board, adapter.parse(board, adapter.DECODE(_get(board))))
+        return BoardFetch(board, adapter.read(board, partial(_get, board)))
     # OSError covers URLError, timeouts and resets; ValueError covers bad JSON and bad UTF-8;
     # RecursionError covers deeply nested JSON on Python < 3.14. XML decoding raises BoardError itself.
     except (OSError, http.client.HTTPException, ValueError, RecursionError, BoardError) as e:
         return BoardFailure(board, _reason(e), e.code if isinstance(e, urllib.error.HTTPError) else None)
 
 
-def _get(board: Board) -> bytes:
-    request = urllib.request.Request(board.api_url, headers=HEADERS)
+def _get(board: Board, url: str) -> bytes:
+    """One request on the board's behalf: its 429s are logged under its id."""
+    request = urllib.request.Request(url, headers=HEADERS)
     for attempt, pause in enumerate((*RETRY_PAUSES, None), start=1):
         try:
             with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
