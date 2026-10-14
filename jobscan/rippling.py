@@ -143,12 +143,14 @@ def _posting(board: Board, rows: list[_Row]) -> Posting:
 
 
 def describe(board: Board, posting: Posting, get: Get) -> str:
-    """The job's detail: the company's description, then the role's. A detail without a `role` fails the posting:
-    it would be tagged and delivered with no description, and never described again."""
+    """The job's detail: the company's description, then the role's. A detail without a `role`, or with no text at
+    all, fails the posting: it would be tagged and delivered with no description, and never described again."""
     job_id = posting.key.removeprefix(f"{board.id}:")
     data = json.loads(get(f"{board.api_url}/{quote(job_id, safe='')}"))
     description = data.get("description") if isinstance(data, dict) else None
     if not isinstance(description, dict) or description.get("role") is None:
         raise BoardError("detail has no `description` object with a `role`")
     parts = [html_to_text(detail_text(description, part, "description")) for part in ("company", "role")]
+    if not any(parts):
+        raise BoardError("detail has no text")
     return "\n".join(part for part in parts if part)

@@ -125,6 +125,7 @@ class DescribeTest(unittest.TestCase):
         (posting,) = read(rippling_page([rippling_item("j1", "AE")]))
         for detail in [[], {}, {"description": "text"}, {"description": {}}, {"description": {"company": "<p>Hi</p>"}},
                        {"description": {"company": 3, "role": ""}}, {"description": {"company": "", "role": 3}},
+                       {"description": {"role": ""}}, {"description": {"company": "<p> </p>", "role": "<br>"}},
                        {"description": {"company": "", "role": "\ud800"}}]:
             with self.assertRaises(BoardError, msg=detail):
                 rippling.describe(BOARD, posting, getter({f"{API}/j1": detail}))

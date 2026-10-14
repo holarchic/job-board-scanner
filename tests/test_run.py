@@ -376,7 +376,7 @@ class SmartRecruitersRunTest(RunFixture):
             self.ats.routes[f"{self.LIST}?limit=2&offset={page['offset']}"] = (200, page)
 
     def detail(self, lines, status=200):
-        sections = [("jobDescription", "About Initrode", f"<p>{line}</p>") for line in lines]
+        sections = [("jobDescription", "About Initrode", "".join(f"<p>{line}</p>" for line in lines))]
         self.ats.routes[f"{self.LIST}/sr1"] = (status, smartrecruiters_detail("Account Executive", sections))
 
     def asked(self, path):
@@ -385,17 +385,22 @@ class SmartRecruitersRunTest(RunFixture):
     def model_calls(self):
         return len(self.model.requests)
 
-    def stored(self):
+    def query(self, sql):
         conn = store.open_db(self.home)
         try:
-            description = conn.execute("SELECT description FROM postings WHERE key = 'smartrecruiters:initrode:sr1'"
-                                       ).fetchone()[0]
-            hashes = {r[0] for r in conn.execute("SELECT input_hash FROM tag_results WHERE posting_key = ?",
-                                                 ("smartrecruiters:initrode:sr1",))}
-            closed = dict(conn.execute("SELECT key, closed FROM postings WHERE board = 'smartrecruiters:initrode'"))
+            return conn.execute(sql).fetchall()
         finally:
             conn.close()
-        return description, hashes, closed
+
+    def stored_description(self):
+        return self.query("SELECT description FROM postings WHERE key = 'smartrecruiters:initrode:sr1'")[0][0]
+
+    def tag_hashes(self):
+        return {r[0] for r in self.query("SELECT input_hash FROM tag_results "
+                                         "WHERE posting_key = 'smartrecruiters:initrode:sr1'")}
+
+    def closed_flags(self):
+        return dict(self.query("SELECT key, closed FROM postings WHERE board = 'smartrecruiters:initrode'"))
 
     def described_hash(self, text):
         board = fetch.board_for("Initrode", f"{self.ats.url}{self.LIST}")
@@ -416,7 +421,8 @@ class SmartRecruitersRunTest(RunFixture):
         self.assertIn('- tech_company ⓘ: **yes** — "We sell software."\n', text)
         self.assertNotIn("⚠", text)
         self.assertEqual([self.asked(f"{self.LIST}/{key}") for key in ("sr1", "sr2", "sr3")], [1, 0, 0])
-        self.assertEqual(self.stored()[:2], ("", {self.described_hash("About Initrode\nWe sell software.")}))
+        self.assertEqual(self.stored_description(), "")
+        self.assertEqual(self.tag_hashes(), {self.described_hash("About Initrode\nWe sell software.")})
         self.assertIn("describe_done described=1 failed=0", (self.home / "runs.log").read_text())
         self.assertEqual(self.run_cli()[1][1:], ["0", "-"])
 
@@ -429,11 +435,14 @@ class SmartRecruitersRunTest(RunFixture):
         self.detail(["We sell software."])
         self.assertEqual(self.run_cli()[1][1], "1")
 
-    def test_a_detail_without_its_job_description_waits_for_the_next_run(self):
-        self.ats.routes[f"{self.LIST}/sr1"] = (200, {"jobAd": {"sections": {}}})
-        self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
-        self.assertIn("describe_failed posting=smartrecruiters:initrode:sr1 reason='detail has no `jobDescription` "
-                      "section'", (self.home / "runs.log").read_text())
+    def test_a_detail_without_description_text_waits_for_the_next_run(self):
+        for detail, reason in [({"jobAd": {"sections": {}}}, "detail has no `jobDescription` section"),
+                               (smartrecruiters_detail("AE", [("jobDescription", "Job", "<p> </p>")]),
+                                "detail has no text")]:
+            self.ats.routes[f"{self.LIST}/sr1"] = (200, detail)
+            self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
+            self.assertIn(f"describe_failed posting=smartrecruiters:initrode:sr1 reason='{reason}'",
+                          (self.home / "runs.log").read_text())
         self.assertEqual(self.model_calls(), 0)
         self.detail(["We sell software."])
         self.assertEqual(self.run_cli()[1][1], "1")
@@ -448,7 +457,7 @@ class SmartRecruitersRunTest(RunFixture):
         code, (_, new, path) = self.run_cli()
         self.assertEqual((code, new, self.asked(f"{self.LIST}/sr1"), self.model_calls()), (0, "1", 3, 2))
         self.assertIn('- tech_company ⓘ: **yes** — "We sell hardware."\n', Path(path).read_text())
-        self.assertIn(self.described_hash("About Initrode\nWe sell hardware."), self.stored()[1])
+        self.assertIn(self.described_hash("About Initrode\nWe sell hardware."), self.tag_hashes())
 
     def test_a_list_that_shifts_while_paging_fails_the_board_and_keeps_its_postings_open(self):
         self.assertEqual(self.run_cli()[1][1], "1")
@@ -457,7 +466,7 @@ class SmartRecruitersRunTest(RunFixture):
         self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
         self.assertIn("board_failed company='Initrode' board=smartrecruiters:initrode reason='duplicate job ids'",
                       (self.home / "runs.log").read_text())
-        self.assertEqual(self.stored()[2], {f"smartrecruiters:initrode:sr{n}": 0 for n in (1, 2, 3)})
+        self.assertEqual(self.closed_flags(), {f"smartrecruiters:initrode:sr{n}": 0 for n in (1, 2, 3)})
 
     def test_the_boards_file_endpoint_describes_even_while_its_list_fails(self):
         conn = store.open_db(self.home)
@@ -508,6 +517,15 @@ class RipplingRunTest(RunFixture):
         self.assertIn('- tech_company ⓘ: **yes** — "We sell software."\n', text)
         self.assertNotIn("⚠", text)
         self.assertEqual([path for _, path, _ in self.ats.requests if "/jobs/" in path], [f"{self.LIST}/r1"])
+
+    def test_a_detail_without_text_waits_for_the_next_run(self):
+        self.ats.routes[f"{self.LIST}/r1"] = (200, rippling_detail(company="", role="<p></p>"))
+        self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
+        self.assertIn("describe_failed posting=rippling:initrode:r1 reason='detail has no text'",
+                      (self.home / "runs.log").read_text())
+        self.assertEqual(len(self.model.requests), 0)
+        self.ats.routes[f"{self.LIST}/r1"] = (200, rippling_detail())
+        self.assertEqual(self.run_cli()[1][1], "1")
 
     def test_totals_that_move_between_pages_fail_the_board_and_keep_its_postings_open(self):
         self.assertEqual(self.run_cli()[1][1], "1")

@@ -128,6 +128,8 @@ class DescribeTest(unittest.TestCase):
         ad = smartrecruiters_detail("AE")["jobAd"]["sections"]
         for detail in [[], {}, {"jobAd": {}}, {"jobAd": {"sections": []}}, {"jobAd": {"sections": {}}},
                        {"jobAd": {"sections": {"companyDescription": ad["companyDescription"]}}},
+                       {"jobAd": {"sections": {"jobDescription": {}}}},
+                       {"jobAd": {"sections": {"jobDescription": {"title": "Job", "text": " <p> </p> "}}}},
                        {"jobAd": {"sections": {**ad, "a": "text"}}},
                        {"jobAd": {"sections": {**ad, "a": {"title": "T", "text": 3}}}},
                        {"jobAd": {"sections": {**ad, "a": {"title": 3, "text": "x"}}}},

@@ -111,8 +111,8 @@ def _location(row: dict, index: int) -> str:
 
 def describe(board: Board, posting: Posting, get: Get) -> str:
     """Each section of the posting's job ad with text (company, job, qualifications, more) as its title, then its
-    text. An ad without a `jobDescription` section fails the posting: it would be tagged and delivered with no
-    description, and never described again."""
+    text. An ad without a `jobDescription` section, or with no text at all, fails the posting: it would be tagged
+    and delivered with no description, and never described again."""
     job_id = posting.key.removeprefix(f"{board.id}:")
     data = json.loads(get(f"{board.api_url}/{quote(job_id, safe='')}"))
     ad = data.get("jobAd") if isinstance(data, dict) else None
@@ -126,4 +126,6 @@ def describe(board: Board, posting: Posting, get: Get) -> str:
         text = html_to_text(detail_text(section, "text", f"section {name}"))
         if text:
             lines += [detail_text(section, "title", f"section {name}").strip(), text]
+    if not lines:
+        raise BoardError("detail has no text")
     return "\n".join(line for line in lines if line)
