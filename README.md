@@ -93,18 +93,24 @@ jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line f
 
 `run` prints the search name, the count of new postings and the digest's path, in `~/.jobscan/digests/<search>/`.
 
+**With an agent.** Every step also works without a terminal, so a coding agent can set it up for you: point it at this repo and have it read `jobscan --help`, which lists the steps in order with examples. `init` and `email` take flags instead of asking, the key and the app password are read from stdin, and `jobscan check` confirms the install loads. After the first run, `jobscan preview` shows what your titles match among the stored postings, so you can tune them without another run.
+
 ## Commands
 
 | Command | Does |
 |---|---|
-| `jobscan init` | Asks for your search, your OpenRouter key and, optionally, an email account; writes `~/.jobscan` |
+| `jobscan init` | Asks for your search, your OpenRouter key and, optionally, an email account; writes `~/.jobscan`. With flags (`--name`, `--title`, `--location`, `--eligible-where`, `--key-stdin`…) it asks nothing |
+| `jobscan check` | Loads the install as a run would and shows what it holds, or the first problem |
+| `jobscan preview` | What your search matches among the postings the last run stored: new jobs, the cost to tag them, samples |
+| `jobscan tags [NAME]` | Lists the tags, or shows one's full definition |
+| `jobscan boards` · `boards add URL…` | Lists, or adds to, your boards file |
 | `jobscan run [--notify]` | Fetch, filter, tag, write the digest. `--notify` raises a Mac notification on news or a problem |
 | `jobscan discover` | Rebuilds the board list now |
 | `jobscan schedule --at HH:MM` · `--off` | Daily run on a Mac; elsewhere prints a cron line |
-| `jobscan email` · `--off` | Sets up or stops emailing each digest |
+| `jobscan email` · `--off` | Sets up or stops emailing each digest. With `--to` and `--password-stdin` it asks nothing |
 | `jobscan eval <set.json>` | Scores the tags against your own labelled postings |
 
-`run` exit codes: 0 done, 1 some postings left untagged or the digest couldn't be written or emailed, 2 a config or usage error. Logs: `~/.jobscan/runs.log`.
+Every command has `--help` with examples. `run` exit codes: 0 done, 1 some postings left untagged or the digest couldn't be written or emailed, 2 a config or usage error. Logs: `~/.jobscan/runs.log`.
 
 **Schedule.** On a Mac, `jobscan schedule --at 08:00` runs daily while you're logged in, and notifies you of new postings or a problem; a quiet day stays quiet. Asleep at 08:00: it runs when the Mac wakes, and several missed days make one run. Powered off: the next day's slot. Notifications may need allowing in System Settings › Notifications.
 
@@ -121,7 +127,7 @@ jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line f
 | `~/.jobscan/openrouter.key` | Your key, readable only by you |
 | `~/.jobscan/email.toml` | Mail settings and app password, readable only by you |
 
-`init` writes the first three.
+`init` writes the first three. After editing one by hand, `jobscan check` confirms it still loads.
 
 ```toml
 titles = ["Product Manager"]
@@ -138,7 +144,7 @@ definition = "The company sells to businesses, not consumers."
 
 Your own tags run on every matching posting. Say what each answer means; `jobscan/tags.toml` has examples. `values` defaults to yes, no, unknown; `multi = true` answers a list; `default` is the answer when the posting is silent.
 
-To add companies discovery misses, or your Workable boards, put `boards_file` above `[model]` in `config.toml`:
+To add companies discovery misses, or your Workable boards, run `jobscan boards add <url>`. It writes `~/.jobscan/boards.json`, which every run reads. To keep the file elsewhere, put `boards_file` above `[model]` in `config.toml`:
 
 ```toml
 boards_file = "boards.json"          # relative to ~/.jobscan, or absolute
