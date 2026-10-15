@@ -201,14 +201,15 @@ def _value(parameter: str, value) -> _Value:
 
 def _postings(board: Board, found: list[_Found]) -> tuple[Posting, ...]:
     """Jobs merged by job id, each with every row's location text and every place name it matched, so a requisition
-    listed per city keeps them all. One link under two filter values must agree on the title; two links of one
-    requisition keep the first's title and link."""
+    listed per city keeps them all. One link under two filter values must agree on its title and requisition; two
+    links of one requisition keep the first's title and link."""
     jobs: dict[str, _Job] = {}
-    titles: dict[str, str] = {}  # by link
+    links: dict[str, _Job] = {}  # each link's first row
     places: dict[str, list[str]] = {}
     for item in found:
-        if titles.setdefault(item.job.posting_id, item.job.title) != item.job.title:
-            raise BoardError(f"job {item.job.posting_id}: its rows disagree on the title")
+        first = links.setdefault(item.job.posting_id, item.job)
+        if (first.title, first.job_id) != (item.job.title, item.job.job_id):
+            raise BoardError(f"job {item.job.posting_id}: its rows disagree on the title or requisition")
         job = jobs.setdefault(item.job.job_id, item.job)
         named = places.setdefault(job.job_id, [])
         for place in (item.job.text, item.place):

@@ -129,8 +129,9 @@ class ReadTest(unittest.TestCase):
             self.assertIsInstance(outcome, fetch.BoardFailure, path)
 
     def test_an_exact_total_beyond_the_capped_reads_limit_is_read_in_full(self):
-        jobs = [workday_job(f"R{n}", "AE", ["X"]) for n in range(workday.MAX_ROWS + 1)]
-        self.assertEqual(len(self.read(workday_site(jobs, {}))), workday.MAX_ROWS + 1)
+        jobs = [workday_job(f"R{n}", "AE", ["X"]) for n in range(61)]
+        with mock.patch.object(workday, "MAX_ROWS", 40):  # a smaller limit, so the test reads 61 rows, not 20,001
+            self.assertEqual(len(self.read(workday_site(jobs, {}))), 61)
 
     def test_one_job_under_two_values_must_keep_its_title(self):
         site = workday_site([workday_job("R1", "AE", ["London"])], {"locations": ["London", "United Kingdom"]})
@@ -254,6 +255,9 @@ class RequisitionTest(unittest.TestCase):
                          "jobPostings": [{k: v for k, v in j.items() if k != "_places"} for j in jobs]}
         get = lambda url, body=None: json.dumps(answer(json.loads(body))[1]).encode()  # noqa: E731
         with self.assertRaisesRegex(BoardError, "AE_R1-2: its rows disagree on the title"):
+            workday.read(BOARD, get, uk)
+        rows["id-United Kingdom"] = [workday_job("AE_R1-2", "AE, UK", requisition="")]  # its requisition dropped
+        with self.assertRaisesRegex(BoardError, "AE_R1-2: its rows disagree on the title or requisition"):
             workday.read(BOARD, get, uk)
 
     def test_same_job_joins_a_tenants_sites_by_requisition_but_never_fallbacks(self):
