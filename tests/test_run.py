@@ -890,7 +890,7 @@ class WorkdayTwinsRunTest(RunFixture):
 
 class OracleRunTest(RunFixture):
     """Oracle sites read whole: matched postings described and named from the site page, one entry per job across a
-    pod's sites, and a read that comes up short closing nothing."""
+    pod's sites, and a read that may skip jobs closing nothing."""
 
     def setUp(self):
         super().setUp()
@@ -944,13 +944,13 @@ class OracleRunTest(RunFixture):
         self.assertEqual(self.run_cli()[1][1], "0")
         self.assertEqual(len(self.model.requests), 1)
 
-    def test_a_read_that_comes_up_short_fails_the_board_and_closes_nothing(self):
+    def test_a_read_that_may_skip_jobs_fails_the_board_and_closes_nothing(self):
         self.assertEqual(self.run_cli()[0], 0)
-        self.list("cx", total=10)  # one job of ten
+        self.list("cx", total=450)  # a short page before the end: the pod may be paging fewer than 200
         self.list("htv", total=10_001)
         self.run_cli()
         log = (self.home / "runs.log").read_text()
-        self.assertIn("read 2 jobs of a count of 10", log)
+        self.assertIn("a page before the end holds 2 jobs", log)
         self.assertIn("over 10,000 jobs", log)
         conn = store.open_db(self.home)
         try:

@@ -37,6 +37,7 @@ LIST = (REST + "recruitingCEJobRequisitions?onlyData=true&expand=requisitionList
 DETAIL = REST + "recruitingCEJobRequisitionDetails?expand=all&onlyData=true&finder=ById;Id=%22{id}%22,siteNumber={site}"
 PAGE = 200  # the API's maximum: a larger limit still answers 200 rows, so offsets must step by 200
 WINDOW = 10_000  # an offset this far in answers no rows, so a longer list can't be read
+FULL = PAGE * 9 // 10  # fewer rows on a page before the last: the pod may page fewer than 200 at a time
 LANGUAGE = re.compile(r"[a-z]{2}(?:-[a-z0-9]{2,4})?", re.IGNORECASE)  # en, pt-br, zh-hans
 COPY_POD = re.compile(r"(?:dev|test|uat|stage|stg)\d*")  # a part of a test or dev pod's name: `efpv-dev10`
 REMOTE = "ORA_REMOTE"
@@ -97,29 +98,31 @@ class _Page:
 
 
 def read(board: Board, get: Get, places: Places) -> tuple[Posting, ...]:
-    """Every page, 200 apart, until the first page's count. The count can exceed the jobs the list returns (a page
-    may come back short before the end), so it is only a bound: the rows read may fall short of it by a tenth plus
-    five (a pod paging fewer than 200 at a time comes up about half short). Drift checks, best effort: a count that
-    changes, a job twice, a page before the end coming back empty, or rows outside those bounds fail the board."""
+    """Every page, 200 apart, until the first page's count. The count includes jobs the list never shows (one site
+    counts 66 and shows 25 at any page size), so a page can come back short before the end, and the count only
+    bounds the rows. A page before the end holding under 180 would mean a pod paging fewer than 200 at a time (no
+    15 Oct page before a site's last held under 198), skipping jobs. Drift checks, best effort: a count that
+    changes, a job twice, more rows than the count, or a short page before the end fail the board."""
     first = _page(get(_url(board.slug, LIST, limit=PAGE, offset=0)))
     if first.total > WINDOW:
         raise BoardError(f"over {WINDOW:,} jobs: Oracle pages no further")
-    page, offset, postings = first, 0, {}
+    page, offset, rows, postings = first, 0, 0, {}
     while True:
         for row in page.rows:
-            posting = _posting(board, len(postings), row)
-            if postings.setdefault(posting.key, posting) is not posting:
+            posting = _posting(board, rows, row)
+            rows += 1
+            if posting is not None and postings.setdefault(posting.key, posting) is not posting:
                 raise BoardError("list changed while paging: a job came back twice")
         offset += PAGE
         if offset >= first.total:
             break
+        if len(page.rows) < FULL:
+            raise BoardError(f"a page before the end holds {len(page.rows)} jobs: the list may skip some")
         page = _page(get(_url(board.slug, LIST, limit=PAGE, offset=offset)))
         if page.total != first.total:
             raise BoardError("list changed while paging: the count moved")
-        if not page.rows:
-            raise BoardError("list changed while paging: a page came back empty")
-    if not first.total - first.total // 10 - 5 <= len(postings) <= first.total:
-        raise BoardError(f"read {len(postings)} jobs of a count of {first.total}")
+    if rows > first.total:
+        raise BoardError(f"read {rows} jobs of a count of {first.total}")
     return tuple(postings.values())
 
 
@@ -136,16 +139,24 @@ def _page(raw: bytes) -> _Page:
     return _Page(total=total, rows=rows)
 
 
-def _posting(board: Board, index: int, row) -> Posting:
+def _posting(board: Board, index: int, row) -> Posting | None:
+    """A list row as a posting; None for a row without a title (some sites list one), which no title filter could
+    match. Titles lose their invisible characters (zero-width spaces) and any run of whitespace becomes one space."""
     if not isinstance(row, dict):
         raise BoardError(f"job {index} is not an object")
     job_id = text_field(row, "Id", index, required=True).strip()
-    title = text_field(row, "Title", index, required=True).strip()
-    if not job_id.isprintable() or not title.isprintable():
-        raise BoardError(f"job {index}: `Id` or `Title` is not printable")
+    if not job_id.isprintable():
+        raise BoardError(f"job {index}: `Id` is not printable")
+    title = _clean(text_field(row, "Title", index) or "")
+    if not title:
+        return None
     return Posting(key=f"{board.id}:{job_id}", ats=ATS, board=board.id, company=board.company, title=title,
                    location=" / ".join(_places(row, index)), url=_url(board.slug, JOB_PATH, id=job_id),
                    description="")
+
+
+def _clean(text: str) -> str:
+    return " ".join("".join(c for c in text if c.isprintable() or c.isspace()).split())
 
 
 def _places(row: dict, index: int) -> list[str]:
@@ -155,7 +166,7 @@ def _places(row: dict, index: int) -> list[str]:
         raise BoardError(f"job {index}: `secondaryLocations` is not a list of objects")
     places = []
     for named in [text_field(row, "PrimaryLocation", index)] + [text_field(s, "Name", index) for s in secondary]:
-        place = (named or "").strip()
+        place = _clean(named or "")
         if place and place not in places:
             places.append(place)
     return with_remote(places) if row.get("WorkplaceTypeCode") == REMOTE else places

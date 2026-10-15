@@ -98,15 +98,20 @@ class ReadTest(unittest.TestCase):
         self.assertEqual(len(self.read(pages)), 445)
         self.assertEqual(self.asked, [0, 200, 400])
 
-    def test_a_count_a_little_over_the_jobs_returned_is_accepted(self):
+    def test_a_count_over_the_jobs_returned_is_accepted(self):
         self.assertEqual(len(self.read({0: oracle_page(self.jobs(140), total=145)})), 140)
+        self.assertEqual(len(self.read({0: oracle_page(self.jobs(25), total=66)})), 25)  # jobs it never shows
         self.assertEqual(self.read({0: oracle_page([], total=1)}), {})
         self.assertEqual(self.read({0: oracle_page([], total=0)}), {})
 
     def test_a_pod_paging_100_at_a_time_fails_the_board(self):
         jobs = self.jobs(1000)
-        with self.assertRaisesRegex(BoardError, "read 500 jobs of a count of 1000"):
+        with self.assertRaisesRegex(BoardError, "a page before the end holds 100 jobs"):
             self.read(lambda at: oracle_page(jobs, at, size=100))
+        with self.assertRaisesRegex(BoardError, "holds 179 jobs"):
+            self.read(lambda at: oracle_page(jobs, at, size=179))
+        hidden = {0: oracle_page(jobs[:180], total=400), 200: oracle_page(jobs[200:400], total=400)}
+        self.assertEqual(len(self.read(hidden)), 380)  # 180 shown of a window of 200 is enough
 
     def test_a_count_over_the_window_fails_the_board_after_one_request(self):
         with self.assertRaisesRegex(BoardError, "over 10,000 jobs"):
@@ -119,7 +124,7 @@ class ReadTest(unittest.TestCase):
         jobs = self.jobs(450)
         cases = {
             "the count moved": lambda at: oracle_page(jobs, at, total=450 if at == 0 else 451),
-            "a page came back empty": lambda at: oracle_page(jobs if at == 0 else [], at, total=450),
+            "a page before the end holds 0 jobs": lambda at: oracle_page(jobs if at in (0, 400) else [], at, total=450),
             "came back twice": lambda at: oracle_page(jobs[:200] * 3, at if at < 400 else 0, total=450),
             "read 400 jobs of a count of 300": lambda at: oracle_page(jobs[at:at + 200], total=300),
             "more jobs than asked for": lambda at: oracle_page(jobs, at, size=201),
@@ -132,13 +137,19 @@ class ReadTest(unittest.TestCase):
         for answer in [{}, {"items": []}, {"items": [{"requisitionList": []}]},
                        {"items": [{"TotalJobsCount": "3", "requisitionList": []}]},
                        {"items": [{"TotalJobsCount": -1, "requisitionList": []}]}, [],
-                       oracle_page([{"Id": "1", "Title": ""}]), oracle_page([{"Id": "1"}]),
-                       oracle_page([{"Title": "AE"}]), oracle_page([{"Id": 1, "Title": "AE"}]),
+                       oracle_page([{"Title": "AE"}]), oracle_page([{"Id": "1", "Title": 7}]),
+                       oracle_page([{"Id": 1, "Title": "AE"}]),
                        oracle_page(["AE"]), oracle_page([{"Id": "1\n2", "Title": "AE"}]),
                        oracle_page([{**oracle_job("1", "AE"), "secondaryLocations": "Leeds"}]),
                        oracle_page([{**oracle_job("1", "AE"), "PrimaryLocation": 7}])]:
             with self.assertRaises(BoardError, msg=answer):
                 self.read({0: answer})
+
+    def test_titles_lose_invisible_characters_and_rows_without_one_are_skipped(self):
+        jobs = [oracle_job("1", "GHD\xa0Graduate\u200b  Program\n"), {"Id": "2", "Title": None},
+                {"Id": "3", "Title": " \u200b "}, oracle_job("4", "AE")]
+        postings = self.read({0: oracle_page(jobs)})
+        self.assertEqual({k: p.title for k, p in postings.items()}, {"1": "GHD Graduate Program", "4": "AE"})
 
     def test_location_is_every_place_once_and_remote_jobs_say_so(self):
         jobs = [oracle_job("1", "AE", "London, United Kingdom", ["Leeds, United Kingdom", "London, United Kingdom"]),
