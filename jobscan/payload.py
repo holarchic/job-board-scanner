@@ -2,6 +2,7 @@
 the board when malformed, job-description HTML → plain text, and company names from APIs and board pages."""
 import html
 import re
+import string
 from html.parser import HTMLParser
 from urllib.parse import SplitResult, unquote, urlsplit
 from xml.etree import ElementTree
@@ -15,6 +16,8 @@ ANY_TAG = re.compile(r"<[^>]*>")
 SLUG = re.compile(r"[!-~]+")
 NOT_IN_SLUG = frozenset("/:?#")
 REMOTE = re.compile(r"(?<!\w)remote(?!\w)")  # word-adjacent, as `prefilter` matches a `Remote` term
+# ASCII-only lower case: str.lower can change a string's length (`İ` → `i̇`), shifting offsets into the original.
+ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 
 
 def http_url(url: str) -> SplitResult | None:
@@ -67,10 +70,10 @@ def element_text(page: str, opening: str, closing: str) -> str | None:
     """The raw text inside the first element whose start tag begins `opening` (`<title`) and which ends at `closing`
     (`</title>`), tag names matched case-insensitively; None when there is none. Plain searches, so a page full of
     unterminated tags still takes linear time."""
-    lower = page.lower()
-    start = lower.find(opening.lower())
+    lower = page.translate(ASCII_LOWER)
+    start = lower.find(opening.translate(ASCII_LOWER))
     inside = lower.find(">", start) + 1 if start >= 0 else 0
-    end = lower.find(closing.lower(), inside) if inside else -1
+    end = lower.find(closing.translate(ASCII_LOWER), inside) if inside else -1
     return page[inside:end] if end >= 0 else None
 
 

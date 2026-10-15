@@ -48,6 +48,11 @@ class NamedCompanyTest(unittest.TestCase):
         for page in [b"<html><body>no title</body></html>", b"<title>never closed", b"<title"]:
             self.assertEqual(payload.html_title(page), "", page)
 
+    def test_element_text_keeps_offsets_on_pages_with_letters_that_lower_case_longer(self):
+        self.assertEqual(payload.html_title("<p>İİ</p><title>Jobs at İnova</title>".encode()), "Jobs at İnova")
+        self.assertEqual(payload.element_text('İ<script id="__NEXT_DATA__">{"name": "İnova"}</script>',
+                                              '<script id="__NEXT_DATA__"', "</script>"), '{"name": "İnova"}')
+
     def test_element_text_takes_linear_time_on_unterminated_tags(self):
         page = '<script id="__NEXT_DATA__"' * 200_000
         self.assertIsNone(payload.element_text(page, '<script id="__NEXT_DATA__"', "</script>"))
