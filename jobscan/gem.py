@@ -18,6 +18,7 @@ API_PATH = ("job_board", "v0")
 API = "https://api.gem.com/" + "/".join(API_PATH) + "/"
 LIST = "/job_posts/"
 BOARD_PAGE = "https://jobs.gem.com/{slug}"
+CAREERS = " Careers"  # the board page's title follows the company name with this
 DEMO = "***DEMO JOB POST***"
 
 
@@ -55,9 +56,12 @@ def _sandbox(slug: str) -> bool:
 
 
 def company(board: Board, get: Get) -> Company:
-    """The board page's title, `<name> Careers`; the job board API names no company."""
+    """The board page's title, `<name> Careers`; the job board API names no company. Any other title (an error
+    page's) names nobody, so nothing wrong is kept."""
     title = html_title(get(BOARD_PAGE.format(slug=quote(board.slug, safe=""))))
-    return named_company(title.strip().removesuffix(" Careers"))
+    if not title.endswith(CAREERS):
+        raise BoardError(f"board page title isn't `<name>{CAREERS}`")
+    return named_company(title.removesuffix(CAREERS))
 
 
 def read(board: Board, get: Get) -> tuple[Posting, ...]:

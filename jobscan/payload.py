@@ -15,7 +15,6 @@ ANY_TAG = re.compile(r"<[^>]*>")
 SLUG = re.compile(r"[!-~]+")
 NOT_IN_SLUG = frozenset("/:?#")
 REMOTE = re.compile(r"(?<!\w)remote(?!\w)")  # word-adjacent, as `prefilter` matches a `Remote` term
-TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
 def http_url(url: str) -> SplitResult | None:
@@ -52,20 +51,33 @@ def with_remote(places: list[str]) -> list[str]:
 
 def named_company(name, website=None) -> Company:
     """A company as a digest heading can show it: the name with entities decoded, unprintable characters dropped and
-    whitespace (newlines included) collapsed; a website only if it is an http(s) URL. A name that leaves nothing is a
-    BoardError: the board keeps its slug and is asked again another run."""
+    whitespace (newlines included) collapsed; a website only if it is an http(s) URL of printable characters without
+    whitespace (else it could break a digest line, or fail to store). A name that leaves nothing is a BoardError: the
+    board keeps its slug and is asked again another run."""
     text = html.unescape(name) if isinstance(name, str) else ""
     text = " ".join("".join(c for c in text if c.isprintable() or c.isspace()).split())
     if not text:
         raise BoardError("no company name")
     site = website.strip() if isinstance(website, str) else ""
-    return Company(name=text, website=site if http_url(site) else None)
+    usable = site.isprintable() and not any(c.isspace() for c in site) and http_url(site) is not None
+    return Company(name=text, website=site if usable else None)
+
+
+def element_text(page: str, opening: str, closing: str) -> str | None:
+    """The raw text inside the first element whose start tag begins `opening` (`<title`) and which ends at `closing`
+    (`</title>`), tag names matched case-insensitively; None when there is none. Plain searches, so a page full of
+    unterminated tags still takes linear time."""
+    lower = page.lower()
+    start = lower.find(opening.lower())
+    inside = lower.find(">", start) + 1 if start >= 0 else 0
+    end = lower.find(closing.lower(), inside) if inside else -1
+    return page[inside:end] if end >= 0 else None
 
 
 def html_title(page: bytes) -> str:
-    """An HTML page's <title> text, raw; "" when it has none. A page that isn't UTF-8 raises ValueError."""
-    found = TITLE.search(page.decode())
-    return found.group(1) if found else ""
+    """An HTML page's <title> text with whitespace collapsed; "" when it has none. A page that isn't UTF-8 raises
+    ValueError."""
+    return " ".join((element_text(page.decode(), "<title", "</title>") or "").split())
 
 
 def xml_root(body: bytes) -> ElementTree.Element:

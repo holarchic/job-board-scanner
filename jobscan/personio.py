@@ -22,6 +22,7 @@ ENGLISH = "?language=en"
 FEED = "https://{slug}." + HOST + "/xml" + ENGLISH
 JOB = "https://{slug}." + HOST + "/job/{id}"
 BOARD_PAGE = "https://{slug}." + HOST + "/" + ENGLISH
+JOBS_AT = "Jobs at"  # the English board page's title puts this before the company name
 
 
 def api_board(company: str, url: str) -> Board | None:
@@ -44,28 +45,29 @@ def page_board(company: str, url: str) -> Board | None:
 
 def company(board: Board, get: Get) -> Company:
     """The board page's title, `Jobs at <name>`; the feed names no company. Some boards' titles name nobody (a bare
-    `Jobs at`): those keep their slug."""
+    `Jobs at`), and any other title (an error page's) isn't trusted: those boards keep their slug."""
     title = html_title(get(BOARD_PAGE.format(slug=quote(board.slug, safe=""))))
-    return named_company(title.strip().removeprefix("Jobs at"))
+    if not title.startswith(JOBS_AT):
+        raise BoardError(f"board page title isn't `{JOBS_AT} <name>`")
+    return named_company(title.removeprefix(JOBS_AT))
 
 
 def read(board: Board, get: Get) -> tuple[Posting, ...]:
-    english = xml_root(get(board.api_url))
-    if all(_has_text(p) for p in english.findall("position") if xml_text(p, "name")):
-        return parse(board, english)
-    return parse(board, english, xml_root(get(board.api_url.removesuffix(ENGLISH))))
-
-
-def parse(board: Board, root: Element, default: Element | None = None) -> tuple[Posting, ...]:
-    """`root` is the English feed; a job with no text there takes its sections from `default`'s job of the same id,
-    when that one has text. The two feeds must list the same jobs, named or not: a job added between the two
-    requests would otherwise pair descriptions wrongly, so the board fails for this run."""
-    positions = _positions(root)
-    fallback = {} if default is None else _positions(default)
-    if default is not None and fallback.keys() != positions.keys():
+    """The English feed, validated before deciding on a second request; then, if some named job has no English
+    text, the default-language feed, whose job of the same id lends its sections when it has text. The two feeds
+    must list the same jobs, named or not, or they are two different snapshots of the board: it fails this run."""
+    english = _positions(xml_root(get(board.api_url)))
+    if all(_has_text(p) for p in english.values() if xml_text(p, "name")):
+        return _postings(board, english, {})
+    default = _positions(xml_root(get(board.api_url.removesuffix(ENGLISH))))
+    if default.keys() != english.keys():
         raise BoardError("feeds disagree: the English and default-language feeds list different jobs")
-    return tuple(_posting(board, job_id, position, _described(position, fallback.get(job_id)))
-                 for job_id, position in positions.items() if xml_text(position, "name"))
+    return _postings(board, english, default)
+
+
+def _postings(board: Board, english: dict[str, Element], default: dict[str, Element]) -> tuple[Posting, ...]:
+    return tuple(_posting(board, job_id, position, _described(position, default.get(job_id)))
+                 for job_id, position in english.items() if xml_text(position, "name"))
 
 
 def _positions(root: Element) -> dict[str, Element]:

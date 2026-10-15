@@ -33,7 +33,9 @@ class NamedCompanyTest(unittest.TestCase):
 
     def test_a_website_is_kept_only_as_an_http_url(self):
         for website, kept in [(" https://acme.com/ ", "https://acme.com/"), ("http://acme.com", "http://acme.com"),
-                              ("acme.com", None), ("javascript:alert(1)", None), ("", None), (None, None), (3, None)]:
+                              ("acme.com", None), ("javascript:alert(1)", None), ("", None), (None, None), (3, None),
+                              ("https://acme.com/\ud800", None), ("https://acme.com/\nCompany: x", None),
+                              ("https://acme.com/a b", None), ("https://acme.com/\x07", None)]:
             self.assertEqual(payload.named_company("Acme", website).website, kept, website)
 
     def test_no_usable_name_is_a_board_error(self):
@@ -42,8 +44,15 @@ class NamedCompanyTest(unittest.TestCase):
                 payload.named_company(name)
 
     def test_html_title(self):
-        self.assertEqual(payload.html_title(b"<html><TITLE lang='en'>\n Acme Careers\n</title>"), "\n Acme Careers\n")
-        self.assertEqual(payload.html_title(b"<html><body>no title</body></html>"), "")
+        self.assertEqual(payload.html_title(b"<html><TITLE lang='en'>\n Acme  Careers\n</Title>"), "Acme Careers")
+        for page in [b"<html><body>no title</body></html>", b"<title>never closed", b"<title"]:
+            self.assertEqual(payload.html_title(page), "", page)
+
+    def test_element_text_takes_linear_time_on_unterminated_tags(self):
+        page = '<script id="__NEXT_DATA__"' * 200_000
+        self.assertIsNone(payload.element_text(page, '<script id="__NEXT_DATA__"', "</script>"))
+        self.assertEqual(payload.element_text('<script id="__NEXT_DATA__" type="json">{}</script>',
+                                              '<script id="__NEXT_DATA__"', "</script>"), "{}")
 
 
 class AdapterTest(unittest.TestCase):
@@ -56,6 +65,12 @@ class AdapterTest(unittest.TestCase):
         page = f"<script>window.__appData = {json.dumps(app)};\nwindow.other = 1;</script>"
         company, asked = look_up(ashby, "https://jobs.ashbyhq.com/Acme", {"https://jobs.ashbyhq.com/acme": page})
         self.assertEqual((company, asked), (Company("Acme AI", "https://acme.ai/"), ["https://jobs.ashbyhq.com/acme"]))
+
+    def test_ashby_asks_for_the_page_as_its_api_url_writes_the_slug(self):
+        page = 'window.__appData = {"organization": {"name": "Acme"}}'
+        company, asked = look_up(ashby, "https://jobs.ashbyhq.com/cirrus%20systems",
+                                 {"https://jobs.ashbyhq.com/cirrus%20systems": page})
+        self.assertEqual((company, asked), (Company("Acme", None), ["https://jobs.ashbyhq.com/cirrus%20systems"]))
 
     def test_ashby_pages_naming_no_organisation_fail(self):
         for page in ["<html>no app data</html>", "window.__appData = {broken", "window.__appData = []",
@@ -77,6 +92,9 @@ class AdapterTest(unittest.TestCase):
         company, asked = look_up(gem, "https://jobs.gem.com/Acme-co",
                                  {"https://jobs.gem.com/Acme-co": html_page("Acme &amp; Co Careers")})
         self.assertEqual((company, asked), (Company("Acme & Co", None), ["https://jobs.gem.com/Acme-co"]))
+        for title in ["Access denied", "Careers", ""]:
+            with self.assertRaises(BoardError, msg=title):
+                look_up(gem, "https://jobs.gem.com/Acme-co", {"https://jobs.gem.com/Acme-co": html_page(title)})
 
     def test_teamtailor_reads_a_one_job_feeds_channel_title(self):
         url = "https://acme.teamtailor.com/jobs.rss?per_page=1"
@@ -88,8 +106,9 @@ class AdapterTest(unittest.TestCase):
         url = "https://acme.jobs.personio.com/?language=en"
         company, asked = look_up(personio, "https://acme.jobs.personio.de/", {url: html_page("Jobs at Acme GmbH")})
         self.assertEqual((company, asked), (Company("Acme GmbH", None), [url]))
-        with self.assertRaises(BoardError):
-            look_up(personio, "https://acme.jobs.personio.de/", {url: html_page("Jobs at ")})
+        for title in ["Jobs at ", "Access denied", "Jobs bei Acme"]:
+            with self.assertRaises(BoardError, msg=title):
+                look_up(personio, "https://acme.jobs.personio.de/", {url: html_page(title)})
 
     def test_smartrecruiters_reads_a_one_posting_pages_company(self):
         url = "https://api.smartrecruiters.com/v1/companies/acme/postings?limit=1"

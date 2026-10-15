@@ -4,7 +4,6 @@ Parsing is all-or-nothing per board: one malformed listed job fails the board, s
 never closes postings that are still live."""
 import json
 import re
-from urllib.parse import quote
 
 from jobscan.payload import html_to_text, http_url, named_company, text_field
 from jobscan.records import Board, BoardError, Company, Get, Posting
@@ -46,7 +45,7 @@ def page_board(company: str, url: str) -> Board | None:
 
 def company(board: Board, get: Get) -> Company:
     """The board page's app data names the organisation and its public website; the posting API names neither."""
-    page = get(BOARD_PAGE.format(slug=quote(board.slug, safe=""))).decode()
+    page = get(BOARD_PAGE.format(slug=board.slug)).decode()  # the slug as the API URL writes it, %-escapes kept
     found = APP_DATA.search(page)
     data = json.JSONDecoder().raw_decode(page, found.end())[0] if found else None
     organisation = data.get("organization") if isinstance(data, dict) else None

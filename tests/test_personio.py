@@ -1,7 +1,7 @@
 """Personio adapter: board URLs → boards, and /xml feeds → postings."""
 import unittest
 
-from jobscan import fetch, payload, personio, tag
+from jobscan import fetch, personio, tag
 from jobscan.records import BoardError
 from tests.fakes import personio_feed, personio_position
 
@@ -14,7 +14,8 @@ def board_for(url):
 
 
 def parse(*positions):
-    return personio.parse(BOARD, payload.xml_root(personio_feed(*positions).encode()))
+    """The board read from one feed, served for both languages."""
+    return personio.read(BOARD, lambda url: personio_feed(*positions).encode())
 
 
 class BoardTest(unittest.TestCase):
@@ -72,6 +73,16 @@ class ReadTest(unittest.TestCase):
                                 [personio_position("1", "AE", sections=[("Rolle", "")])])
         self.assertEqual(postings[0].description, "Role")
 
+    def test_a_malformed_english_feed_fails_before_a_second_request(self):
+        asked = []
+
+        def get(url):
+            asked.append(url)
+            return personio_feed(personio_position(" ", "AE", sections=[])).encode()
+        with self.assertRaisesRegex(BoardError, "no id"):
+            personio.read(BOARD, get)
+        self.assertEqual(asked, [FEED])
+
     def test_feeds_listing_different_jobs_fail_the_board(self):
         for default in [[personio_position("1", "AE")], [personio_position("1", "AE"), personio_position("3", "x")],
                         [personio_position("1", "AE"), personio_position("2", "x"), personio_position("4", " ")]]:
@@ -103,8 +114,9 @@ class ParseTest(unittest.TestCase):
                           (personio_position("1", " "), personio_position("1", "AE"))]:
             with self.assertRaises(BoardError, msg=positions):
                 parse(*positions)
-        with self.assertRaises(BoardError):
-            personio.parse(BOARD, payload.xml_root(b"<rss><position/></rss>"))
+        for feed in [b"<rss><position/></rss>", b"<workzag-jobs><position><name>AE</name></position>"]:
+            with self.assertRaises(BoardError, msg=feed):
+                personio.read(BOARD, lambda url, feed=feed: feed)
 
     def test_a_job_without_a_name_is_skipped_and_the_rest_of_the_board_read(self):
         self.assertEqual([p.key for p in parse(personio_position("1", " "), personio_position("2", "AE"))],

@@ -264,6 +264,21 @@ class CompanyRunTest(RunFixture):
         self.assertIn("## Initech Ltd — Enterprise Account Executive · London", Path(path).read_text())
         self.assertIn("Company: Initech Ltd · https://initech.example/", Path(path).read_text())
 
+    def test_a_website_unfit_for_the_digest_is_dropped_and_the_name_kept(self):
+        for n, website in enumerate(["https://initech.example/\ud800", "https://initech.example/\nCompany: Fake"]):
+            with self.subTest(website=website):
+                board = f"initech{n}"
+                self.PAGE = f"/page/ashby/{board}"
+                self.seed_discovery(board)
+                jobs = {"jobs": [ashby_job(f"x{n}", "Account Executive")]}
+                self.ats.routes[f"/posting-api/job-board/{board}"] = (200, jobs)
+                self.page_answers(200, "Initech Ltd", website)
+                code, (_, _, path) = self.run_cli()
+                self.assertEqual(code, 0)
+                text = Path(path).read_text()
+                self.assertIn(f"## Initech Ltd — Account Executive · London\nhttps://jobs.ashbyhq.com/acme/x{n}", text)
+                self.assertNotIn("Company:", text)
+
     def test_a_failed_lookup_shows_the_slug_and_is_tried_again_with_the_next_match(self):
         self.page_answers(500)
         code, (_, new, path) = self.run_cli()
@@ -425,15 +440,21 @@ class TeamtailorPersonioRunTest(RunFixture):
             personio_position("p1", "Account Executive", "London", sections=[])))
         self.ats.routes["/personio/hooli/xml"] = (200, personio_feed(
             personio_position("p1", "Account Executive", "London", sections=german)))
+
+        def quoting_whichever_language(payload):
+            tags = tags_quoting_the_posting(payload)
+            quote = "Du verkaufst Software." if "Du verkaufst" in json.dumps(payload, ensure_ascii=False) else \
+                "We sell software."
+            return model_reply({**tags, "tech_company": {"value": "yes", "quote": quote}})
+        self.model.routes["/chat/completions"] = (200, quoting_whichever_language)
         code, (_, new, path) = self.run_cli()
         self.assertEqual((code, new), (0, "2"))
-        self.assertIn("## Hooli — Account Executive · London\n", Path(path).read_text())
-        conn = store.open_db(self.home)
-        try:
-            (description,) = conn.execute("SELECT description FROM postings WHERE key = 'personio:hooli:p1'").fetchone()
-        finally:
-            conn.close()
-        self.assertEqual(description, "Deine Rolle\nDu verkaufst Software.")
+        self.assertIn('## Hooli — Account Executive · London\nhttps://hooli.jobs.personio.com/job/p1 · Personio · '
+                      'first seen', Path(path).read_text())
+        self.assertIn('- tech_company ⓘ: **yes** — "Du verkaufst Software."\n', Path(path).read_text())
+        self.assertNotIn("⚠", Path(path).read_text())
+        self.assertEqual(sum("Deine Rolle\\nDu verkaufst Software." in json.dumps(payload, ensure_ascii=False)
+                             for _, _, payload in self.model.requests), 1)  # the prompt, as the request's JSON
 
     def test_a_personio_job_that_loses_its_name_closes_and_reopens_without_a_second_delivery(self):
         named = personio_position("p1", "Account Executive", "London")

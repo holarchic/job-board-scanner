@@ -37,4 +37,4 @@ class Company:
 
 
 class BoardError(Exception):
-    """The board answered, but not with a usable, well-formed job list, or a posting's detail."""
+    """The board answered, but not with a usable, well-formed job list, a posting's detail or its company."""

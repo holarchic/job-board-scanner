@@ -41,9 +41,7 @@ def scan(config: Config, profile: Profile, defs: list[tag.TagDef]) -> ScanOutcom
                              if prefilter.matches(p.posting, profile)], fetched.eligible)
         companies = _companies(conn, {s.posting.board for s in matched}, fetched.eligible, started)
         matched = [_named(s, fetched.eligible[s.posting.board], companies.get(s.posting.board)) for s in matched]
-        entries, tagged, usage = _tag(conn, matched, defs, config)
-        entries = [replace(e, website=companies[e.posting.posting.board].website)
-                   if e.posting.posting.board in companies else e for e in entries]
+        entries, tagged, usage = _tag(conn, matched, defs, config, {b: c.website for b, c in companies.items()})
         outcome = _digest(conn, config, profile, entries, carried_over=len(matched) - len(entries),
                           unvalidated=frozenset(d.name for d in defs if not d.validated))
         store.record_run(conn, store.RunRecord(
@@ -153,7 +151,7 @@ def _named(stored: store.StoredPosting, board: Board, company: Company | None) -
 
 
 def _tag(conn: sqlite3.Connection, matched: list[store.StoredPosting], defs: list[tag.TagDef], config: Config,
-         ) -> tuple[list[digest.DigestEntry], int, tag.Usage]:
+         websites: dict[str, str | None]) -> tuple[list[digest.DigestEntry], int, tag.Usage]:
     """Digest entries for every matched posting with a full set of tag results (cached or fresh),
     plus the count tagged this run and its cost. Postings left untagged are simply not in the entries."""
     model_id = config.model.id
@@ -180,7 +178,7 @@ def _tag(conn: sqlite3.Connection, matched: list[store.StoredPosting], defs: lis
              len(attempts) - tagged, usage.cost, usage.cost_reported, usage.reasoning_tokens)
     open_roles = store.open_counts(conn, {s.posting.board for s in matched})
     entries = [digest.DigestEntry(posting=s, tags={d.name: results[s.posting.key][d.name] for d in defs},
-                                  open_roles=open_roles[s.posting.board])
+                                  open_roles=open_roles[s.posting.board], website=websites.get(s.posting.board))
                for s in matched if len(results[s.posting.key]) == len(defs)]
     return entries, tagged, usage
 
