@@ -3,13 +3,15 @@
 import contextlib
 import io
 import os
+import smtplib
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from jobscan import cli, init, tag
-from jobscan.config import load_profile
+from jobscan.config import load_email, load_profile
+from tests.fakes import patch_smtp
 
 PROFILE = """titles = ["Account Executive"]
 locations = ["London"]
@@ -251,6 +253,70 @@ class InitFlagsTest(CliHome):
         typed.assert_not_called()
         self.assertEqual(code, 2)
         self.assertIn("no terminal to ask in: give the flags instead", err)
+
+
+class EmailFlagsTest(CliHome):
+    def setUp(self):
+        super().setUp()
+        self.calls, self.refuse = [], {}
+        for patcher in patch_smtp(self.calls, self.refuse):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.write_install()
+
+    def email(self, *flags, password="abcd efgh ijkl mnop\n"):
+        return self.cli("email", *flags, stdin=password)
+
+    def test_gmail_needs_only_the_address_and_the_password(self):
+        code, out, err = self.email("--to", "you@gmail.com", "--password-stdin")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("Sending a test email to you@gmail.com", out)
+        email = load_email(self.home)
+        self.assertEqual((email.to, email.sender, email.host, email.port, email.password),
+                         ("you@gmail.com", "you@gmail.com", "smtp.gmail.com", 465, "abcdefghijklmnop"))
+        self.assertEqual([name for name, _ in self.calls], ["SMTP_SSL", "login", "send", "quit"])
+
+    def test_another_sender_and_provider(self):
+        code, _, _ = self.email("--to", "me@work.example", "--from", "me@fastmail.com", "--host", "smtp.fastmail.com",
+                                "--port", "587", "--password-stdin", password="pass word\n")
+        self.assertEqual(code, 0)
+        email = load_email(self.home)
+        self.assertEqual((email.sender, email.host, email.port, email.password),
+                         ("me@fastmail.com", "smtp.fastmail.com", 587, "pass word"))
+
+    def test_refused_flags_send_and_save_nothing(self):
+        cases = [
+            (("--to", "nobody", "--password-stdin"), "--to: not an email address"),
+            (("--to", "me@outlook.com", "--password-stdin"), "OAuth"),
+            (("--to", "me@fastmail.com", "--password-stdin"), "no preset mail server for me@fastmail.com"),
+            (("--to", "me@fastmail.com", "--host", "smtp.fastmail.com", "--password-stdin"), "together"),
+            (("--to", "me@fastmail.com", "--host", "a b", "--port", "465", "--password-stdin"), "server name"),
+            (("--to", "you@gmail.com",), "add --password-stdin"),
+            (("--to", "you@gmail.com", "--off"), "--off takes no other flags"),
+        ]
+        for flags, message in cases:
+            code, _, err = self.email(*flags)
+            self.assertEqual(code, 2, flags)
+            self.assertIn(message, err, flags)
+        code, _, err = self.email("--to", "you@gmail.com", "--password-stdin", password="\n")
+        self.assertEqual(code, 2)
+        self.assertIn("isn't an app password", err)
+        self.assertEqual(self.calls, [])
+        self.assertFalse((self.home / "email.toml").exists())
+
+    def test_a_refused_test_email_is_exit_1_and_saves_nothing(self):
+        self.refuse["login"] = smtplib.SMTPAuthenticationError(535, b"bad credentials")
+        code, _, err = self.email("--to", "you@gmail.com", "--password-stdin")
+        self.assertEqual(code, 1)
+        self.assertIn("nothing was saved", err)
+        self.assertFalse((self.home / "email.toml").exists())
+
+    def test_no_flags_and_no_terminal_asks_nothing(self):
+        with mock.patch("builtins.input") as typed:
+            code, _, err = self.cli("email")
+        typed.assert_not_called()
+        self.assertEqual(code, 2)
+        self.assertIn("no terminal to ask in", err)
 
 
 if __name__ == "__main__":

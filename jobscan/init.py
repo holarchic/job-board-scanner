@@ -179,15 +179,39 @@ def _install(home: Path, answers: Answers, email_toml: str | None, email_error: 
 def email_setup(profile: str) -> str:
     """Asks for the mail account and sends a test email through it; returns email.toml's text. Raises
     mail.MailError when the test email isn't accepted, ConfigError when the settings can't be checked."""
-    text = email_text(_ask_email())
+    email = _ask_email()
+    print(f"Sending a test email to {email.to} ...")
+    return email_from(email, profile)
+
+
+def email_from(email: EmailConfig, profile: str) -> str:
+    """Checks the settings load exactly as `run` will read them, then sends the test email; returns email.toml's
+    text. Raises as `email_setup` does."""
+    text = email_text(email)
     try:
-        email = _check_email(text)
+        checked = _check_email(text)
     except OSError as e:
         raise ConfigError(f"could not check the email settings in a temporary directory ({type(e).__name__})") \
             from None
-    print(f"Sending a test email to {email.to} ...")
-    mail.send_test(email, profile)
+    mail.send_test(checked, profile)
     return text
+
+
+def oauth_only(sender: str) -> bool:
+    """Personal Microsoft accounts: mail apps may sign in only with OAuth, which jobscan doesn't do."""
+    return sender.rpartition("@")[2].lower() in OAUTH_ONLY
+
+
+def preset(sender: str) -> MailServer | None:
+    """The mail server of a provider jobscan knows, from the sending address."""
+    return MAIL_SERVERS.get(sender.rpartition("@")[2].lower())
+
+
+def app_password(server: MailServer, typed: str) -> str | None:
+    """The password as the server takes it (Google shows its in groups of four, spaces it doesn't want); None when
+    it can't be sent."""
+    password = typed.replace(" ", "") if server.host.lower() == GMAIL.host else typed
+    return password if is_password(password) else None
 
 
 def email_text(email: EmailConfig) -> str:
@@ -292,22 +316,19 @@ def _ask_email() -> EmailConfig:
     same = _answer(f"Send it from {to} too? [y/n]", "y", lambda a: a in ("y", "n")) == "y"
     while True:
         sender = to if same else _answer("Send it from which of your mail accounts", None, is_mailbox)
-        domain = sender.rpartition("@")[2].lower()
-        if domain not in OAUTH_ONLY:
+        if not oauth_only(sender):
             break
         print("  Outlook.com only lets mail apps sign in with OAuth, which jobscan can't do. Use a Gmail or iCloud "
               "address, or another provider's mail server.")
         same = False
-    server = MAIL_SERVERS.get(domain) or MailServer(
-        _answer("Your provider's mail (SMTP) server", f"smtp.{domain}", is_host),
+    server = preset(sender) or MailServer(
+        _answer("Your provider's mail (SMTP) server", f"smtp.{sender.rpartition('@')[2].lower()}", is_host),
         int(_answer("Its port: 465 or 587", "587", lambda a: a.isascii() and a.isdigit() and len(a) <= 5
                     and is_port(int(a)))))
     hint = APP_PASSWORDS.get(server.host.lower(), "your provider's app password for mail apps")
     while True:
-        password = getpass.getpass(f"App password (hidden; {hint}): ")
-        if server.host.lower() == GMAIL.host:
-            password = password.replace(" ", "")  # Google shows it in groups of four
-        if is_password(password):
+        password = app_password(server, getpass.getpass(f"App password (hidden; {hint}): "))
+        if password is not None:
             return EmailConfig(to=to, sender=sender, host=server.host, port=server.port, password=password)
         print("  That isn't a password jobscan can send: paste it again.")
 

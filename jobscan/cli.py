@@ -16,6 +16,9 @@ from jobscan.config import (
     ConfigError,
     EmailConfig,
     Profile,
+    is_host,
+    is_mailbox,
+    is_port,
     jobscan_home,
     load_config,
     load_email,
@@ -76,8 +79,29 @@ def main(argv: list[str] | None = None) -> int:
     when.add_argument("--at", type=_clock, metavar="HH:MM", help="daily run time, 24-hour clock")
     when.add_argument("--off", action="store_true", help="remove the scheduled run")
     email_parser = commands.add_parser(
-        "email", help="email each digest from your own mail account: asks, sends a test email, then saves")
+        "email", help="email each digest from your own mail account: asks or takes flags, sends a test, saves",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Email each digest from your own mail account to an address. With no flags it asks in the "
+                    "terminal. With flags it asks nothing: --to and --password-stdin are required; the sender "
+                    "defaults to --to, and Gmail and iCloud addresses need no server (other providers: --host and "
+                    "--port together). The app password is read from stdin, never the command line: Gmail's from "
+                    "myaccount.google.com/apppasswords (needs 2-Step Verification), iCloud's from "
+                    "account.apple.com. Outlook.com and Hotmail can't be used (OAuth only). A test email is sent "
+                    "first; the settings are saved to email.toml (readable only by you) only once it is accepted. "
+                    "Exit 1 when the test email is refused.",
+        epilog="Examples:\n"
+               "  jobscan email\n"
+               "  printf '%s\\n' \"$APP_PASSWORD\" | jobscan email --to me@gmail.com --password-stdin\n"
+               "  printf '%s\\n' \"$APP_PASSWORD\" | jobscan email --to me@work.example --from me@fastmail.com \\\n"
+               "      --host smtp.fastmail.com --port 465 --password-stdin\n"
+               "  jobscan email --off")
     email_parser.add_argument("--off", action="store_true", help="stop emailing digests")
+    email_parser.add_argument("--to", metavar="ADDRESS", help="where each digest goes")
+    email_parser.add_argument("--from", dest="sender", metavar="ADDRESS",
+                              help="the account that sends it, also the login (default: --to)")
+    email_parser.add_argument("--host", help="the mail (SMTP) server, for a provider other than Gmail or iCloud")
+    email_parser.add_argument("--port", type=int, help="its port: 465 (TLS) or 587 (STARTTLS)")
+    email_parser.add_argument("--password-stdin", action="store_true", help="read the app password from stdin")
     commands.add_parser(
         "check", help="load the install as a run would and print what it holds, or the first problem",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -110,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "schedule":
         return _schedule(home, args.at)
     if args.command == "email":
-        return _email(home, args.off)
+        return _email(home, args)
     if args.command == "tags":
         return _tags(home, args.name)
     if args.command == "check":
@@ -215,13 +239,28 @@ def _schedule(home: Path, at: time | None) -> int:
     return EXIT_OK
 
 
-def _email(home: Path, off: bool) -> int:
+EMAIL_FLAGS = ("to", "sender", "host", "port", "password_stdin")
+
+
+def _email(home: Path, args: argparse.Namespace) -> int:
     """Saves the settings only once a test email is accepted; `--off` works however broken the saved file is."""
+    flagged = any(getattr(args, flag) is not None and getattr(args, flag) is not False for flag in EMAIL_FLAGS)
     try:
-        if off:
+        if args.off:
+            if flagged:
+                raise ConfigError("--off takes no other flags")
             print(f"removed\t{home / EMAIL_FILE}" if init.remove_email(home) else "jobscan: no email set up")
             return EXIT_OK
-        init.save_email(home, init.email_setup(load_profile(home).name))
+        profile = load_profile(home).name
+        if flagged:
+            email = _email_settings(args)
+            print(f"Sending a test email to {email.to} ...")
+            text = init.email_from(email, profile)
+        elif not sys.stdin.isatty():
+            raise ConfigError("no terminal to ask in: give the flags instead (see `jobscan email --help`)")
+        else:
+            text = init.email_setup(profile)
+        init.save_email(home, text)
     except ConfigError as e:
         print(f"jobscan: {e}", file=sys.stderr)
         return EXIT_USAGE
@@ -236,6 +275,28 @@ def _email(home: Path, off: bool) -> int:
 
 
 INIT_FLAGS = ("name", "title", "exclude_title", "location", "eligible_where", "tag", "key_stdin")
+
+
+def _email_settings(args: argparse.Namespace) -> EmailConfig:
+    sender = args.sender or args.to
+    for flag, value in [("--to", args.to), ("--from", sender)]:
+        if not is_mailbox(value):
+            raise ConfigError(f"{flag}: not an email address (see `jobscan email --help`)")
+    if init.oauth_only(sender):
+        raise ConfigError(f"{sender}: Outlook.com lets mail apps sign in only with OAuth, which jobscan can't do")
+    if (args.host is None) != (args.port is None):
+        raise ConfigError("give --host and --port together")
+    if args.host is not None and not (is_host(args.host) and is_port(args.port)):
+        raise ConfigError("--host must be a server name and --port a port number")
+    server = init.MailServer(args.host, args.port) if args.host else init.preset(sender)
+    if server is None:
+        raise ConfigError(f"no preset mail server for {sender}: give --host and --port")
+    if not args.password_stdin:
+        raise ConfigError("the app password comes from stdin: add --password-stdin")
+    password = init.app_password(server, sys.stdin.readline().rstrip("\r\n"))
+    if password is None:
+        raise ConfigError("that isn't an app password jobscan can send (empty, or control characters)")
+    return EmailConfig(to=args.to, sender=sender, host=server.host, port=server.port, password=password)
 
 
 def _init(home: Path, args: argparse.Namespace) -> int:
