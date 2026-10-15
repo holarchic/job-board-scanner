@@ -71,7 +71,8 @@ def suggest(profile: Profile, model: ModelConfig, api_key: str | None) -> Sugges
     if not isinstance(data, dict) or not all(isinstance(data.get(k), list) for k in ("variants", "near_misses")):
         raise TitlesError("the reply isn't the two lists", usage=reply.usage)
     own = {t.casefold() for t in profile.titles}
-    variants = _clean(data["variants"], own | {t.casefold() for t in profile.exclude_titles})
+    variants = tuple(v for v in _clean(data["variants"], own | {t.casefold() for t in profile.exclude_titles})
+                     if not any(term_matches(title, v) for title in profile.titles))  # matched already
     near = [n for n in _clean(data["near_misses"], {t.casefold() for t in profile.exclude_titles} | own)
             if not any(term_matches(n, title) for title in profile.titles)]  # it would exclude the search itself
     return Suggested(variants=variants, near_misses=tuple(near), usage=reply.usage)

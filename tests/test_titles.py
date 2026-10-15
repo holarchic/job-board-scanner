@@ -23,7 +23,8 @@ class TitlesTest(CliHome):
         self.addCleanup(self.model.close)
         self.write_profile(PROFILE)
         (self.home / "config.toml").write_text(f'[model]\nbase_url = "{self.model.url}"\nslug = "test/model"\n')
-        self.answer({"variants": ["Sales Executive", "sales executive", " AE ", "Account Executive", "", "x" * 81, 7],
+        self.answer({"variants": ["Sales Executive", "sales executive", " AE ", "Account Executive", "", "x" * 81, 7,
+                                  "Enterprise Account Executive"],  # the profile's title matches it already
                      "near_misses": ["Account Manager", "Partnerships", "Executive", "assistant"]})
 
     def answer(self, reply, cost=0.0003):
@@ -55,6 +56,7 @@ class TitlesTest(CliHome):
         lines = out.splitlines()
         self.assertEqual(lines[0], "Other titles your jobs are posted under:")
         self.assertEqual([line.split() for line in lines[1:3]], [["AE", "+1"], ["Sales", "Executive", "+1"]])
+        self.assertNotIn("Enterprise", out)
         self.assertEqual(lines[3], "Near-misses: titles your titles match that are other jobs:")
         # "Executive" would leave out the search itself, "assistant" is excluded already: both dropped
         self.assertEqual([line.split() for line in lines[4:6]], [["Partnerships", "-1"], ["Account", "Manager", "-0"]])
