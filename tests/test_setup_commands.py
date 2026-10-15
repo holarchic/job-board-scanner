@@ -8,7 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from jobscan import cli, init
+from jobscan import cli, init, tag
+from jobscan.config import load_profile
 
 PROFILE = """titles = ["Account Executive"]
 locations = ["London"]
@@ -178,6 +179,78 @@ class CheckTest(CliHome):
         code, _, err = self.cli("check")
         self.assertEqual(code, 2)
         self.assertIn("unknown tags ['founder']", err)
+
+
+FLAGS = ("--name", "my-pm", "--title", "Product Manager", "--title", "Senior Product Manager",
+         "--exclude-title", "Product Marketing", "--location", "London", "--location", "UK",
+         "--eligible-where", "the UK, working from London")
+
+
+class InitFlagsTest(CliHome):
+    def test_flags_write_what_the_same_answers_typed_would(self):
+        code, out, err = self.cli("init", *FLAGS, "--tag", "founding", "--tag", "tech_company", "--key-stdin",
+                                  stdin="sk-or-v1-abc\n")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("jobscan schedule --at 08:00", out)
+        typed_home = self.home.parent / "typed"
+        typed = ["my-pm", "Product Manager, Senior Product Manager", "Product Marketing", "London, UK",
+                 "the UK, working from London", "y", "n", "n", "n", "y", ""]
+        with mock.patch("builtins.input", side_effect=typed), \
+                mock.patch.object(init.getpass, "getpass", return_value="sk-or-v1-abc"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            init.init(typed_home)
+        for name in ["config.toml", "profiles/my-pm.toml", "openrouter.key"]:
+            self.assertEqual((self.home / name).read_bytes(), (typed_home / name).read_bytes(), name)
+        self.assertEqual(oct((self.home / "openrouter.key").stat().st_mode & 0o777), "0o600")
+        self.assertEqual(self.cli("check")[0], 0)
+
+    def test_every_built_in_tag_by_default_and_the_environment_key_saved(self):
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or-v1-env"}):
+            self.assertEqual(self.cli("init", *FLAGS)[0], 0)
+        self.assertEqual((self.home / "openrouter.key").read_text(), "sk-or-v1-env\n")
+        self.assertEqual(len(load_profile(self.home).tags), len(tag.builtin_names()))
+
+    def test_a_title_holding_a_comma_stays_one_title(self):
+        self.cli("init", *FLAGS, "--title", "Head of Sales, EMEA", "--key-stdin", stdin="sk-or-v1-abc\n")
+        self.assertIn("Head of Sales, EMEA", load_profile(self.home).titles)
+
+    def test_refused_values_write_nothing(self):
+        cases = [
+            ((), "no OpenRouter key", ""),
+            (("--key-stdin",), "isn't an OpenRouter key", "sk or v1\n"),
+            (("--name", "../escape", "--key-stdin"), "profile name '../escape'", "sk-or-v1-abc\n"),
+            (("--name", "Bad", "--key-stdin"), "profile name 'Bad'", "sk-or-v1-abc\n"),
+            (("--title", " PM", "--key-stdin"), "titles: ' PM'", "sk-or-v1-abc\n"),
+            (("--location", "", "--key-stdin"), "locations: ''", "sk-or-v1-abc\n"),
+            (("--tag", "founder", "--key-stdin"), "unknown tags ['founder']", "sk-or-v1-abc\n"),
+            (("--tag", "founding", "--tag", "founding", "--key-stdin"), "tags", "sk-or-v1-abc\n"),
+        ]
+        for extra, message, stdin in cases:
+            code, out, err = self.cli("init", *FLAGS, *extra, stdin=stdin)
+            self.assertEqual((code, out), (2, ""), extra)
+            self.assertIn(message, err, extra)
+            self.assertFalse(self.home.exists(), extra)
+            self.assertFalse((self.home.parent / "escape.toml").exists())
+
+    def test_missing_flags_are_named(self):
+        code, _, err = self.cli("init", "--name", "ae", "--key-stdin", stdin="sk-or-v1-abc\n")
+        self.assertEqual(code, 2)
+        self.assertIn("missing --title, --location, --eligible-where", err)
+        self.assertFalse(self.home.exists())
+
+    def test_an_existing_install_is_refused(self):
+        self.write_install()
+        code, _, err = self.cli("init", *FLAGS, "--key-stdin", stdin="sk-or-v1-abc\n")
+        self.assertEqual(code, 2)
+        self.assertIn("already set up", err)
+        self.assertEqual(self.files(), ["config.toml", "openrouter.key", "profiles", "profiles/ae.toml"])
+
+    def test_no_flags_and_no_terminal_asks_nothing(self):
+        with mock.patch("builtins.input") as typed:
+            code, _, err = self.cli("init")
+        typed.assert_not_called()
+        self.assertEqual(code, 2)
+        self.assertIn("no terminal to ask in: give the flags instead", err)
 
 
 if __name__ == "__main__":

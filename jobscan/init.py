@@ -109,10 +109,7 @@ class Answers:
 def init(home: Path) -> Setup:
     """Asks, writes, and returns the files written. Raises ConfigError when the install exists already or a file
     can't be written, InitCancelled on Ctrl-C."""
-    existing = [p for p in [home / "config.toml", home / KEY_FILE, home / EMAIL_FILE,
-                            *sorted((home / "profiles").glob("*.toml"))] if p.exists()]
-    if existing:
-        raise ConfigError(f"{home} is already set up ({existing[0].name} exists); edit its files instead")
+    _refuse_existing(home)
     try:
         answers = _ask()
         email_toml, email_error = None, None
@@ -124,6 +121,47 @@ def init(home: Path) -> Setup:
                 email_error = e
     except (KeyboardInterrupt, EOFError):
         raise InitCancelled from None
+    return _install(home, answers, email_toml, email_error)
+
+
+def init_from(home: Path, answers: Answers) -> Setup:
+    """The install `init` writes for these answers, asking nothing (email is `jobscan email`'s). Raises ConfigError
+    for an answer the questions wouldn't accept, an existing install, or a file that can't be written."""
+    _refuse_existing(home)
+    return _install(home, answers, None, None)
+
+
+def validate(answers: Answers) -> None:
+    """What the questions accept, for answers that didn't come through them. The name is checked before any path is
+    built from it."""
+    if not PROFILE_NAME.fullmatch(answers.name):
+        raise ConfigError(f"profile name {answers.name!r}: use lower-case letters, digits and -, starting with a "
+                          "letter or digit")
+    for label, values in [("titles", answers.titles), ("locations", answers.locations), ("tags", answers.tags)]:
+        if not values:
+            raise ConfigError(f"no {label} given")
+    for label, values in [("titles", answers.titles), ("excluded titles", answers.exclude_titles),
+                          ("locations", answers.locations), ("tags", answers.tags),
+                          ("where you can work from", [answers.eligible_where])]:
+        for value in values:
+            if not value.strip() or value != value.strip() or not _encodable(value):
+                raise ConfigError(f"{label}: {value!r} is empty, padded with spaces or not valid text")
+    unknown = [t for t in answers.tags if t not in tag.builtin_names()]
+    if unknown:
+        raise ConfigError(f"unknown tags {unknown}; `jobscan tags` lists them")
+    if not usable_key(answers.key):
+        raise ConfigError("that isn't an OpenRouter key: empty, or it holds spaces or control characters")
+
+
+def _refuse_existing(home: Path) -> None:
+    existing = [p for p in [home / "config.toml", home / KEY_FILE, home / EMAIL_FILE,
+                            *sorted((home / "profiles").glob("*.toml"))] if p.exists()]
+    if existing:
+        raise ConfigError(f"{home} is already set up ({existing[0].name} exists); edit its files instead")
+
+
+def _install(home: Path, answers: Answers, email_toml: str | None, email_error: mail.MailError | None) -> Setup:
+    validate(answers)
     setup = Setup(config=home / "config.toml", profile=home / "profiles" / f"{answers.name}.toml",
                   key=home / KEY_FILE, email=home / EMAIL_FILE if email_toml else None, email_error=email_error)
     files = {setup.config: File(CONFIG, 0o644), setup.profile: File(profile_text(answers), 0o644),

@@ -125,6 +125,7 @@ class InitTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"JOBSCAN_HOME": str(self.home)}), \
                 mock.patch("builtins.input", side_effect=answers()), \
                 mock.patch.object(init.getpass, "getpass", return_value="sk-or-v1-abc"), \
+                mock.patch("sys.stdin.isatty", return_value=True), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             self.assertEqual(cli.main(["init"]), 0)
             self.assertEqual(cli.main(["init"]), 2)

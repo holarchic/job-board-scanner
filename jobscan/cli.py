@@ -34,7 +34,38 @@ class RunLocked(Exception):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jobscan")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("init", help="set up a search: asks in the terminal, writes config, profile and key")
+    init_parser = commands.add_parser(
+        "init", help="set up a search: asks in the terminal, or takes flags; writes config, profile and key",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Write a new install: config.toml, the profile (profiles/NAME.toml) and the OpenRouter key file "
+                    "(openrouter.key, readable only by you), under $JOBSCAN_HOME (default ~/.jobscan). With no "
+                    "flags it asks in the terminal. With flags it asks nothing: --name, --title, --location and "
+                    "--eligible-where are then required; repeat a list flag once per value (a value may hold a "
+                    "comma). The key never goes on the command line: --key-stdin reads it from stdin, else "
+                    "OPENROUTER_API_KEY is saved. Nothing is written if any value is refused, or if the home "
+                    "already holds an install.",
+        epilog="Examples:\n"
+               "  jobscan init\n"
+               "  printf '%s\\n' \"$KEY\" | jobscan init --name ae --title 'Account Executive' \\\n"
+               "      --title 'Enterprise Account Executive' --exclude-title 'Account Manager' \\\n"
+               "      --location London --location UK --location Remote \\\n"
+               "      --eligible-where 'the UK, working from London' --key-stdin\n"
+               "  OPENROUTER_API_KEY=... jobscan init --name pm --title 'Product Manager' --location Berlin \\\n"
+               "      --eligible-where 'Germany' --tag founding --tag location_eligible\n"
+               "\nTitles match whole words, case-folded, anywhere in a posting's title; locations the same against "
+               "its location text.\nAfter init: `jobscan email` (optional), `jobscan check`, `jobscan run`.")
+    init_parser.add_argument("--name", help="the search's name: lower-case letters, digits and -")
+    init_parser.add_argument("--title", action="append", default=[], metavar="TITLE",
+                             help="a job title to look for (repeat for each)")
+    init_parser.add_argument("--exclude-title", action="append", default=[], metavar="TITLE",
+                             help="a title to leave out even if it matches (repeat for each)")
+    init_parser.add_argument("--location", action="append", default=[], metavar="PLACE",
+                             help="a place to keep, as job ads write it (repeat for each)")
+    init_parser.add_argument("--eligible-where", metavar="TEXT",
+                             help="where you can work from, in a few words: what the location tag tests")
+    init_parser.add_argument("--tag", action="append", default=[], metavar="NAME",
+                             help="a built-in tag to ask (repeat for each; default: all; see `jobscan tags`)")
+    init_parser.add_argument("--key-stdin", action="store_true", help="read the OpenRouter key from stdin")
     commands.add_parser("discover", help="rebuild the board list from the newest Common Crawl crawls (monthly)")
     run_parser = commands.add_parser("run", help="fetch → filter → tag → write the profile's digest")
     run_parser.add_argument("--notify", action="store_true",
@@ -71,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_OK if e.code == 0 else EXIT_USAGE
     home = jobscan_home()
     if args.command == "init":
-        return _init(home)
+        return _init(home, args)
     if args.command == "eval":
         return _eval(home, args.set)
     if args.command == "discover":
@@ -204,9 +235,17 @@ def _email(home: Path, off: bool) -> int:
     return EXIT_OK
 
 
-def _init(home: Path) -> int:
+INIT_FLAGS = ("name", "title", "exclude_title", "location", "eligible_where", "tag", "key_stdin")
+
+
+def _init(home: Path, args: argparse.Namespace) -> int:
     try:
-        setup = init.init(home)
+        if any(getattr(args, flag) for flag in INIT_FLAGS):
+            setup = init.init_from(home, _init_answers(args))
+        elif not sys.stdin.isatty():
+            raise ConfigError("no terminal to ask in: give the flags instead (see `jobscan init --help`)")
+        else:
+            setup = init.init(home)
     except ConfigError as e:
         print(f"jobscan: {e}", file=sys.stderr)
         return EXIT_USAGE
@@ -218,6 +257,22 @@ def _init(home: Path) -> int:
         print(f"The test email wasn't sent ({setup.email_error}), so email isn't set up; `jobscan email` tries again.")
     print(init.NEXT_STEPS.format(profile=setup.profile))
     return EXIT_OK
+
+
+def _init_answers(args: argparse.Namespace) -> init.Answers:
+    missing = [f"--{flag.replace('_', '-')}" for flag in ("name", "title", "location", "eligible_where")
+               if not getattr(args, flag)]
+    if missing:
+        raise ConfigError(f"missing {', '.join(missing)} (see `jobscan init --help`)")
+    if args.key_stdin:
+        key = sys.stdin.readline().strip()
+    else:
+        key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+        if not key:
+            raise ConfigError("no OpenRouter key: pipe it in with --key-stdin, or set OPENROUTER_API_KEY")
+    return init.Answers(name=args.name, titles=args.title, exclude_titles=args.exclude_title,
+                        locations=args.location, eligible_where=args.eligible_where,
+                        tags=args.tag or list(tag.builtin_names()), key=key)
 
 
 def _discover(home: Path) -> int:
