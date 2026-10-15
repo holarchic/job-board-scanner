@@ -45,7 +45,6 @@ It works best where a few titles narrow the field and the posting answers the re
 - No Lever, Workday (where Nvidia, Intel and Salesforce hire) or job sites. Teamtailor and Personio boards on a company's own domain aren't found either. Companies that embed Greenhouse in their own careers page, such as Fivetran and Wiz, need the boards file.
 - Tags label matches; they don't filter the digest. There's no spend cap.
 - Tests cover AE and PM postings only, with just 8 founding roles. In the five-tag test, 8 of 11 `founding: yes` answers were right.
-- Personio jobs written only in German come without a description, so their tags answer from the title and location.
 - No funding stage or company age; the open-role count is a rough read on size.
 - One search per install.
 
@@ -54,7 +53,8 @@ It works best where a few titles narrow the field and the posting answers the re
 - **One digest per posting.** A posting appears in one digest only; a repost under a new ID is new, and a role posted separately per city appears once per city.
 - **Untagged matches wait.** Matches the model couldn't tag go into a later run's digest.
 - **No new matches, no file.** A second digest on the same day gets `-2`, `-3`.
-- **Company names** come from the board name (`1password`, not `1Password`) unless you list the company in a boards file.
+- **Company names** come from each job site, looked up once per board the first time it has a match. Ashby also gives the company's website, shown under the posting. Some Personio boards name no company and show the board name (`ddock`). A company you list in a boards file keeps your name.
+- **Demo jobs** on Gem's trial and sandbox boards are skipped.
 - **Dead boards:** a discovered board is skipped after three "not found" answers without a successful read between them. Boards you list are always tried.
 - **Failed emails** aren't resent; the digest stays on disk.
 
