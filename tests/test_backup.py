@@ -106,8 +106,25 @@ class BackupTest(unittest.TestCase):
         with self.connect() as conn:
             self.assertEqual(conn.execute("SELECT key FROM postings").fetchall(), [("ashby:clerk:1",)])
 
-    def test_the_identity_hashes_the_package_files(self):
+    def test_the_identity_changes_with_any_one_package_file(self):
         identity = REAL_IDENTITY.__wrapped__()
         self.assertRegex(identity, r"[0-9a-f]{64}")
-        with mock.patch.object(Path, "read_bytes", lambda path: b"changed" if path.name == "scan.py" else b""):
-            self.assertNotEqual(REAL_IDENTITY.__wrapped__(), identity)
+        self.assertEqual(REAL_IDENTITY.__wrapped__(), identity)
+        real = Path.read_bytes
+        for name in ("scan.py", "tags.toml"):
+            with mock.patch.object(Path, "read_bytes", lambda path, name=name: real(path) + (
+                    b"#" if path.name == name else b"")):
+                self.assertNotEqual(REAL_IDENTITY.__wrapped__(), identity, name)
+
+    def test_unreadable_package_files_stop_the_open(self):
+        with mock.patch.object(backup, "code_identity", side_effect=PermissionError(13, "denied")):
+            with self.assertRaisesRegex(ConfigError, "cannot read jobscan's own files"):
+                self.open()
+
+    def test_a_marker_that_cant_be_replaced_leaves_no_temp_file(self):
+        self.code("new")
+        with mock.patch.object(os, "replace", side_effect=OSError(5, "I/O error")):
+            with self.assertRaises(ConfigError):
+                self.open()
+        self.assertEqual([p.name for p in self.folder.iterdir() if p.name.startswith(".")], [])
+        self.assertEqual(self.marker(), "old".ljust(64, "0"))

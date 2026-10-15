@@ -200,17 +200,20 @@ def _value(parameter: str, value) -> _Value:
 
 
 def _postings(board: Board, found: list[_Found]) -> tuple[Posting, ...]:
-    """Jobs merged by job id, each with every place name it matched. One link under two filter values must agree on
-    the title; two links of one requisition keep the first's title and link."""
+    """Jobs merged by job id, each with every row's location text and every place name it matched, so a requisition
+    listed per city keeps them all. One link under two filter values must agree on the title; two links of one
+    requisition keep the first's title and link."""
     jobs: dict[str, _Job] = {}
+    titles: dict[str, str] = {}  # by link
     places: dict[str, list[str]] = {}
     for item in found:
+        if titles.setdefault(item.job.posting_id, item.job.title) != item.job.title:
+            raise BoardError(f"job {item.job.posting_id}: its rows disagree on the title")
         job = jobs.setdefault(item.job.job_id, item.job)
-        if job.posting_id == item.job.posting_id and job.title != item.job.title:
-            raise BoardError(f"job {job.posting_id}: its rows disagree on the title")
         named = places.setdefault(job.job_id, [])
-        if item.place is not None and item.place not in named:
-            named.append(item.place)
+        for place in (item.job.text, item.place):
+            if place and place not in named:
+                named.append(place)
     return tuple(_posting(board, job, places[job.job_id]) for job in jobs.values())
 
 
@@ -237,14 +240,12 @@ def _requisition(posting_id: str, fields) -> str | None:
     themselves (`R26_0000003039`, `R-20260930-0003`). On 14,260 rows of 250 sites, 96% have one and none two."""
     if not isinstance(fields, list):
         return None
-    named = [f for f in fields if isinstance(f, str) and f.strip() and f.isprintable()
-             and re.search("_" + re.escape(f) + r"(?:-\d+)?$", posting_id)]
+    named = [f for f in fields if _usable(f) and re.search("_" + re.escape(f) + r"(?:-\d+)?$", posting_id)]
     return max(named, key=len) if named else None
 
 
-def _posting(board: Board, job: _Job, matched: list[str]) -> Posting:
+def _posting(board: Board, job: _Job, places: list[str]) -> Posting:
     tenant, dc, site = board.slug.split(".", 2)
-    places = list(dict.fromkeys(p for p in (job.text, *matched) if p))
     return Posting(key=f"{board.id}:{job.job_id}", ats=ATS, board=board.id, company=board.company,
                    title=job.title, location=" / ".join(places),
                    url=SITE.format(tenant=tenant, dc=dc) + "/" + quote(site, safe="") + job.path, description="")

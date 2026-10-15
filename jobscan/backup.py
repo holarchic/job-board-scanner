@@ -34,7 +34,10 @@ def before_open(database: Path) -> None:
     """Copies the database when the code opening it isn't the code that last did, then records this code. No database
     yet: only the record. Raises ConfigError, leaving the record as it was, when the copy can't be made."""
     folder = database.parent / FOLDER
-    identity = code_identity()
+    try:
+        identity = code_identity()
+    except OSError as e:
+        raise ConfigError(f"{Path(__file__).parent}: cannot read jobscan's own files ({type(e).__name__})") from None
     try:
         if (folder / MARKER).read_text().strip() == identity:
             return
@@ -82,6 +85,11 @@ def _stamp() -> str:
 
 
 def _write_marker(folder: Path, identity: str) -> None:
-    temp = folder / f".{MARKER}.tmp"
-    temp.write_text(identity + "\n")
-    os.replace(temp, folder / MARKER)
+    """Replaced in one rename, through a temp file of this process's own (callers hold the run lock; this keeps an
+    unlocked caller from clobbering it)."""
+    temp = folder / f".{MARKER}.{os.getpid()}.tmp"
+    try:
+        temp.write_text(identity + "\n")
+        os.replace(temp, folder / MARKER)
+    finally:
+        temp.unlink(missing_ok=True)

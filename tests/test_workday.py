@@ -235,6 +235,27 @@ class RequisitionTest(unittest.TestCase):
                          ("workday:acme.wd3.careers:R1", "Account Executive", "London / United Kingdom"))
         self.assertTrue(posting.url.endswith("/careers/job/Somewhere/AE_R1"))
 
+    def test_a_requisition_listed_per_city_keeps_every_citys_text(self):
+        site = workday_site([workday_job("AE_R1", "Account Executive", ["X"], text="Paris"),
+                             workday_job("AE_R1-2", "Account Executive", ["X"], text="London")], {})
+        get = lambda url, body=None: json.dumps(site(json.loads(body))[1]).encode()  # noqa: E731
+        (posting,) = workday.read(BOARD, get, uk)
+        self.assertEqual(posting.location, "Paris / London")
+
+    def test_one_link_must_keep_its_title_under_every_filter_value(self):
+        rows = {"id-London": [workday_job("AE_R1", "AE"), workday_job("AE_R1-2", "AE, UK")],
+                "id-United Kingdom": [workday_job("AE_R1-2", "Director")]}  # the second link, retitled
+
+        def answer(body):
+            (ids,) = body["appliedFacets"].values() if body["appliedFacets"] else ([None],)
+            jobs = rows.get(ids[0], [])
+            facets = [{"facetParameter": "locations", "values": [{"id": i, "descriptor": i[3:]} for i in rows]}]
+            return 200, {"total": len(jobs), "facets": facets,
+                         "jobPostings": [{k: v for k, v in j.items() if k != "_places"} for j in jobs]}
+        get = lambda url, body=None: json.dumps(answer(json.loads(body))[1]).encode()  # noqa: E731
+        with self.assertRaisesRegex(BoardError, "AE_R1-2: its rows disagree on the title"):
+            workday.read(BOARD, get, uk)
+
     def test_same_job_joins_a_tenants_sites_by_requisition_but_never_fallbacks(self):
         self.assertEqual(workday.same_job("workday:acme.wd3.careers:R1"), "workday:acme:R1")
         self.assertEqual(workday.same_job("workday:acme.wd3.europe:R1"), "workday:acme:R1")

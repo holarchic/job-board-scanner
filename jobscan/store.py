@@ -253,7 +253,8 @@ def save_results(conn: sqlite3.Connection, stored: StoredPosting, defs: list[Tag
 
 def delivered_keys(conn: sqlite3.Connection, profile: str) -> set[str]:
     """Every posting key ever delivered to this profile."""
-    return {r[0] for r in conn.execute("SELECT posting_key FROM deliveries WHERE profile = ?", (profile,))}
+    rows = conn.execute("SELECT posting_key FROM deliveries WHERE profile = ?", (profile,))
+    return {r["posting_key"] for r in rows}
 
 
 def deliver(conn: sqlite3.Connection, profile: str, posting_keys: list[str], digest_path: Path) -> None:
