@@ -4,6 +4,7 @@ import html
 import re
 import string
 from html.parser import HTMLParser
+from types import MappingProxyType
 from urllib.parse import SplitResult, unquote, urlsplit
 from xml.etree import ElementTree
 
@@ -17,7 +18,7 @@ SLUG = re.compile(r"[!-~]+")
 NOT_IN_SLUG = frozenset("/:?#")
 REMOTE = re.compile(r"(?<!\w)remote(?!\w)")  # word-adjacent, as `prefilter` matches a `Remote` term
 # ASCII-only lower case: str.lower can change a string's length (`İ` → `i̇`), shifting offsets into the original.
-ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+ASCII_LOWER = MappingProxyType(str.maketrans(string.ascii_uppercase, string.ascii_lowercase))
 
 
 def http_url(url: str) -> SplitResult | None:
