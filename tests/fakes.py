@@ -262,12 +262,14 @@ def rippling_detail(company="<p>We sell software.</p>", role="<p>Sell it.</p>"):
     return {"uuid": "1", "name": "Account Executive", "companyName": "Acme", "workLocations": ["London"],
             "description": {"company": company, "role": role}}
 
-def workday_job(posting_id, title, places=("London",), text=None):
+def workday_job(posting_id, title, places=("London",), text=None, requisition=None):
     """A Workday list row; `_places` (stripped by `workday_site`) are the filter values it sits in. `text` is its
-    `locationsText`: by default its one place, else `N Locations`, as Workday writes it."""
+    `locationsText`: by default its one place, else `N Locations`, as Workday writes it. `bulletFields` holds the
+    requisition: by default what follows the link's last `_`, without the `-N` a repeat link adds (`AE_R1-2` → `R1`)."""
     shown = text if text is not None else places[0] if len(places) == 1 else f"{len(places)} Locations"
+    requisition = requisition if requisition is not None else re.sub(r"-\d+$", "", posting_id.rsplit("_", 1)[-1])
     return {"title": title, "externalPath": f"/job/Somewhere/{posting_id}", "locationsText": shown,
-            "bulletFields": [posting_id], "_places": tuple(places)}
+            "bulletFields": [requisition], "_places": tuple(places)}
 
 
 def workday_site(jobs, filters, grouped=False, total=None):

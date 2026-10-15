@@ -10,6 +10,7 @@ from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "ashby"
 DISPLAY_NAME = "Ashby"
+same_job = None  # each posting is its own job
 describe = None  # the list carries each job's description
 CRAWL_HOSTS = ("jobs.ashbyhq.com",)
 API = "https://api.ashbyhq.com/posting-api/job-board/"

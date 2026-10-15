@@ -113,6 +113,13 @@ def _encodable(text: str) -> bool:
     return True
 
 
+def same_job(key: str) -> str:
+    """The key every posting of one job shares, by its ATS (Workday: one requisition on a tenant's several sites); the
+    posting's own key when its ATS lists each job once."""
+    adapter = ADAPTERS[key.split(":", 1)[0]]
+    return key if adapter.same_job is None else adapter.same_job(key)
+
+
 def fetch_each(boards: list[Board], places: Places) -> Iterator[BoardFetch | BoardFailure]:
     """Every board's outcome as it completes; `places` is the profile's location test, which an adapter may read only
     the matching postings by (Workday does). A board is submitted only as an earlier outcome is handed over, so

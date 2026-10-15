@@ -22,6 +22,7 @@ from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "rippling"
 DISPLAY_NAME = "Rippling"
+same_job = None  # each posting is its own job
 BOARD_HOST = "ats.rippling.com"
 CRAWL_HOSTS = (BOARD_HOST,)
 API_PATH = ("api", "v2", "board")

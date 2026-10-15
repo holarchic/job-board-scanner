@@ -12,6 +12,7 @@ from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "gem"
 DISPLAY_NAME = "Gem"
+same_job = None  # each posting is its own job
 describe = None  # the list carries each job's description
 CRAWL_HOSTS = ("jobs.gem.com",)
 API_PATH = ("job_board", "v0")

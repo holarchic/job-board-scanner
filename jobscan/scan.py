@@ -38,8 +38,9 @@ def scan(config: Config, profile: Profile, defs: list[tag.TagDef]) -> ScanOutcom
         log.info("prefetch db_open_seconds=%.1f discovery_check_seconds=%.1f", checking - opening,
                  time.monotonic() - checking)
         fetched = _fetch(conn, config, partial(prefilter.in_places, profile), started)
-        matched = _describe([p for p in store.pending(conn, profile.name, set(fetched.eligible))
-                             if prefilter.matches(p.posting, profile)], fetched.eligible)
+        matched = _one_per_job(conn, profile.name, [p for p in store.pending(conn, profile.name, set(fetched.eligible))
+                                                    if prefilter.matches(p.posting, profile)])
+        matched = _describe(matched, fetched.eligible)
         companies = _companies(conn, {s.posting.board for s in matched}, fetched.eligible, started)
         matched = [_named(s, fetched.eligible[s.posting.board], companies.get(s.posting.board)) for s in matched]
         entries, tagged, usage = _tag(conn, matched, defs, config, {b: c.website for b, c in companies.items()})
@@ -97,6 +98,23 @@ def _boards(conn: sqlite3.Connection, config: Config) -> dict[str, Board]:
     log.info("fetch_start boards=%d listed=%d discovered=%d skipped_unrecognised=%d", len(boards), len(listed),
              len(discovered), skipped)
     return boards
+
+
+def _one_per_job(conn: sqlite3.Connection, profile: str,
+                 matched: list[store.StoredPosting]) -> list[store.StoredPosting]:
+    """One posting per job (`fetch.same_job`): of a job's matched postings, the first by key, and none once the job
+    was delivered under any key. The others stay pending and are skipped this way each run; when the kept one's board
+    goes, the next by key takes over."""
+    delivered = {fetch.same_job(key) for key in store.delivered_keys(conn, profile)}
+    first: dict[str, str] = {}
+    for s in matched:
+        job = fetch.same_job(s.posting.key)
+        first[job] = min(first.get(job, s.posting.key), s.posting.key)
+    kept = [s for s in matched if fetch.same_job(s.posting.key) not in delivered
+            and first[fetch.same_job(s.posting.key)] == s.posting.key]
+    if len(kept) < len(matched):
+        log.info("twins_skipped postings=%d", len(matched) - len(kept))
+    return kept
 
 
 def _describe(matched: list[store.StoredPosting], boards: dict[str, Board]) -> list[store.StoredPosting]:

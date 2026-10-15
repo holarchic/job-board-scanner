@@ -248,6 +248,11 @@ def save_results(conn: sqlite3.Connection, stored: StoredPosting, defs: list[Tag
         )
 
 
+def delivered_keys(conn: sqlite3.Connection, profile: str) -> set[str]:
+    """Every posting key ever delivered to this profile."""
+    return {r[0] for r in conn.execute("SELECT posting_key FROM deliveries WHERE profile = ?", (profile,))}
+
+
 def deliver(conn: sqlite3.Connection, profile: str, posting_keys: list[str], digest_path: Path) -> None:
     """Record that these postings are in a published digest. Call only after the digest file exists."""
     with conn:

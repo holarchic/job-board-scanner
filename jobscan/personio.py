@@ -14,6 +14,7 @@ from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "personio"
 DISPLAY_NAME = "Personio"
+same_job = None  # each posting is its own job
 describe = None  # the list carries each job's description
 HOST = "jobs.personio.com"  # where every board is read, whichever host named it
 DOMAINS = ("jobs.personio.de", HOST)

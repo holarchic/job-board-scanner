@@ -11,7 +11,7 @@ profile matched."""
 import json
 import re
 from dataclasses import dataclass
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from jobscan.payload import board_slug, detail_text, html_to_text, http_url, named_company, text_field
 from jobscan.records import Board, BoardError, Company, Get, Places, Posting
@@ -33,6 +33,7 @@ NOT_SITES = frozenset({"wday", "job"})  # the API, and a job page with its site 
 GEOGRAPHIC = re.compile(r"location|country|city|geograph|region|state|province", re.IGNORECASE)
 ARRANGEMENT = re.compile(r"remote", re.IGNORECASE)  # `remoteType`: queried when it matches, but places nothing
 SEVERAL = re.compile(r"\d+ Locations")
+FALLBACK = "job/"  # a key's job part without a requisition: the link's last segment, which holds no `/`
 
 
 # A slug is `<tenant>.<data centre>.<site>`, lower case: the tenant comes from the host name, and the site is
@@ -89,7 +90,8 @@ class _Value:
 
 @dataclass(frozen=True)
 class _Job:
-    posting_id: str
+    job_id: str  # the requisition, else FALLBACK + the link's last segment
+    posting_id: str  # the link's last segment
     title: str
     path: str
     text: str  # `locationsText`, "" for `N Locations`
@@ -198,18 +200,18 @@ def _value(parameter: str, value) -> _Value:
 
 
 def _postings(board: Board, found: list[_Found]) -> tuple[Posting, ...]:
-    """Jobs merged by posting id, each with every place name it matched; the same job under two names must agree on
-    the title."""
+    """Jobs merged by job id, each with every place name it matched. One link under two filter values must agree on
+    the title; two links of one requisition keep the first's title and link."""
     jobs: dict[str, _Job] = {}
     places: dict[str, list[str]] = {}
     for item in found:
-        job = jobs.setdefault(item.job.posting_id, item.job)
-        if job.title != item.job.title:
+        job = jobs.setdefault(item.job.job_id, item.job)
+        if job.posting_id == item.job.posting_id and job.title != item.job.title:
             raise BoardError(f"job {job.posting_id}: its rows disagree on the title")
-        named = places.setdefault(job.posting_id, [])
+        named = places.setdefault(job.job_id, [])
         if item.place is not None and item.place not in named:
             named.append(item.place)
-    return tuple(_posting(board, job, places[job.posting_id]) for job in jobs.values())
+    return tuple(_posting(board, job, places[job.job_id]) for job in jobs.values())
 
 
 def _job(index: int, row) -> _Job | None:
@@ -225,21 +227,40 @@ def _job(index: int, row) -> _Job | None:
     if not path.startswith("/job/") or not posting_id:
         raise BoardError(f"job {index}: `externalPath` is not a job path")
     text = (text_field(row, "locationsText", index) or "").strip()
-    return _Job(posting_id=posting_id, title=title, path=path, text="" if SEVERAL.fullmatch(text) else text)
+    return _Job(job_id=_requisition(posting_id, row.get("bulletFields")) or FALLBACK + posting_id,
+                posting_id=posting_id, title=title, path=path, text="" if SEVERAL.fullmatch(text) else text)
+
+
+def _requisition(posting_id: str, fields) -> str | None:
+    """The requisition id: the longest `bulletFields` string the link's last segment ends with as `_<it>` or
+    `_<it>-<digits>` (`…_JR350367-2`). Read from the field, never the link alone: requisitions hold `_` and `-<digits>`
+    themselves (`R26_0000003039`, `R-20260930-0003`). On 14,260 rows of 250 sites, 96% have one and none two."""
+    if not isinstance(fields, list):
+        return None
+    named = [f for f in fields if isinstance(f, str) and f.strip() and f.isprintable()
+             and re.search("_" + re.escape(f) + r"(?:-\d+)?$", posting_id)]
+    return max(named, key=len) if named else None
 
 
 def _posting(board: Board, job: _Job, matched: list[str]) -> Posting:
     tenant, dc, site = board.slug.split(".", 2)
     places = list(dict.fromkeys(p for p in (job.text, *matched) if p))
-    return Posting(key=f"{board.id}:{job.posting_id}", ats=ATS, board=board.id, company=board.company,
+    return Posting(key=f"{board.id}:{job.job_id}", ats=ATS, board=board.id, company=board.company,
                    title=job.title, location=" / ".join(places),
                    url=SITE.format(tenant=tenant, dc=dc) + "/" + quote(site, safe="") + job.path, description="")
+
+
+def same_job(key: str) -> str:
+    """The key every posting of one job shares across a tenant's sites (`workday:<tenant>:<requisition>`): a company
+    lists one job on each of its sites, under one requisition. A posting without a requisition is its own job."""
+    ats, slug, job_id = key.split(":", 2)
+    return key if job_id.startswith(FALLBACK) else f"{ats}:{slug.split('.', 1)[0]}:{job_id}"
 
 
 def describe(board: Board, posting: Posting, get: Get) -> str:
     """The job's detail, its description as text; a detail without one fails the posting: it would be tagged and
     delivered with no description, and never described again."""
-    posting_id = posting.key.removeprefix(f"{board.id}:")
+    posting_id = unquote(posting.url.rsplit("/", 1)[-1])  # the link's last segment; the key holds the requisition
     data = json.loads(get(f"{board.api_url.removesuffix(LIST)}/job/{quote(posting_id, safe='')}"))
     info = data.get("jobPostingInfo") if isinstance(data, dict) else None
     if not isinstance(info, dict):

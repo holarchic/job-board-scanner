@@ -12,6 +12,7 @@ from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "teamtailor"
 DISPLAY_NAME = "Teamtailor"
+same_job = None  # each posting is its own job
 describe = None  # the list carries each job's description
 DOMAIN = "teamtailor.com"
 CRAWL_HOSTS = (f"*.{DOMAIN}",)

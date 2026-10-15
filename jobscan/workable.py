@@ -14,6 +14,7 @@ from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "workable"
 DISPLAY_NAME = "Workable"
+same_job = None  # each posting is its own job
 describe = None  # the list carries each job's description
 BOARD_HOST = "apply.workable.com"
 CRAWL_HOSTS = ()  # not discovered: see the module docstring

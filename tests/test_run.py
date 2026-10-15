@@ -816,15 +816,15 @@ class WorkdayRunTest(RunFixture):
         self.assertEqual(self.run_cli()[1][1], "1")  # AE_R3 is left pending
         self.locations("Paris")
         self.assertEqual(self.run_cli()[1][1], "1")  # AE_R2
-        self.assertEqual(self.open_flags(), {"workday:acme.wd3.careers:AE_R1": 1, "workday:acme.wd3.careers:AE_R2": 0,
-                                             "workday:acme.wd3.careers:AE_R3": 1})
+        self.assertEqual(self.open_flags(), {"workday:acme.wd3.careers:R1": 1, "workday:acme.wd3.careers:R2": 0,
+                                             "workday:acme.wd3.careers:R3": 1})
         self.locations("London")
         self.detail("AE_R3")
         code, (_, new, path) = self.run_cli()
         self.assertEqual((code, new), (0, "1"))
         self.assertIn("AE_R3 · Workday", Path(path).read_text())
         self.assertNotIn("AE_R1 · Workday", Path(path).read_text())
-        self.assertEqual(self.open_flags()["workday:acme.wd3.careers:AE_R1"], 0)
+        self.assertEqual(self.open_flags()["workday:acme.wd3.careers:R1"], 0)
 
     def test_a_failing_place_query_fails_the_board_and_closes_nothing(self):
         self.run_cli()
@@ -833,6 +833,53 @@ class WorkdayRunTest(RunFixture):
         self.assertIn("board_failed company='acme.wd3.careers' board=workday:acme.wd3.careers",
                       (self.home / "runs.log").read_text())
         self.assertEqual(set(self.open_flags().values()), {0})
+
+
+class WorkdayTwinsRunTest(RunFixture):
+    """One job on several Workday sites of a company: one digest entry, one description, one model call."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_config(boards_file=False)
+        self.sites = {"careers": [workday_job("Account-Executive_R1", "Account Executive"),
+                                  workday_job("Account-Executive_R9", "Account Executive")],
+                      "europe": [workday_job("Account-Executive--UK_R1-2", "Account Executive, UK")],
+                      "emea": [workday_job("AE_R1-3", "Account Executive")]}
+        self.discover("careers", "europe")
+        for name, jobs in self.sites.items():
+            base = f"/workday/acme.wd3/wday/cxs/acme/{name}"
+            self.ats.routes[f"{base}/jobs"] = (200, workday_site(jobs, {"locations": ["London"]}))
+            for job in jobs:
+                link = job["externalPath"].rsplit("/", 1)[1]
+                self.ats.routes[f"{base}/job/{link}"] = (200, workday_detail(f"<p>We sell software. {link}</p>"))
+
+    def discover(self, *names):
+        boards = [workday.page_board("", f"https://acme.wd3.myworkdayjobs.com/{name}") for name in names]
+        conn = store.open_db(self.home)
+        try:
+            store.replace_discovered(conn, [*boards, *SENTINELS], datetime.now(UTC).isoformat(timespec="microseconds"))
+            with conn:
+                conn.execute("UPDATE boards SET not_found = ? WHERE slug = 'sentinel'", (store.DEAD_AFTER,))
+        finally:
+            conn.close()
+
+    def details_asked(self):
+        return sorted(path.split("/wday/cxs/acme/", 1)[1] for _, path, _ in self.ats.requests if "/job/" in path)
+
+    def test_a_job_on_two_sites_is_tagged_and_shown_once_and_never_again(self):
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))  # R1 once, R9
+        text = Path(path).read_text()
+        self.assertEqual(text.count("## acme — Account Executive"), 2)
+        self.assertIn("/careers/job/Somewhere/Account-Executive_R1 · Workday", text)
+        self.assertNotIn("Account Executive, UK", text)
+        self.assertEqual(len(self.model.requests), 2)
+        self.assertEqual(self.details_asked(), ["careers/job/Account-Executive_R1", "careers/job/Account-Executive_R9"])
+        self.assertIn("twins_skipped postings=1", (self.home / "runs.log").read_text())
+        self.assertEqual(self.run_cli()[1][1], "0")
+        self.discover("careers", "europe", "emea")  # a third site lists it later
+        self.assertEqual(self.run_cli()[1][1], "0")
+        self.assertEqual(len(self.model.requests), 2)
 
 
 class EmailRunTest(RunFixture):

@@ -69,18 +69,18 @@ class ReadTest(unittest.TestCase):
         postings = self.read(site)
         self.assertEqual(self.filters_asked(), [{}, {"locationCountry": ["id-United Kingdom"]},
                                                 {"locations": ["id-London"]}])
-        self.assertEqual(sorted(postings), ["AE_R1", "SE_R3"])
-        self.assertEqual(postings["AE_R1"].location, "London, Greater London / United Kingdom / London")
-        self.assertEqual(postings["SE_R3"].location, "United Kingdom / London")  # `4 Locations` placed
-        self.assertEqual(postings["AE_R1"].key, "workday:acme.wd3.careers:AE_R1")
-        self.assertEqual(postings["AE_R1"].url, "https://acme.wd3.myworkdayjobs.com/careers/job/Somewhere/AE_R1")
-        self.assertEqual((postings["AE_R1"].company, postings["AE_R1"].description), ("Acme", ""))
+        self.assertEqual(sorted(postings), ["R1", "R3"])  # keyed by requisition
+        self.assertEqual(postings["R1"].location, "London, Greater London / United Kingdom / London")
+        self.assertEqual(postings["R3"].location, "United Kingdom / London")  # `4 Locations` placed
+        self.assertEqual(postings["R1"].key, "workday:acme.wd3.careers:R1")
+        self.assertEqual(postings["R1"].url, "https://acme.wd3.myworkdayjobs.com/careers/job/Somewhere/AE_R1")
+        self.assertEqual((postings["R1"].company, postings["R1"].description), ("Acme", ""))
 
     def test_a_matching_remote_work_value_is_queried_too_on_a_site_with_places(self):
         jobs = [workday_job("R1", "AE", ["Austin", "Remote"], text="Austin"), workday_job("R2", "AE", ["Paris"])]
         postings = self.read(workday_site(jobs, {"locations": ["Austin", "Paris"], "remoteType": ["Hybrid", "Remote"]}))
         self.assertEqual(self.filters_asked(), [{}, {"remoteType": ["id-Remote"]}])
-        self.assertEqual({k: p.location for k, p in postings.items()}, {"R1": "Austin / Remote"})
+        self.assertEqual({k: p.location for k, p in postings.items()}, {"job/R1": "Austin / Remote"})
 
     def test_no_value_matching_reads_as_an_empty_board_after_one_request(self):
         site = workday_site([workday_job("R1", "AE", ["Paris"])], {"locations": ["Paris"]})
@@ -92,7 +92,7 @@ class ReadTest(unittest.TestCase):
         postings = self.read(workday_site(jobs, {"remoteType": ["Remote"], "timeType": ["Full time"]}))
         self.assertEqual(len(postings), 25)
         self.assertEqual([(b["offset"], b["appliedFacets"]) for b in self.asked], [(0, {}), (20, {})])
-        self.assertEqual(postings["R1"].location, "London")
+        self.assertEqual(postings["job/R1"].location, "London")
 
     def test_a_capped_total_is_read_past_to_a_short_page(self):
         jobs = [workday_job(f"R{n}", "AE", ["X"]) for n in range(2005)]
@@ -198,6 +198,49 @@ class ReadTest(unittest.TestCase):
                      {"total": 21, "jobPostings": [workday_job(f"R{n}", "AE") for n in range(21)]}]:
             with self.assertRaises(BoardError, msg=page):
                 self.read(lambda body, page=page: (200, page))
+
+
+class RequisitionTest(unittest.TestCase):
+    """A Workday job's key is its requisition, read from `bulletFields`, so a company's sites share it."""
+
+    def keys(self, *rows):
+        site = workday_site(list(rows), {})
+        get = lambda url, body=None: json.dumps(site(json.loads(body))[1]).encode()  # noqa: E731
+        return [p.key.rsplit(":", 1)[1] for p in workday.read(BOARD, get, uk)]
+
+    def row(self, link, fields):
+        return {"title": "AE", "externalPath": f"/job/London/{link}", "locationsText": "London", "bulletFields": fields}
+
+    def test_the_requisition_is_the_field_the_link_ends_with(self):
+        cases = [("Account-Executive_JR350367", ["JR350367"], "JR350367"),
+                 ("Account-Executive_JR350367-2", ["JR350367"], "JR350367"),
+                 ("Senior-Account-Executive_R26_0000003039", ["R26_0000003039"], "R26_0000003039"),
+                 ("Altra--Sales-Lead_R-20260930-0003", ["R-20260930-0003"], "R-20260930-0003"),
+                 ("Analyst_R-20260903-0024-4", ["R-20260903-0024"], "R-20260903-0024"),
+                 ("Research-Assistant_JR0000017782", ["Fixed Term", "JR0000017782"], "JR0000017782"),
+                 ("Lead_A_B12", ["B12", "A_B12"], "A_B12"),  # the longest field the link ends with
+                 ("Community-Support_R-26263", ["R - 26263"], "job/Community-Support_R-26263"),
+                 ("Clerk_R1", None, "job/Clerk_R1"), ("Clerk_R1", [7, ""], "job/Clerk_R1"),
+                 ("Clerk_R12", ["R1"], "job/Clerk_R12"), ("Clerk_XR1", ["R1"], "job/Clerk_XR1")]
+        for link, fields, key in cases:
+            self.assertEqual(self.keys(self.row(link, fields)), [key], link)
+
+    def test_two_links_of_one_requisition_on_a_site_are_one_posting(self):
+        site = workday_site([workday_job("AE_R1", "Account Executive", ["London"]),
+                             workday_job("AE-UK_R1-2", "Account Executive, UK", ["United Kingdom"])],
+                            {"locations": ["London", "United Kingdom"]})
+        get = lambda url, body=None: json.dumps(site(json.loads(body))[1]).encode()  # noqa: E731
+        (posting,) = workday.read(BOARD, get, uk)
+        self.assertEqual((posting.key, posting.title, posting.location),
+                         ("workday:acme.wd3.careers:R1", "Account Executive", "London / United Kingdom"))
+        self.assertTrue(posting.url.endswith("/careers/job/Somewhere/AE_R1"))
+
+    def test_same_job_joins_a_tenants_sites_by_requisition_but_never_fallbacks(self):
+        self.assertEqual(workday.same_job("workday:acme.wd3.careers:R1"), "workday:acme:R1")
+        self.assertEqual(workday.same_job("workday:acme.wd3.europe:R1"), "workday:acme:R1")
+        self.assertEqual(workday.same_job("workday:acme.wd3.careers:job/AE_R1"), "workday:acme.wd3.careers:job/AE_R1")
+        self.assertEqual(fetch.same_job("workday:acme.wd3.careers:R1"), "workday:acme:R1")
+        self.assertEqual(fetch.same_job("ashby:acme:1"), "ashby:acme:1")
 
 
 class DescribeTest(unittest.TestCase):

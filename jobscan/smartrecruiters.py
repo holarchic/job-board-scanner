@@ -12,6 +12,7 @@ from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "smartrecruiters"
 DISPLAY_NAME = "SmartRecruiters"
+same_job = None  # each posting is its own job
 CRAWL_HOSTS = ("jobs.smartrecruiters.com", "careers.smartrecruiters.com")
 API_PATH = ("v1", "companies")
 API = "https://api.smartrecruiters.com/" + "/".join(API_PATH) + "/"

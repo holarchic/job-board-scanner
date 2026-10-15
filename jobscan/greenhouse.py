@@ -11,6 +11,7 @@ from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "greenhouse"
 DISPLAY_NAME = "Greenhouse"
+same_job = None  # each posting is its own job
 describe = None  # the list carries each job's description
 # boards.greenhouse.io redirects to these, so Common Crawl holds no status-200 pages of its own.
 CRAWL_HOSTS = ("job-boards.greenhouse.io", "job-boards.eu.greenhouse.io")
