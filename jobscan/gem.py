@@ -6,8 +6,8 @@ carry the same six demo jobs, CFO to intern, whose whole description is DEMO; sa
 import json
 from urllib.parse import quote
 
-from jobscan.payload import board_slug, html_to_text, http_url, text_field, with_remote
-from jobscan.records import Board, BoardError, Get, Posting
+from jobscan.payload import board_slug, html_title, html_to_text, http_url, named_company, text_field, with_remote
+from jobscan.records import Board, BoardError, Company, Get, Posting
 
 ATS = "gem"
 DISPLAY_NAME = "Gem"
@@ -16,6 +16,7 @@ CRAWL_HOSTS = ("jobs.gem.com",)
 API_PATH = ("job_board", "v0")
 API = "https://api.gem.com/" + "/".join(API_PATH) + "/"
 LIST = "/job_posts/"
+BOARD_PAGE = "https://jobs.gem.com/{slug}"
 DEMO = "***DEMO JOB POST***"
 
 
@@ -50,6 +51,12 @@ def _board(company: str, slug: str | None, base: str) -> Board | None:
 def _sandbox(slug: str) -> bool:
     """An integration sandbox's board (`vercel-ats-sandbox`, `sandboxschonfeld-com`): test postings only."""
     return "sandbox" in slug.casefold()
+
+
+def company(board: Board, get: Get) -> Company:
+    """The board page's title, `<name> Careers`; the job board API names no company."""
+    title = html_title(get(BOARD_PAGE.format(slug=quote(board.slug, safe=""))))
+    return named_company(title.strip().removesuffix(" Careers"))
 
 
 def read(board: Board, get: Get) -> tuple[Posting, ...]:

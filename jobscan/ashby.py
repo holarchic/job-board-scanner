@@ -3,15 +3,19 @@
 Parsing is all-or-nothing per board: one malformed listed job fails the board, so a partial snapshot
 never closes postings that are still live."""
 import json
+import re
+from urllib.parse import quote
 
-from jobscan.payload import html_to_text, http_url, text_field
-from jobscan.records import Board, BoardError, Get, Posting
+from jobscan.payload import html_to_text, http_url, named_company, text_field
+from jobscan.records import Board, BoardError, Company, Get, Posting
 
 ATS = "ashby"
 DISPLAY_NAME = "Ashby"
 describe = None  # the list carries each job's description
 CRAWL_HOSTS = ("jobs.ashbyhq.com",)
 API = "https://api.ashbyhq.com/posting-api/job-board/"
+BOARD_PAGE = "https://jobs.ashbyhq.com/{slug}"
+APP_DATA = re.compile(r"window\.__appData\s*=\s*")  # the board page's embedded JSON
 
 
 # Ashby slugs are case-insensitive, so slugs are case-folded: one board, one id and one set of posting keys, however
@@ -38,6 +42,17 @@ def page_board(company: str, url: str) -> Board | None:
         return None
     slug = path[0].lower()
     return Board(ats=ATS, slug=slug, company=company or slug, api_url=API + slug)
+
+
+def company(board: Board, get: Get) -> Company:
+    """The board page's app data names the organisation and its public website; the posting API names neither."""
+    page = get(BOARD_PAGE.format(slug=quote(board.slug, safe=""))).decode()
+    found = APP_DATA.search(page)
+    data = json.JSONDecoder().raw_decode(page, found.end())[0] if found else None
+    organisation = data.get("organization") if isinstance(data, dict) else None
+    if not isinstance(organisation, dict):
+        raise BoardError("board page has no organisation")
+    return named_company(organisation.get("name"), organisation.get("publicWebsite"))
 
 
 def read(board: Board, get: Get) -> tuple[Posting, ...]:

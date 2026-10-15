@@ -7,8 +7,8 @@ an empty list, never a 404, so a board that has gone reads as empty and is never
 import json
 from urllib.parse import quote
 
-from jobscan.payload import board_slug, detail_text, html_to_text, http_url, text_field, with_remote
-from jobscan.records import Board, BoardError, Get, Posting
+from jobscan.payload import board_slug, detail_text, html_to_text, http_url, named_company, text_field, with_remote
+from jobscan.records import Board, BoardError, Company, Get, Posting
 
 ATS = "smartrecruiters"
 DISPLAY_NAME = "SmartRecruiters"
@@ -50,6 +50,15 @@ def _board(company: str, slug: str | None, base: str) -> Board | None:
         return None
     slug = slug.lower()
     return Board(ats=ATS, slug=slug, company=company or slug, api_url=base + quote(slug, safe="") + LIST)
+
+
+def company(board: Board, get: Get) -> Company:
+    """The company the list names on each posting, read from a one-posting page; an empty board names none."""
+    data = json.loads(get(f"{board.api_url}?limit=1"))
+    content = data.get("content") if isinstance(data, dict) else None
+    first = content[0] if isinstance(content, list) and content else None
+    owner = first.get("company") if isinstance(first, dict) else None
+    return named_company(owner.get("name") if isinstance(owner, dict) else None)
 
 
 def read(board: Board, get: Get) -> tuple[Posting, ...]:

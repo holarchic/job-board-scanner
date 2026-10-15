@@ -9,8 +9,8 @@ board would hide the rest."""
 from urllib.parse import quote
 from xml.etree.ElementTree import Element
 
-from jobscan.payload import board_slug, html_to_text, http_url, xml_root, xml_text
-from jobscan.records import Board, BoardError, Get, Posting
+from jobscan.payload import board_slug, html_title, html_to_text, http_url, named_company, xml_root, xml_text
+from jobscan.records import Board, BoardError, Company, Get, Posting
 
 ATS = "personio"
 DISPLAY_NAME = "Personio"
@@ -21,6 +21,7 @@ CRAWL_HOSTS = tuple(f"*.{domain}" for domain in DOMAINS)
 ENGLISH = "?language=en"
 FEED = "https://{slug}." + HOST + "/xml" + ENGLISH
 JOB = "https://{slug}." + HOST + "/job/{id}"
+BOARD_PAGE = "https://{slug}." + HOST + "/" + ENGLISH
 
 
 def api_board(company: str, url: str) -> Board | None:
@@ -39,6 +40,13 @@ def page_board(company: str, url: str) -> Board | None:
     if slug is None:
         return None
     return Board(ats=ATS, slug=slug, company=company or slug, api_url=FEED.format(slug=quote(slug, safe="")))
+
+
+def company(board: Board, get: Get) -> Company:
+    """The board page's title, `Jobs at <name>`; the feed names no company. Some boards' titles name nobody (a bare
+    `Jobs at`): those keep their slug."""
+    title = html_title(get(BOARD_PAGE.format(slug=quote(board.slug, safe=""))))
+    return named_company(title.strip().removeprefix("Jobs at"))
 
 
 def read(board: Board, get: Get) -> tuple[Posting, ...]:

@@ -8,8 +8,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import quote
 
-from jobscan.payload import board_slug, detail_text, html_to_text, http_url, text_field, with_remote
-from jobscan.records import Board, BoardError, Get, Posting
+from jobscan.payload import board_slug, detail_text, html_to_text, http_url, named_company, text_field, with_remote
+from jobscan.records import Board, BoardError, Company, Get, Posting
 
 ATS = "rippling"
 DISPLAY_NAME = "Rippling"
@@ -19,6 +19,8 @@ API_PATH = ("api", "v2", "board")
 API = f"https://{BOARD_HOST}/" + "/".join(API_PATH) + "/"
 LIST = "/jobs"
 JOB = f"https://{BOARD_HOST}/{{slug}}/jobs/{{id}}"
+BOARD_PAGE = f"https://{BOARD_HOST}/{{slug}}/jobs"
+NEXT_DATA = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.DOTALL)  # the board page's JSON
 PAGE = 1000  # the API's maximum: 2,000 is refused
 LOCALE = re.compile(r"[a-z]{2}-(?:[a-z]{2}|\d{3})", re.IGNORECASE)  # en-GB, en-gb, es-419
 EMBED = "embed"
@@ -67,6 +69,15 @@ class _Row:
     job_id: str
     title: str
     places: tuple[str, ...]
+
+
+def company(board: Board, get: Get) -> Company:
+    """The board page's Next.js data names the company; the jobs API names it only per job detail."""
+    found = NEXT_DATA.search(get(BOARD_PAGE.format(slug=quote(board.slug, safe=""))).decode())
+    data = json.loads(found.group(1)) if found else None
+    for key in ("props", "pageProps", "apiData", "jobBoard"):
+        data = data.get(key) if isinstance(data, dict) else None
+    return named_company(data.get("companyName") if isinstance(data, dict) else None)
 
 
 def read(board: Board, get: Get) -> tuple[Posting, ...]:

@@ -9,8 +9,8 @@ import json
 from dataclasses import dataclass
 from urllib.parse import quote
 
-from jobscan.payload import board_slug, html_to_text, http_url, text_field
-from jobscan.records import Board, BoardError, Get, Posting
+from jobscan.payload import board_slug, html_to_text, http_url, named_company, text_field
+from jobscan.records import Board, BoardError, Company, Get, Posting
 
 ATS = "workable"
 DISPLAY_NAME = "Workable"
@@ -59,6 +59,12 @@ class _Entry:
     url: str
     description: str
     places: list[str]
+
+
+def company(board: Board, get: Get) -> Company:
+    """The account the widget API serves, without its job details."""
+    data = json.loads(get(board.api_url.removesuffix(DETAILS)))
+    return named_company(data.get("name") if isinstance(data, dict) else None)
 
 
 def read(board: Board, get: Get) -> tuple[Posting, ...]:

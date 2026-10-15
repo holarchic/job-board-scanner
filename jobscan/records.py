@@ -30,5 +30,11 @@ class Posting:
     description: str
 
 
+@dataclass(frozen=True)
+class Company:
+    name: str
+    website: str | None  # the company's own site, when its ATS gives one
+
+
 class BoardError(Exception):
     """The board answered, but not with a usable, well-formed job list, or a posting's detail."""

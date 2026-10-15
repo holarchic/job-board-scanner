@@ -1,12 +1,12 @@
 """Helpers for reading ATS data, shared by the adapters: board URLs and slugs, XML payloads, string fields that fail
-the board when malformed, and job-description HTML → plain text."""
+the board when malformed, job-description HTML → plain text, and company names from APIs and board pages."""
 import html
 import re
 from html.parser import HTMLParser
 from urllib.parse import SplitResult, unquote, urlsplit
 from xml.etree import ElementTree
 
-from jobscan.records import BoardError
+from jobscan.records import BoardError, Company
 
 BLOCK_TAGS = frozenset({"br", "p", "li", "div", "h1", "h2", "h3", "h4", "h5", "h6"})
 DECLARATION = re.compile(r"<![^>]*>")
@@ -15,6 +15,7 @@ ANY_TAG = re.compile(r"<[^>]*>")
 SLUG = re.compile(r"[!-~]+")
 NOT_IN_SLUG = frozenset("/:?#")
 REMOTE = re.compile(r"(?<!\w)remote(?!\w)")  # word-adjacent, as `prefilter` matches a `Remote` term
+TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
 def http_url(url: str) -> SplitResult | None:
@@ -47,6 +48,24 @@ def xml_text(element: ElementTree.Element, path: str) -> str:
 def with_remote(places: list[str]) -> list[str]:
     """A remote job's places, plus `Remote` unless one of them already says remote as a word."""
     return places if any(REMOTE.search(p.casefold()) for p in places) else [*places, "Remote"]
+
+
+def named_company(name, website=None) -> Company:
+    """A company as a digest heading can show it: the name with entities decoded, unprintable characters dropped and
+    whitespace (newlines included) collapsed; a website only if it is an http(s) URL. A name that leaves nothing is a
+    BoardError: the board keeps its slug and is asked again another run."""
+    text = html.unescape(name) if isinstance(name, str) else ""
+    text = " ".join("".join(c for c in text if c.isprintable() or c.isspace()).split())
+    if not text:
+        raise BoardError("no company name")
+    site = website.strip() if isinstance(website, str) else ""
+    return Company(name=text, website=site if http_url(site) else None)
+
+
+def html_title(page: bytes) -> str:
+    """An HTML page's <title> text, raw; "" when it has none. A page that isn't UTF-8 raises ValueError."""
+    found = TITLE.search(page.decode())
+    return found.group(1) if found else ""
 
 
 def xml_root(body: bytes) -> ElementTree.Element:

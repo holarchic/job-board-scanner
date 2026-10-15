@@ -7,8 +7,8 @@ board, as for the others."""
 from urllib.parse import quote
 from xml.etree.ElementTree import Element
 
-from jobscan.payload import board_slug, html_to_text, http_url, with_remote, xml_root, xml_text
-from jobscan.records import Board, BoardError, Get, Posting
+from jobscan.payload import board_slug, html_to_text, http_url, named_company, with_remote, xml_root, xml_text
+from jobscan.records import Board, BoardError, Company, Get, Posting
 
 ATS = "teamtailor"
 DISPLAY_NAME = "Teamtailor"
@@ -38,6 +38,12 @@ def page_board(company: str, url: str) -> Board | None:
         return None
     return Board(ats=ATS, slug=slug, company=company or slug,
                  api_url=FEED.format(slug=quote(slug, safe="")) + f"?per_page={PER_PAGE}")
+
+
+def company(board: Board, get: Get) -> Company:
+    """The feed's channel title, from a one-job page of it."""
+    root = xml_root(get(FEED.format(slug=quote(board.slug, safe="")) + "?per_page=1"))
+    return named_company(root.findtext("channel/title"))
 
 
 def read(board: Board, get: Get) -> tuple[Posting, ...]:
