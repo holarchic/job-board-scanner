@@ -42,6 +42,8 @@ def add(file: Path, urls: list[str], company: str | None) -> Added:
     one no adapter knows adds nothing. `company` names the board (one URL only); without it, a run looks it up."""
     if company is not None and len(urls) != 1:
         raise ConfigError("--company names one board: give one URL with it")
+    if company is not None and not (company.strip() and _encodable(company)):
+        raise ConfigError("--company: give the company's name as text")
     boards = []
     for url in urls:
         board = fetch.board_for(company or "", url)
@@ -64,6 +66,10 @@ def add(file: Path, urls: list[str], company: str | None) -> Added:
 
 
 def _replace(file: Path, text: str) -> None:
+    """A text that can't be encoded (a lone surrogate the file escaped) is refused before anything is written; a
+    temporary file that can't be removed after a failure is named."""
+    if not _encodable(text):
+        raise ConfigError(f"{file} holds text that can't be written back (a lone surrogate); fix it by hand")
     try:
         fd, temp = tempfile.mkstemp(dir=file.parent, prefix=".boards-", suffix=".tmp")
     except OSError as e:
@@ -73,5 +79,17 @@ def _replace(file: Path, text: str) -> None:
             f.write(text)
         os.replace(temp, file)
     except OSError as e:
-        Path(temp).unlink(missing_ok=True)
-        raise ConfigError(f"could not write {file} ({type(e).__name__}); it is unchanged") from None
+        try:
+            Path(temp).unlink(missing_ok=True)
+            left = ""
+        except OSError:
+            left = f"; delete {temp}"
+        raise ConfigError(f"could not write {file} ({type(e).__name__}); it is unchanged{left}") from None
+
+
+def _encodable(text: str) -> bool:
+    try:
+        text.encode()
+    except UnicodeEncodeError:
+        return False
+    return True

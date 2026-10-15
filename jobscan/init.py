@@ -207,11 +207,33 @@ def preset(sender: str) -> MailServer | None:
     return MAIL_SERVERS.get(sender.rpartition("@")[2].lower())
 
 
-def app_password(server: MailServer, typed: str) -> str | None:
-    """The password as the server takes it (Google shows its in groups of four, spaces it doesn't want); None when
-    it can't be sent."""
+def app_password(server: MailServer, typed: str) -> str:
+    """The password as the server takes it (Google shows its in groups of four, spaces it doesn't want); ConfigError
+    when it can't be sent."""
     password = typed.replace(" ", "") if server.host.lower() == GMAIL.host else typed
-    return password if is_password(password) else None
+    if not is_password(password):
+        raise ConfigError("that isn't an app password jobscan can send (empty, or control characters)")
+    return password
+
+
+def email_config(to: str, sender: str | None, host: str | None, port: int | None, typed_password: str) -> EmailConfig:
+    """The settings the questions would build from these answers, for flags: the sender defaults to `to`, the server
+    to the sender's preset; ConfigError names the first answer refused."""
+    sender = sender or to
+    for flag, value in [("--to", to), ("--from", sender)]:
+        if not is_mailbox(value):
+            raise ConfigError(f"{flag}: not an email address (see `jobscan email --help`)")
+    if oauth_only(sender):
+        raise ConfigError(f"{sender}: Outlook.com lets mail apps sign in only with OAuth, which jobscan can't do")
+    if (host is None) != (port is None):
+        raise ConfigError("give --host and --port together")
+    if host is not None and not (is_host(host) and is_port(port)):
+        raise ConfigError("--host must be a server name and --port a port number")
+    server = MailServer(host, port) if host is not None else preset(sender)
+    if server is None:
+        raise ConfigError(f"no preset mail server for {sender}: give --host and --port")
+    return EmailConfig(to=to, sender=sender, host=server.host, port=server.port,
+                       password=app_password(server, typed_password))
 
 
 def email_text(email: EmailConfig) -> str:
@@ -327,10 +349,12 @@ def _ask_email() -> EmailConfig:
                     and is_port(int(a)))))
     hint = APP_PASSWORDS.get(server.host.lower(), "your provider's app password for mail apps")
     while True:
-        password = app_password(server, getpass.getpass(f"App password (hidden; {hint}): "))
-        if password is not None:
-            return EmailConfig(to=to, sender=sender, host=server.host, port=server.port, password=password)
-        print("  That isn't a password jobscan can send: paste it again.")
+        try:
+            password = app_password(server, getpass.getpass(f"App password (hidden; {hint}): "))
+        except ConfigError:
+            print("  That isn't a password jobscan can send: paste it again.")
+            continue
+        return EmailConfig(to=to, sender=sender, host=server.host, port=server.port, password=password)
 
 
 def _check_email(text: str) -> EmailConfig:

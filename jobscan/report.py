@@ -11,12 +11,12 @@ VALIDATED = {"yes": "validated", "uk": "validated for the UK only", "no": "not v
 WHERE = "<where you can work from>"  # stands in for `eligible_where` before there is a profile
 
 
-def tag_list(profile: Profile | None) -> list[str]:
+def tag_list(catalogue: tuple[tag.BuiltinTag, ...], profile: Profile | None) -> list[str]:
     """Every built-in tag, then the profile's custom ones; `*` marks the tags the profile asks."""
     used = set(profile.tags) if profile else set()
-    width = max(len(t.name) for t in tag.builtins())
+    width = max(len(t.name) for t in catalogue)
     lines = ["Built-in tags" + (" (* = in your profile)" if profile else "") + ":"]
-    for t in tag.builtins():
+    for t in catalogue:
         lines.append(f"  {'*' if t.name in used else ' '} {t.name:<{width}}  {t.summary}  [{VALIDATED[t.validated]}]")
     if profile and profile.custom_tags:
         lines.append("Your custom tags (every one is asked; none is validated):")
@@ -25,24 +25,19 @@ def tag_list(profile: Profile | None) -> list[str]:
     return lines
 
 
-def tag_detail(name: str, profile: Profile | None) -> list[str] | None:
-    """The tag's definition as the model reads it, with its answers; None when no tag has the name."""
-    where = profile.eligible_where if profile else WHERE
-    custom = {c.name: c for c in profile.custom_tags} if profile else {}
-    if name in custom:
-        d = tag.definitions((), where, (custom[name],))[0]
+def tag_detail(found: tag.Found, profile: Profile | None) -> list[str]:
+    """The tag's definition as the model reads it, with its answers."""
+    d = found.definition
+    if found.builtin is None:
         kind = "custom tag, not validated"
-    elif name in tag.builtin_names():
-        d = tag.definitions((name,), where)[0]
-        status = next(t.validated for t in tag.builtins() if t.name == name)
+    else:
+        status = found.builtin.validated
         if status == "uk" and profile:
             status = "yes" if d.validated else "no"  # what the digest will mark, for this profile's place
         kind = f"built-in tag, {VALIDATED[status]}"
-    else:
-        return None
     answers = "free text" if d.values is None else ", ".join(d.values) + (" (a list of these)" if d.multi else "")
-    in_use = "" if profile is None else "; in your profile" if name in profile.tags or name in custom else \
-        "; not in your profile"
+    asked = profile is not None and (d.name in profile.tags or d.name in {c.name for c in profile.custom_tags})
+    in_use = "" if profile is None else "; in your profile" if asked else "; not in your profile"
     return [f"{d.name} ({kind}{in_use})", f"Answers: {answers}" + (f"; default {d.default}" if d.default else ""),
             "", d.definition]
 
@@ -99,7 +94,7 @@ def boards_added(file: Path, outcome: Added) -> list[str]:
 
 def preview_lines(profile: Profile, p: Preview) -> list[str]:
     lines = [
-        f"{profile.name}, against the {p.open:,} open postings the last run stored:",
+        f"{profile.name}, against the {p.open:,} open postings stored for the boards the next run reads:",
         f"  matching your titles and locations: {p.matched:,} postings",
         f"  new jobs the next run would tag: {p.new_jobs:,} (about ${p.cost:.2f})",
         f"  already sent to you: {p.sent:,}",

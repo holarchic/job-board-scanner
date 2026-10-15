@@ -20,7 +20,7 @@ class Sample:
 
 @dataclass(frozen=True)
 class Preview:
-    open: int  # open postings stored
+    open: int  # open postings stored for the boards the next run reads
     matched: int  # postings passing the titles, places and excluded titles
     new_jobs: int  # what the next run would tag: one per job, none whose job was sent
     sent: int  # matched postings whose job was sent already
@@ -34,9 +34,13 @@ class Preview:
 
 
 def preview(conn: sqlite3.Connection, profile: Profile, listed: dict[str, Board], examples: int = 10) -> Preview:
-    """`listed`: the boards file's boards by id, whose names the samples show, as the run does."""
+    """`listed`: the boards file's boards by id, whose names the samples show, as the run does. Only the boards the
+    next run reads count: the listed ones and the live discovered ones."""
+    reads = set(listed) | {b.id for b in store.live_discovered(conn)}
     opened, matched, excluded = 0, [], []
     for brief in store.open_brief(conn):
+        if brief.board not in reads:
+            continue
         opened += 1
         match verdict(profile, brief.title, brief.location):
             case Verdict.MATCH:

@@ -108,13 +108,30 @@ class BuiltinTag:
 
 
 def builtins() -> tuple[BuiltinTag, ...]:
-    return tuple(BuiltinTag(name=name, summary=spec["summary"], validated=_validated(spec))
-                 for name, spec in _builtins().items())
+    return tuple(_builtin_tag(name, spec) for name, spec in _builtins().items())
 
 
-def _validated(spec: dict) -> str:
+@dataclass(frozen=True)
+class Found:
+    definition: TagDef  # as the model reads it
+    builtin: BuiltinTag | None  # None: the profile's own tag
+
+
+def lookup(name: str, eligible_where: str, custom: tuple[CustomTag, ...] = ()) -> Found:
+    """One tag: a custom tag of that name, else the built-in. ConfigError when neither exists."""
+    for c in custom:
+        if c.name == name:
+            return Found(definition=_custom(c), builtin=None)
+    builtins = _builtins()
+    if name not in builtins:
+        raise ConfigError(f"no tag named {name!r}; `jobscan tags` lists them")
+    return Found(definition=_builtin(name, builtins[name], eligible_where), builtin=_builtin_tag(name, builtins[name]))
+
+
+def _builtin_tag(name: str, spec: dict) -> BuiltinTag:
     validated = spec.get("validated", False)
-    return "uk" if validated == "uk" else "yes" if validated is True else "no"
+    return BuiltinTag(name=name, summary=spec["summary"],
+                      validated="uk" if validated == "uk" else "yes" if validated is True else "no")
 
 
 def _builtins() -> dict:

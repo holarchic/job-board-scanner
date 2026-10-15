@@ -31,9 +31,6 @@ from jobscan.config import (
     ConfigError,
     EmailConfig,
     Profile,
-    is_host,
-    is_mailbox,
-    is_port,
     jobscan_home,
     load_config,
     load_email,
@@ -206,25 +203,9 @@ INIT_FLAGS = ("name", "title", "exclude_title", "location", "eligible_where", "t
 
 
 def _email_settings(args: argparse.Namespace) -> EmailConfig:
-    sender = args.sender or args.to
-    for flag, value in [("--to", args.to), ("--from", sender)]:
-        if not is_mailbox(value):
-            raise ConfigError(f"{flag}: not an email address (see `jobscan email --help`)")
-    if init.oauth_only(sender):
-        raise ConfigError(f"{sender}: Outlook.com lets mail apps sign in only with OAuth, which jobscan can't do")
-    if (args.host is None) != (args.port is None):
-        raise ConfigError("give --host and --port together")
-    if args.host is not None and not (is_host(args.host) and is_port(args.port)):
-        raise ConfigError("--host must be a server name and --port a port number")
-    server = init.MailServer(args.host, args.port) if args.host else init.preset(sender)
-    if server is None:
-        raise ConfigError(f"no preset mail server for {sender}: give --host and --port")
     if not args.password_stdin:
         raise ConfigError("the app password comes from stdin: add --password-stdin")
-    password = init.app_password(server, sys.stdin.readline().rstrip("\r\n"))
-    if password is None:
-        raise ConfigError("that isn't an app password jobscan can send (empty, or control characters)")
-    return EmailConfig(to=args.to, sender=sender, host=server.host, port=server.port, password=password)
+    return init.email_config(args.to, args.sender, args.host, args.port, sys.stdin.readline().rstrip("\r\n"))
 
 
 def _init(home: Path, args: argparse.Namespace) -> int:
@@ -369,12 +350,13 @@ def _boards(home: Path, args: argparse.Namespace) -> int:
 def _tags(home: Path, name: str | None) -> int:
     try:
         profile = _profile_if_any(home)
-        lines = report.tag_list(profile) if name is None else report.tag_detail(name, profile)
+        if name is None:
+            lines = report.tag_list(tag.builtins(), profile)
+        else:
+            lines = report.tag_detail(tag.lookup(name, profile.eligible_where if profile else report.WHERE,
+                                                 profile.custom_tags if profile else ()), profile)
     except ConfigError as e:
         print(f"jobscan: {e}", file=sys.stderr)
-        return EXIT_USAGE
-    if lines is None:
-        print(f"jobscan: no tag named {name!r}; `jobscan tags` lists them", file=sys.stderr)
         return EXIT_USAGE
     print("\n".join(lines))
     return EXIT_OK

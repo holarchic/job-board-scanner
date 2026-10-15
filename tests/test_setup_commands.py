@@ -12,7 +12,7 @@ from unittest import mock
 
 from jobscan import cli, init, store, tag
 from jobscan.config import load_config, load_email, load_profile
-from jobscan.records import Company, Posting
+from jobscan.records import Board, Company, Posting
 from tests.fakes import patch_smtp
 
 PROFILE = """titles = ["Account Executive"]
@@ -383,6 +383,24 @@ class BoardsTest(CliHome):
         self.assertFalse(self.file.exists())
         self.assertEqual([p.name for p in self.home.iterdir() if p.name.startswith(".boards-")], [])
 
+    def test_text_that_cant_be_written_is_refused_and_nothing_left(self):
+        self.file.write_text('{"note": "\\ud800", "companies": []}')
+        code, _, err = self.cli("boards", "add", GREENHOUSE)
+        self.assertEqual(code, 2)
+        self.assertIn("can't be written back", err)
+        code, _, err = self.cli("boards", "add", GREENHOUSE, "--company", "\ud800")
+        self.assertEqual(code, 2)
+        self.assertIn("--company", err)
+        self.assertEqual(self.file.read_text(), '{"note": "\\ud800", "companies": []}')
+        self.assertEqual([p.name for p in self.home.iterdir() if p.name.startswith(".boards-")], [])
+
+    def test_a_failed_write_and_cleanup_names_the_temporary_file(self):
+        with mock.patch("jobscan.boards.os.replace", side_effect=PermissionError(1, "denied")), \
+                mock.patch.object(Path, "unlink", side_effect=PermissionError(1, "denied")):
+            code, _, err = self.cli("boards", "add", GREENHOUSE)
+        self.assertEqual(code, 2)
+        self.assertRegex(err, r"could not write .*boards.json \(PermissionError\); it is unchanged; delete .*\.boards-")
+
     def test_no_file_yet_says_where_add_writes(self):
         code, out, _ = self.cli("boards")
         self.assertEqual(code, 0)
@@ -416,6 +434,11 @@ class PreviewTest(CliHome):
                                         posting("workday:wd.wd3.uni", "R2", "Account Executive")], "02"),
             ]:
                 store.apply_fetch(conn, board, tuple(postings), f"2026-10-{day}T00:00:00+00:00")
+            store.apply_fetch(conn, "greenhouse:gone", (posting("greenhouse:gone", "7", "Account Executive"),),
+                              "2026-10-04T00:00:00+00:00")  # a board the next run doesn't read
+            store.replace_discovered(conn, [Board(ats, slug, slug, "") for ats, slug in [
+                ("ashby", "acme"), ("greenhouse", "beta"), ("workday", "wd.wd3.ext"), ("workday", "wd.wd3.uni")]],
+                "2026-10-01T00:00:00+00:00")
             store.deliver(conn, "ae", ["workday:wd.wd3.ext:R2"], self.home / "d.md")
             store.save_companies(conn, {"greenhouse:beta": Company(name="Beta Inc", website=None)}, "2026-10-03")
         finally:
@@ -427,7 +450,7 @@ class PreviewTest(CliHome):
             {"company": "Acme AI", "board_url": "https://jobs.ashbyhq.com/acme"}]}))
         code, out, err = self.cli("preview")
         self.assertEqual((code, err), (0, ""))
-        self.assertIn("ae, against the 9 open postings the last run stored:", out)
+        self.assertIn("ae, against the 9 open postings stored for the boards the next run reads:", out)
         self.assertIn("matching your titles and locations: 6 postings", out)  # 1, 9, R1 and R2 on both sites
         self.assertIn("new jobs the next run would tag: 3 (about $0.00)", out)  # 1, 9, R1 once
         self.assertIn("already sent to you: 2", out)  # R2 on both sites
