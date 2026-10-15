@@ -34,6 +34,7 @@ from jobscan import (
     tag,
     teamtailor,
     workable,
+    workday,
 )
 from jobscan.records import Board, Posting
 from tests.fakes import (
@@ -60,6 +61,9 @@ from tests.fakes import (
     teamtailor_feed,
     teamtailor_item,
     workable_job,
+    workday_detail,
+    workday_job,
+    workday_site,
 )
 
 PROFILE = """titles = ["Account Executive"]
@@ -94,6 +98,7 @@ class RunFixture(unittest.TestCase):
         # Board pages answer company lookups; the fake answers 404 until a test routes one.
         pages = [(adapter, "BOARD_PAGE", f"{self.ats.url}/page/{adapter.ATS}/{{slug}}")
                  for adapter in (ashby, gem, personio, rippling)]
+        pages.append((workday, "SITE", self.ats.url + "/workday/{tenant}.{dc}"))  # Workday's API is on each site
         for target, name, value in [(fetch, "RETRY_PAUSES", (0, 0)), (tag, "PAUSE", 0),
                                     (tag, "RATE_LIMIT_PAUSES", (0, 0, 0, 0)), *pages]:
             patcher = mock.patch.object(target, name, value)
@@ -738,6 +743,90 @@ class NotifyTest(RunFixture):
         return code, out.getvalue().strip().split("\t")
 
 
+class WorkdayRunTest(RunFixture):
+    """A Workday site read through its place filters: only the profile's places are queried, matched postings are
+    described, and the stored list follows the profile's locations."""
+
+    SITE = "/workday/acme.wd3/wday/cxs/acme/careers"
+
+    def setUp(self):
+        super().setUp()
+        self.write_config(boards_file=False)
+        board = workday.page_board("", "https://acme.wd3.myworkdayjobs.com/en-US/Careers")
+        conn = store.open_db(self.home)
+        try:
+            store.replace_discovered(conn, [board, *SENTINELS], datetime.now(UTC).isoformat(timespec="microseconds"))
+            with conn:
+                conn.execute("UPDATE boards SET not_found = ? WHERE slug = 'sentinel'", (store.DEAD_AFTER,))
+        finally:
+            conn.close()
+        site = workday_site([workday_job("AE_R1", "Account Executive", ["London"]),
+                             workday_job("AE_R2", "Account Executive", ["Paris"]),
+                             workday_job("AE_R3", "Account Executive", ["London", "Leeds"])],
+                            {"locations": ["Leeds", "London", "Paris"]})
+        self.filtered_status = 200  # what queries through a filter value answer
+
+        def answer(body):
+            return (self.filtered_status, {}) if body["appliedFacets"] and self.filtered_status != 200 else site(body)
+        self.ats.routes[f"{self.SITE}/jobs"] = (200, answer)
+        for job in ("AE_R1", "AE_R2", "AE_R3"):
+            self.detail(job)
+
+    def detail(self, job, status=200):
+        self.ats.routes[f"{self.SITE}/job/{job}"] = (status, workday_detail("<p>We sell software.</p>"))
+
+    def filters_asked(self):
+        return [body["appliedFacets"] for method, path, body in self.ats.requests if path == f"{self.SITE}/jobs"]
+
+    def details_asked(self):
+        return sorted(path.rsplit("/", 1)[1] for _, path, _ in self.ats.requests if "/job/" in path)
+
+    def locations(self, *places):
+        (self.home / "profiles" / "ae.toml").write_text(PROFILE.replace('["London"]', json.dumps(list(places))))
+
+    def open_flags(self):
+        conn = store.open_db(self.home)
+        try:
+            return dict(conn.execute("SELECT key, closed FROM postings WHERE ats = 'workday'"))
+        finally:
+            conn.close()
+
+    def test_only_the_profiles_places_are_queried_and_matched_postings_are_described(self):
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        self.assertEqual(self.filters_asked(), [{}, {"locations": ["id-London"]}])
+        self.assertEqual(self.details_asked(), ["AE_R1", "AE_R3"])
+        text = Path(path).read_text()
+        self.assertIn(f"## acme — Account Executive · London\n{self.ats.url}/workday/acme.wd3/careers/job/Somewhere/"
+                      "AE_R1 · Workday · first seen", text)
+        self.assertIn("/careers/job/Somewhere/AE_R3 · Workday", text)  # `2 Locations`, placed by its filter value
+        self.assertNotIn("⚠", text)
+        self.assertIn("describe_done described=2 failed=0", (self.home / "runs.log").read_text())
+
+    def test_the_stored_list_follows_the_profiles_places_and_returns_without_redelivery(self):
+        self.detail("AE_R3", status=500)
+        self.assertEqual(self.run_cli()[1][1], "1")  # AE_R3 is left pending
+        self.locations("Paris")
+        self.assertEqual(self.run_cli()[1][1], "1")  # AE_R2
+        self.assertEqual(self.open_flags(), {"workday:acme.wd3.careers:AE_R1": 1, "workday:acme.wd3.careers:AE_R2": 0,
+                                             "workday:acme.wd3.careers:AE_R3": 1})
+        self.locations("London")
+        self.detail("AE_R3")
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "1"))
+        self.assertIn("AE_R3 · Workday", Path(path).read_text())
+        self.assertNotIn("AE_R1 · Workday", Path(path).read_text())
+        self.assertEqual(self.open_flags()["workday:acme.wd3.careers:AE_R1"], 0)
+
+    def test_a_failing_place_query_fails_the_board_and_closes_nothing(self):
+        self.run_cli()
+        self.filtered_status = 500
+        self.run_cli()
+        self.assertIn("board_failed company='acme.wd3.careers' board=workday:acme.wd3.careers",
+                      (self.home / "runs.log").read_text())
+        self.assertEqual(set(self.open_flags().values()), {0})
+
+
 class EmailRunTest(RunFixture):
     """With email.toml, a run that publishes a digest emails its text; a failed send is reported, never resent."""
 
@@ -959,7 +1048,8 @@ class BoardSourcesTest(RunFixture):
 
 
 DISCOVERED = ["ashby:acme", "gem:gem-acme", "greenhouse:gh-acme", "greenhouse:gh-eu", "personio:pe-acme",
-              "rippling:rp-acme", "smartrecruiters:sr-acme", "teamtailor:tt-acme"]  # never Workable
+              "rippling:rp-acme", "smartrecruiters:sr-acme", "teamtailor:tt-acme",
+              "workday:wd-acme.wd3.careers"]  # never Workable
 
 
 class DiscoveryRefreshTest(RunFixture):
@@ -994,6 +1084,7 @@ class DiscoveryRefreshTest(RunFixture):
                                                         cdx_line("https://jobs.smartrecruiters.com/sr-acme/1-ae"),
                                                         cdx_line("https://careers.smartrecruiters.com/sr-acme"),
                                                         cdx_line("https://ats.rippling.com/rp-acme/jobs"),
+                                                        cdx_line("https://wd-acme.wd3.myworkdayjobs.com/Careers"),
                                                         cdx_line("https://www.example.com/")]))
         self.write_config(boards_file=False)
         self.ats.routes["/teamtailor/tt-acme/jobs.rss?per_page=1000"] = (200, teamtailor_feed(
@@ -1003,6 +1094,8 @@ class DiscoveryRefreshTest(RunFixture):
             [smartrecruiters_job("s1", "Engineer")]))
         self.ats.routes["/api/v2/board/rp-acme/jobs?page=0&pageSize=1000"] = (200, rippling_page(
             [rippling_item("r1", "Engineer")]))
+        self.ats.routes["/workday/wd-acme.wd3/wday/cxs/wd-acme/careers/jobs"] = (200, workday_site(
+            [workday_job("Engineer_R1", "Engineer")], {"locations": ["London"]}))
 
     def days_ago(self, days):
         return (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="microseconds")
@@ -1047,7 +1140,7 @@ class DiscoveryRefreshTest(RunFixture):
         self.assertIn("discover_failed", (self.home / "runs.log").read_text())
 
     def test_a_newly_supported_ats_is_discovered_on_the_next_run(self):
-        for ats in ("greenhouse", "gem", "teamtailor", "personio", "smartrecruiters", "rippling"):
+        for ats in ("greenhouse", "gem", "teamtailor", "personio", "smartrecruiters", "rippling", "workday"):
             self.seed_discovery("acme", at=self.days_ago(1))
             conn = store.open_db(self.home)
             with conn:
@@ -1061,7 +1154,8 @@ class DiscoveryRefreshTest(RunFixture):
         finally:
             conn.close()
         self.assertLessEqual({"teamtailor:tt-acme", "personio:pe-acme", "smartrecruiters:sr-acme",
-                              "rippling:rp-acme"}, boards)  # the new ATSes' lists were read
+                              "rippling:rp-acme", "workday:wd-acme.wd3.careers"},
+                             boards)  # the new ATSes' lists were read
 
     def test_a_list_without_workable_is_not_rediscovered(self):
         self.seed_discovery("acme", at=self.days_ago(1))

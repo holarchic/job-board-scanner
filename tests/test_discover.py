@@ -15,15 +15,16 @@ CRAWLS = ("CC-MAIN-2026-39", "CC-MAIN-2026-34", "CC-MAIN-2026-30")
 
 
 FIRST_LIST = ["ashby:acme", "ashby:beta", "ashby:gamma", "gem:gem-acme", "greenhouse:gh-eu", "greenhouse:gh-us",
-              "personio:pe-acme", "rippling:rp-acme", "smartrecruiters:sr-acme", "teamtailor:tt-acme"]
+              "personio:pe-acme", "rippling:rp-acme", "smartrecruiters:sr-acme", "teamtailor:tt-acme",
+              "workday:wd-acme.wd3.careers"]
 
 
 def captures(*slugs, greenhouse=("gh-us",), greenhouse_eu=("gh-eu",), workable=("wk-acme",), gem=("gem-acme",),
              teamtailor=("tt-acme",), personio_de=("pe-acme",), personio_com=("pe-acme",), sr_jobs=("SR-Acme",),
-             sr_careers=("sr-acme",), rippling=("rp-acme",)):
+             sr_careers=("sr-acme",), rippling=("rp-acme",), workday=("wd-acme.wd3/en-US/Careers",)):
     """One crawl's index lines: Ashby boards, Greenhouse boards on both hosts, Gem boards, Teamtailor and Personio
     subdomains, SmartRecruiters boards on both hosts, Rippling boards (a slug may carry a locale or `embed/` prefix),
-    and noise, including Workable boards, which are never discovered."""
+    Workday sites (`<tenant>.<dc>/<path>`), and noise, including Workable boards, which are never discovered."""
     return [cdx_line(f"https://jobs.ashbyhq.com/{slug}/job-1") for slug in slugs] + \
         [cdx_line(f"https://job-boards.greenhouse.io/{slug}/jobs/1") for slug in greenhouse] + \
         [cdx_line(f"https://job-boards.eu.greenhouse.io/{slug}") for slug in greenhouse_eu] + \
@@ -38,6 +39,9 @@ def captures(*slugs, greenhouse=("gh-us",), greenhouse_eu=("gh-eu",), workable=(
         [cdx_line("https://jobs.smartrecruiters.com/"), cdx_line("https://jobs.smartrecruiters.com/?company=Acme")] + \
         [cdx_line(f"https://ats.rippling.com/{slug}/jobs/0f1e-ae") for slug in rippling] + \
         [cdx_line("https://ats.rippling.com/en-GB/jobs"), cdx_line("https://ats.rippling.com/")] + \
+        [cdx_line(f"https://{host}.myworkdayjobs.com/{path}/job/London/AE_R1") for host, _, path in
+         (site.partition("/") for site in workday)] + \
+        [cdx_line("https://wd-acme.wd3.myworkdayjobs.com/"), cdx_line("https://www.myworkdayjobs.com/Careers")] + \
         [cdx_line("https://app.teamtailor.com/login"), cdx_line("https://teamtailor.com/en")] + \
         [cdx_line("https://app.ashbyhq.com/login"), cdx_line("https://www.example.com/")]
 
@@ -80,7 +84,7 @@ class DiscoverTest(unittest.TestCase):
             conn.close()
 
     def test_union_of_three_crawls_case_folded(self):
-        self.assertEqual(self.run_cli(), (0, "discovered\t10\t" + ",".join(CRAWLS)))
+        self.assertEqual(self.run_cli(), (0, "discovered\t11\t" + ",".join(CRAWLS)))
         self.assertEqual(self.discovered(), [
             ("ashby:acme", "https://api.ashbyhq.com/posting-api/job-board/acme"),
             ("ashby:beta", "https://api.ashbyhq.com/posting-api/job-board/beta"),
@@ -92,6 +96,7 @@ class DiscoverTest(unittest.TestCase):
             ("rippling:rp-acme", "https://ats.rippling.com/api/v2/board/rp-acme/jobs"),
             ("smartrecruiters:sr-acme", "https://api.smartrecruiters.com/v1/companies/sr-acme/postings"),
             ("teamtailor:tt-acme", "https://tt-acme.teamtailor.com/jobs.rss?per_page=1000"),
+            ("workday:wd-acme.wd3.careers", "https://wd-acme.wd3.myworkdayjobs.com/wday/cxs/wd-acme/careers/jobs"),
         ])
 
     def test_greenhouse_hosts_union_and_fold(self):
@@ -102,7 +107,7 @@ class DiscoverTest(unittest.TestCase):
         self.assertEqual([b for b, _ in self.discovered()],
                          ["ashby:acme", "gem:gem-acme", "greenhouse:ep+co", "greenhouse:eu-only", "greenhouse:gh-eu",
                           "greenhouse:shared", "greenhouse:us-only", "personio:pe-acme", "rippling:rp-acme",
-                          "smartrecruiters:sr-acme", "teamtailor:tt-acme"])
+                          "smartrecruiters:sr-acme", "teamtailor:tt-acme", "workday:wd-acme.wd3.careers"])
 
     def test_gem_slugs_keep_their_case_and_workable_is_never_discovered(self):
         self.serve({CRAWLS[0]: captures("acme", workable=("Mixed", "mixed"), gem=("Gem-B", "gem-b")),
@@ -127,6 +132,16 @@ class DiscoverTest(unittest.TestCase):
         self.assertEqual([b for b, _ in self.discovered() if b.startswith("smartrecruiters")],
                          ["smartrecruiters:both", "smartrecruiters:careers-only", "smartrecruiters:nexthink",
                           "smartrecruiters:sr-acme"])
+
+    def test_workday_sites_fold_past_a_locale_and_keep_their_data_centre(self):
+        self.serve({CRAWLS[0]: captures("acme", workday=("wd-acme.wd3/en-US/Careers", "WD-Acme.wd3/careers")),
+                    CRAWLS[1]: captures("acme", workday=("wd-acme.wd5/Careers", "wm.wd12/WM")),
+                    CRAWLS[2]: captures("acme")})
+        self.assertEqual(self.run_cli()[0], 0)
+        self.assertEqual([b for b in self.discovered() if b[0].startswith("workday")], [
+            ("workday:wd-acme.wd3.careers", "https://wd-acme.wd3.myworkdayjobs.com/wday/cxs/wd-acme/careers/jobs"),
+            ("workday:wd-acme.wd5.careers", "https://wd-acme.wd5.myworkdayjobs.com/wday/cxs/wd-acme/careers/jobs"),
+            ("workday:wm.wd12.wm", "https://wm.wd12.myworkdayjobs.com/wday/cxs/wm/wm/jobs")])
 
     def test_rippling_slugs_keep_their_case_past_a_locale_or_embed_prefix(self):
         self.serve({CRAWLS[0]: captures("acme", rippling=("en-GB/Mixed-Case", "embed/mixed-case")),

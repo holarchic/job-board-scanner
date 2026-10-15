@@ -254,6 +254,40 @@ def rippling_detail(company="<p>We sell software.</p>", role="<p>Sell it.</p>"):
     return {"uuid": "1", "name": "Account Executive", "companyName": "Acme", "workLocations": ["London"],
             "description": {"company": company, "role": role}}
 
+def workday_job(posting_id, title, places=("London",), text=None):
+    """A Workday list row; `_places` (stripped by `workday_site`) are the filter values it sits in. `text` is its
+    `locationsText`: by default its one place, else `N Locations`, as Workday writes it."""
+    shown = text if text is not None else places[0] if len(places) == 1 else f"{len(places)} Locations"
+    return {"title": title, "externalPath": f"/job/Somewhere/{posting_id}", "locationsText": shown,
+            "bulletFields": [posting_id], "_places": tuple(places)}
+
+
+def workday_site(jobs, filters, grouped=False, total=None):
+    """A Workday list endpoint: the POSTed body → (status, page). `filters` maps a filter's parameter to its value
+    names (id `id-<name>`); a job sits in a value whose name is among its `_places`. Values of one filter are OR'ed,
+    filters AND'ed, as Workday's are. The first page reports the count (`total` overrides it for unfiltered queries,
+    as a cap); later pages report 0. `grouped` nests the filters under `locationMainGroup`."""
+    def answer(body):
+        applied, offset = body["appliedFacets"], body["offset"]
+        chosen = [j for j in jobs if all(any(i.removeprefix("id-") in j.get("_places", ()) for i in ids)
+                                         for ids in applied.values())]
+        rows = [{k: v for k, v in j.items() if k != "_places"} for j in chosen]
+        facets = [{"facetParameter": p, "descriptor": p, "values": [
+            {"id": f"id-{n}", "descriptor": n, "count": sum(n in j.get("_places", ()) for j in jobs)} for n in names]}
+            for p, names in filters.items()]
+        if grouped:
+            facets = [{"facetParameter": "locationMainGroup", "values": facets}]
+        reported = (total if total is not None and not applied else len(rows)) if offset == 0 else 0
+        return 200, {"total": reported, "jobPostings": rows[offset:offset + body["limit"]], "facets": facets}
+    return answer
+
+
+def workday_detail(description="<p>Sell our software in London.</p>"):
+    """A Workday job detail: the posting's description, HTML."""
+    return {"jobPostingInfo": {"title": "Account Executive", "jobDescription": description},
+            "hiringOrganization": {"name": "Acme Ltd (UK)"}}
+
+
 def model_reply(tags: dict, cost: float = 0.0005):
     """An OpenRouter-shaped chat-completions response carrying `tags` as the message content."""
     return 200, {"choices": [{"message": {"content": json.dumps(tags)}}], "usage": {"cost": cost}}
