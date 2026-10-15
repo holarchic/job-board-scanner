@@ -954,7 +954,8 @@ class OracleRunTest(RunFixture):
         self.assertIn("over 10,000 jobs", log)
         conn = store.open_db(self.home)
         try:
-            closed = dict(conn.execute("SELECT key, closed FROM postings WHERE ats = 'oracle'"))
+            rows = conn.execute("SELECT key, closed FROM postings WHERE ats = 'oracle'")
+            closed = {r["key"]: r["closed"] for r in rows}
         finally:
             conn.close()
         self.assertEqual(closed, {"oracle:acme.em2.cx:42": 0, "oracle:acme.em2.cx:43": 0, "oracle:acme.em2.htv:42": 0})
@@ -1253,6 +1254,8 @@ class DiscoveryRefreshTest(RunFixture):
             [rippling_item("r1", "Engineer")]))
         self.ats.routes["/workday/wd-acme.wd3/wday/cxs/wd-acme/careers/jobs"] = (200, workday_site(
             [workday_job("Engineer_R1", "Engineer")], {"locations": ["London"]}))
+        self.ats.routes["/oracle/or-acme.em2" + oracle.LIST.format(site="cx", limit=200, offset=0)] = (
+            200, oracle_page([oracle_job("o1", "Engineer")]))
 
     def days_ago(self, days):
         return (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="microseconds")
@@ -1297,7 +1300,7 @@ class DiscoveryRefreshTest(RunFixture):
         self.assertIn("discover_failed", (self.home / "runs.log").read_text())
 
     def test_a_newly_supported_ats_is_discovered_on_the_next_run(self):
-        for ats in ("greenhouse", "gem", "teamtailor", "personio", "smartrecruiters", "rippling", "workday"):
+        for ats in ("greenhouse", "gem", "teamtailor", "personio", "smartrecruiters", "rippling", "workday", "oracle"):
             self.seed_discovery("acme", at=self.days_ago(1))
             conn = store.open_db(self.home)
             with conn:
@@ -1311,7 +1314,7 @@ class DiscoveryRefreshTest(RunFixture):
         finally:
             conn.close()
         self.assertLessEqual({"teamtailor:tt-acme", "personio:pe-acme", "smartrecruiters:sr-acme",
-                              "rippling:rp-acme", "workday:wd-acme.wd3.careers"},
+                              "rippling:rp-acme", "workday:wd-acme.wd3.careers", "oracle:or-acme.em2.cx"},
                              boards)  # the new ATSes' lists were read
 
     def test_a_list_without_workable_is_not_rediscovered(self):
