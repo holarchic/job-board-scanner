@@ -8,7 +8,7 @@ from datetime import time
 from pathlib import Path
 from time import monotonic
 
-from jobscan import discover, evaluate, fetch, init, mail, notify, report, scan, schedule, store, tag
+from jobscan import boards, discover, evaluate, fetch, init, mail, notify, report, scan, schedule, store, tag
 from jobscan.config import (
     EMAIL_FILE,
     KEY_FILE,
@@ -110,6 +110,27 @@ def main(argv: list[str] | None = None) -> int:
                     "environment). Prints what the install holds, or the first problem with exit 2. Reads only: "
                     "no network, no database. Run it after editing the profile by hand.",
         epilog="Examples:\n  jobscan check\n  $EDITOR ~/.jobscan/profiles/*.toml && jobscan check")
+    boards_parser = commands.add_parser(
+        "boards", help="list the boards file's boards, or add board URLs to it",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Discovery finds most boards by itself. Companies it misses (a board Common Crawl never "
+                    "captured, or one embedded in a company's own careers page) go in the boards file, read by "
+                    "every run beside the discovered boards: config.toml's boards_file, else "
+                    "$JOBSCAN_HOME/boards.json. With no subcommand, list it.",
+        epilog="Examples:\n  jobscan boards\n  jobscan boards add https://job-boards.greenhouse.io/acme\n"
+               "  jobscan boards add https://jobs.ashbyhq.com/acme --company 'Acme AI'")
+    boards_commands = boards_parser.add_subparsers(dest="boards_command")
+    boards_add = boards_commands.add_parser(
+        "add", help="add board URLs to the boards file",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Add each board by its careers-page or board URL (Ashby, Greenhouse, Workable, Gem, Teamtailor, "
+                    "Personio, SmartRecruiters, Rippling, Workday, Oracle). Every URL is checked first: one no "
+                    "adapter recognises adds nothing (exit 2). A board the file lists already is skipped. Without "
+                    "--company, the run looks the company's name up. No request is made: the next run reads it.",
+        epilog="Examples:\n  jobscan boards add https://job-boards.greenhouse.io/acme https://apply.workable.com/beta\n"
+               "  jobscan boards add https://acme.wd3.myworkdayjobs.com/Careers --company Acme")
+    boards_add.add_argument("urls", nargs="+", metavar="URL", help="a board or careers-page URL")
+    boards_add.add_argument("--company", help="the company's name for the digest (one URL only)")
     tags_parser = commands.add_parser(
         "tags", help="list the tags the model can answer, or show one's definition",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -139,6 +160,8 @@ def main(argv: list[str] | None = None) -> int:
         return _tags(home, args.name)
     if args.command == "check":
         return _check(home)
+    if args.command == "boards":
+        return _boards(home, args)
     return _run(home, args.notify)
 
 
@@ -397,6 +420,21 @@ def _key_source(home: Path, config: Config) -> str:
         return f"OPENROUTER_API_KEY here, {KEY_FILE} for scheduled runs" if (home / KEY_FILE).exists() \
             else "OPENROUTER_API_KEY"
     return KEY_FILE
+
+
+def _boards(home: Path, args: argparse.Namespace) -> int:
+    try:
+        file = boards.path(load_config(home))
+        if args.boards_command == "add":
+            outcome = boards.add(file, args.urls, args.company)
+        else:
+            print("\n".join(report.board_list(file, boards.entries(file))))
+            return EXIT_OK
+    except ConfigError as e:
+        print(f"jobscan: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    print("\n".join(report.boards_added(file, outcome)))
+    return EXIT_OK
 
 
 def _tags(home: Path, name: str | None) -> int:

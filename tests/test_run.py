@@ -90,7 +90,7 @@ class RunFixture(unittest.TestCase):
         self.home = Path(tmp.name)
         (self.home / "profiles").mkdir()
         (self.home / "profiles" / "ae.toml").write_text(PROFILE)
-        (self.home / "boards.json").write_text(json.dumps({"companies": [
+        (self.home / "listed.json").write_text(json.dumps({"companies": [
             {"company": "Acme", "board_url": f"{self.ats.url}/posting-api/job-board/acme"},
             {"company": "Broken", "board_url": f"{self.ats.url}/posting-api/job-board/broken"},
         ]}))
@@ -132,7 +132,7 @@ class RunFixture(unittest.TestCase):
             conn.close()
 
     def write_config(self, boards_file):
-        (self.home / "config.toml").write_text(('boards_file = "boards.json"\n' if boards_file else "")
+        (self.home / "config.toml").write_text(('boards_file = "listed.json"\n' if boards_file else "")
                                                + f'[model]\nbase_url = "{self.model.url}"\nslug = "test/model"\n')
 
     def model_ok(self):
@@ -231,7 +231,7 @@ class RunTest(RunFixture):
 
     def test_missing_openrouter_key_is_a_config_error(self):
         (self.home / "config.toml").write_text(
-            'boards_file = "boards.json"\n[model]\nbase_url = "https://openrouter.ai/api/v1"\nslug = "x/y"\n')
+            'boards_file = "listed.json"\n[model]\nbase_url = "https://openrouter.ai/api/v1"\nslug = "x/y"\n')
         with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": ""}):
             code, _ = self.run_cli()
         self.assertEqual(code, 2)
@@ -330,7 +330,7 @@ class CompanyRunTest(RunFixture):
 
 class GreenhouseRunTest(RunFixture):
     def test_ashby_and_greenhouse_boards_in_one_digest(self):
-        (self.home / "boards.json").write_text(json.dumps({"companies": [
+        (self.home / "listed.json").write_text(json.dumps({"companies": [
             {"company": "Acme", "board_url": f"{self.ats.url}/posting-api/job-board/acme"},
             {"company": "Globex", "board_url": f"{self.ats.url}/v1/boards/globex/jobs"},
         ]}))
@@ -355,7 +355,7 @@ class GreenhouseRunTest(RunFixture):
 
 
     def test_a_malformed_greenhouse_board_fails_alone(self):
-        (self.home / "boards.json").write_text(json.dumps({"companies": [
+        (self.home / "listed.json").write_text(json.dumps({"companies": [
             {"company": "Acme", "board_url": f"{self.ats.url}/posting-api/job-board/acme"},
             {"company": "Globex", "board_url": f"{self.ats.url}/v1/boards/globex/jobs"},
         ]}))
@@ -368,7 +368,7 @@ class GreenhouseRunTest(RunFixture):
 
 class WorkableGemRunTest(RunFixture):
     def test_workable_and_gem_boards_reach_the_digest(self):
-        (self.home / "boards.json").write_text(json.dumps({"companies": [
+        (self.home / "listed.json").write_text(json.dumps({"companies": [
             {"company": "Acme", "board_url": f"{self.ats.url}/posting-api/job-board/acme"},
             {"company": "Initech", "board_url": f"{self.ats.url}/api/v1/widget/accounts/initech"},
             {"company": "Hooli", "board_url": f"{self.ats.url}/job_board/v0/hooli/job_posts/"},
@@ -418,7 +418,7 @@ class TeamtailorPersonioRunTest(RunFixture):
         for adapter, feed in [(teamtailor, "/teamtailor/{slug}/jobs.rss"),
                               (personio, "/personio/{slug}/xml?language=en")]:
             mock.patch.object(adapter, "FEED", self.ats.url + feed).start()
-        (self.home / "boards.json").write_text(json.dumps({"companies": [
+        (self.home / "listed.json").write_text(json.dumps({"companies": [
             {"company": "Initech", "board_url": "https://initech.teamtailor.com/jobs"},
             {"company": "Hooli", "board_url": "https://hooli.jobs.personio.de/"},
         ]}))
@@ -505,7 +505,7 @@ class SmartRecruitersRunTest(RunFixture):
     def setUp(self):
         super().setUp()
         mock.patch.object(smartrecruiters, "PAGE", 2).start()
-        (self.home / "boards.json").write_text(json.dumps({"companies": [
+        (self.home / "listed.json").write_text(json.dumps({"companies": [
             {"company": "Initrode", "board_url": f"{self.ats.url}{self.LIST}"}]}))
         self.jobs = [smartrecruiters_job("sr1", "Account Executive"), smartrecruiters_job("sr2", "Engineer"),
                      smartrecruiters_job("sr3", "Account Executive", "Berlin, , Germany")]
@@ -643,7 +643,7 @@ class RipplingRunTest(RunFixture):
 
     def setUp(self):
         super().setUp()
-        (self.home / "boards.json").write_text(json.dumps({"companies": [
+        (self.home / "listed.json").write_text(json.dumps({"companies": [
             {"company": "Initrode", "board_url": f"{self.ats.url}{self.LIST}"}]}))
         self.ats.routes[f"{self.LIST}?page=0&pageSize=1000"] = (200, rippling_page([
             rippling_item("r1", "Account Executive", "London, United Kingdom"),
@@ -1120,7 +1120,7 @@ class BoardSourcesTest(RunFixture):
         self.seed_discovery(*slugs)
 
     def list_boards(self, *slugs):
-        (self.home / "boards.json").write_text(json.dumps({"companies": [
+        (self.home / "listed.json").write_text(json.dumps({"companies": [
             {"company": s.title(), "board_url": f"{self.ats.url}/posting-api/job-board/{s}"} for s in slugs]}))
 
     def requests_to(self, slug):
@@ -1144,6 +1144,14 @@ class BoardSourcesTest(RunFixture):
     def test_no_boards_is_a_usage_error(self):
         self.write_config(boards_file=False)
         self.assertEqual(self.run_cli()[0], 2)
+
+    def test_with_no_boards_file_configured_the_home_boards_json_is_read(self):
+        self.write_config(boards_file=False)
+        self.list_boards("acme")
+        (self.home / "listed.json").rename(self.home / "boards.json")  # where `jobscan boards add` writes
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        self.assertIn("## Acme — Enterprise Account Executive · London", Path(path).read_text())
 
     def test_board_moving_between_sources_is_read_once_and_never_redelivered(self):
         self.write_config(boards_file=False)

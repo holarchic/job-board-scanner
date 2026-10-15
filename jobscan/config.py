@@ -29,7 +29,7 @@ class ModelConfig:
 @dataclass(frozen=True)
 class Config:
     home: Path
-    boards_file: Path | None  # optional: boards read alongside the discovered ones
+    boards_file: Path | None  # boards read alongside the discovered ones: config's, else BOARDS_FILE if present
     model: ModelConfig
     api_key: str | None = field(repr=False)
 
@@ -66,6 +66,7 @@ class EmailConfig:
 
 
 KEY_FILE = "openrouter.key"
+BOARDS_FILE = "boards.json"  # read when config.toml names no boards file; where `boards add` writes then
 EMAIL_FILE = "email.toml"
 EMAIL_KEYS = frozenset({"to", "from", "host", "port", "password"})
 MAILBOX = re.compile(r'[^\s@,:;<>()\[\]\\"]+@[^\s@,:;<>()\[\]\\".]+(?:\.[^\s@,:;<>()\[\]\\".]+)+')
@@ -86,7 +87,8 @@ def load_config(home: Path, environ: Mapping[str, str] | None = None) -> Config:
     if not isinstance(model, dict):
         raise ConfigError(f"{path}: missing [model] table")
     boards_file = _string(data, "boards_file", path, required=False)
-    boards_file = None if boards_file is None else home / Path(boards_file).expanduser()
+    boards_file = home / Path(boards_file).expanduser() if boards_file is not None \
+        else home / BOARDS_FILE if (home / BOARDS_FILE).exists() else None
     model_config = ModelConfig(
         base_url=_string(model, "base_url", path).rstrip("/"),
         slug=_string(model, "slug", path),

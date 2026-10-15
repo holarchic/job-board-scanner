@@ -2,6 +2,7 @@
 `boards`, `preview`, and `init` and `email` by flags."""
 import contextlib
 import io
+import json
 import os
 import smtplib
 import tempfile
@@ -10,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from jobscan import cli, init, tag
-from jobscan.config import load_email, load_profile
+from jobscan.config import load_config, load_email, load_profile
 from tests.fakes import patch_smtp
 
 PROFILE = """titles = ["Account Executive"]
@@ -317,6 +318,74 @@ class EmailFlagsTest(CliHome):
         typed.assert_not_called()
         self.assertEqual(code, 2)
         self.assertIn("no terminal to ask in", err)
+
+
+GREENHOUSE = "https://job-boards.greenhouse.io/acme"
+ASHBY = "https://jobs.ashbyhq.com/beta/1a2b"
+
+
+class BoardsTest(CliHome):
+    def setUp(self):
+        super().setUp()
+        self.write_install()
+        self.file = self.home / "boards.json"
+
+    def test_added_boards_land_in_the_default_file_that_runs_read(self):
+        self.assertIsNone(load_config(self.home).boards_file)
+        code, out, err = self.cli("boards", "add", GREENHOUSE, ASHBY)
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("added greenhouse:acme", out)
+        self.assertEqual(json.loads(self.file.read_text()),
+                         {"companies": [{"board_url": GREENHOUSE}, {"board_url": ASHBY}]})
+        self.assertEqual(load_config(self.home).boards_file, self.file)
+        code, out, _ = self.cli("boards")
+        self.assertIn(f"(name looked up)  {GREENHOUSE}  [Greenhouse]", out)
+        self.assertIn("Boards file: " + str(self.file) + " (2 boards)", self.cli("check")[1])
+
+    def test_a_listed_board_is_skipped_and_a_company_kept(self):
+        self.cli("boards", "add", ASHBY, "--company", "Beta AI")
+        code, out, _ = self.cli("boards", "add", "https://jobs.ashbyhq.com/BETA", GREENHOUSE)
+        self.assertEqual(code, 0)
+        self.assertIn("already listed ashby:beta", out)
+        self.assertEqual(json.loads(self.file.read_text())["companies"],
+                         [{"company": "Beta AI", "board_url": ASHBY}, {"board_url": GREENHOUSE}])
+
+    def test_the_configured_file_keeps_what_else_it_holds(self):
+        other = self.home / "mine.json"
+        other.write_text(json.dumps({"note": "mine", "companies": [{"company": "X", "board_url": "https://x.example"}]}))
+        (self.home / "config.toml").write_text(f'boards_file = "mine.json"\n{init.CONFIG}')
+        self.assertEqual(self.cli("boards", "add", GREENHOUSE)[0], 0)
+        data = json.loads(other.read_text())
+        self.assertEqual(data["note"], "mine")
+        self.assertEqual(len(data["companies"]), 2)
+        self.assertFalse(self.file.exists())
+        self.assertIn("not recognised: a run skips it", self.cli("boards")[1])
+
+    def test_one_unknown_url_adds_nothing(self):
+        self.cli("boards", "add", ASHBY)
+        before = self.file.read_bytes()
+        code, out, err = self.cli("boards", "add", GREENHOUSE, "https://example.com/careers")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("https://example.com/careers: not a job board URL jobscan knows; nothing was added", err)
+        self.assertEqual(self.file.read_bytes(), before)
+
+    def test_a_broken_file_or_a_company_for_two_is_refused_untouched(self):
+        self.file.write_text("{")
+        code, _, err = self.cli("boards", "add", GREENHOUSE)
+        self.assertEqual(code, 2)
+        self.assertIn("not a readable boards file", err)
+        self.assertEqual(self.file.read_text(), "{")
+        self.file.unlink()
+        code, _, err = self.cli("boards", "add", GREENHOUSE, ASHBY, "--company", "Acme")
+        self.assertEqual(code, 2)
+        self.assertIn("--company names one board", err)
+        self.assertFalse(self.file.exists())
+        self.assertEqual([p.name for p in self.home.iterdir() if p.name.startswith(".boards-")], [])
+
+    def test_no_file_yet_says_where_add_writes(self):
+        code, out, _ = self.cli("boards")
+        self.assertEqual(code, 0)
+        self.assertIn(f"No boards file yet ({self.file})", out)
 
 
 if __name__ == "__main__":

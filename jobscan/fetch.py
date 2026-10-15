@@ -73,24 +73,36 @@ class CompanyFailure:
 def load_boards(path: Path) -> tuple[list[Board], int]:
     """Boards some adapter recognises, from a {"companies": [{"company", "board_url"}]} file, deduplicated by
     board id, plus the count of entries no adapter recognises."""
-    try:
-        entries = json.loads(path.read_text())["companies"]
-    except (OSError, ValueError, KeyError, TypeError, RecursionError) as e:
-        raise ConfigError(f"{path}: not a readable boards file ({type(e).__name__}: {e})") from None
-    if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
-        raise ConfigError(f"{path}: `companies` must be a list of objects")
     boards, skipped = {}, 0
-    for n, entry in enumerate(entries):
-        company, url = entry.get("company"), entry.get("board_url")
-        for text in (company, url):
-            if isinstance(text, str) and not _encodable(text):  # a lone surrogate can't be stored
-                raise ConfigError(f"{path}: entry {n} is not valid Unicode")
-        found = board_for(company if isinstance(company, str) else "", url if isinstance(url, str) else "")
+    for entry in read_boards_file(path)["companies"]:
+        found = entry_board(entry)
         if found is None:
             skipped += 1
             continue
         boards.setdefault(found.id, found)
     return list(boards.values()), skipped
+
+
+def read_boards_file(path: Path) -> dict:
+    """The boards file's object, its `companies` a list of objects whose text is storable."""
+    try:
+        data = json.loads(path.read_text())
+        entries = data["companies"]
+    except (OSError, ValueError, KeyError, TypeError, RecursionError) as e:
+        raise ConfigError(f"{path}: not a readable boards file ({type(e).__name__}: {e})") from None
+    if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
+        raise ConfigError(f"{path}: `companies` must be a list of objects")
+    for n, entry in enumerate(entries):
+        for text in (entry.get("company"), entry.get("board_url")):
+            if isinstance(text, str) and not _encodable(text):  # a lone surrogate can't be stored
+                raise ConfigError(f"{path}: entry {n} is not valid Unicode")
+    return data
+
+
+def entry_board(entry: dict) -> Board | None:
+    """The board a boards-file entry names, or None when no adapter knows its URL."""
+    company, url = entry.get("company"), entry.get("board_url")
+    return board_for(company if isinstance(company, str) else "", url if isinstance(url, str) else "")
 
 
 def board_for(company: str, url: str) -> Board | None:

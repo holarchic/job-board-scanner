@@ -1,6 +1,9 @@
 """Text for the read-only set-up commands (`tags`, `check`, `preview`, `boards`): typed values in, lines out. The
 commands' handlers in `cli` gather the values and print what these return."""
-from jobscan import tag
+from pathlib import Path
+
+from jobscan import fetch, tag
+from jobscan.boards import Added, Entry
 from jobscan.config import Config, EmailConfig, Profile
 
 VALIDATED = {"yes": "validated", "uk": "validated for the UK only", "no": "not validated"}
@@ -73,3 +76,21 @@ def install(config: Config, profile: Profile, email: EmailConfig | None, listed:
 
 def _items(values: tuple[str, ...]) -> str:
     return "; ".join(values) or "(none)"
+
+
+def board_list(file: Path, entries: list[Entry]) -> list[str]:
+    if not entries:
+        return [f"No boards file yet ({file}): runs read discovered boards only. `jobscan boards add URL` adds one."]
+    lines = [f"{file}: {len(entries)} entries"]
+    for e in entries:
+        ats = fetch.ADAPTERS[e.board.ats].DISPLAY_NAME if e.board else "not recognised: a run skips it"
+        lines.append(f"  {e.company or '(name looked up)'}  {e.url}  [{ats}]")
+    return lines
+
+
+def boards_added(file: Path, outcome: Added) -> list[str]:
+    lines = [f"added {b.ats}:{b.slug}" for b in outcome.added]
+    lines += [f"already listed {b.ats}:{b.slug}" for b in outcome.listed_already]
+    if outcome.added:
+        lines.append(f"Saved {file}; the next run reads {'it' if len(outcome.added) == 1 else 'them'}.")
+    return lines
