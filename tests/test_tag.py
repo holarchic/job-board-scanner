@@ -245,7 +245,7 @@ class TagPostingTest(unittest.TestCase):
 
     def test_dropped_connection_then_success_marks_billing_unknown(self):
         calls = iter(["drop", "ok"])
-        real_call = tag._call
+        real_call = tag.call
 
         def flaky(*args):
             if next(calls) == "drop":
@@ -253,7 +253,7 @@ class TagPostingTest(unittest.TestCase):
             return real_call(*args)
 
         self.server.routes["/chat/completions"] = (200, lambda payload: model_reply(json.loads(reply()), cost=0.002))
-        with mock.patch.object(tag, "_call", flaky):
+        with mock.patch.object(tag, "call", flaky):
             attempt = tag.tag_posting(POSTING, DEFS, self.model, None)
         self.assertIsInstance(attempt, tag.TagSuccess)
         self.assertEqual((attempt.usage.cost, attempt.usage.cost_reported), (0.002, False))

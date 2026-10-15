@@ -6,6 +6,7 @@ from jobscan import fetch, tag
 from jobscan.boards import Added, Entry
 from jobscan.config import Config, EmailConfig, Profile
 from jobscan.preview import Preview, Sample
+from jobscan.titles import Counted, Suggested
 
 VALIDATED = {"yes": "validated", "uk": "validated for the UK only", "no": "not validated"}
 WHERE = "<where you can work from>"  # stands in for `eligible_where` before there is a profile
@@ -111,3 +112,29 @@ def preview_lines(profile: Profile, p: Preview) -> list[str]:
 
 def _sample(s: Sample) -> str:
     return f"  {s.company} — {s.title} — {s.location or '(no location)'}"
+
+
+def titles_lines(profile_path: Path, suggested: Suggested, counted: Counted | None) -> list[str]:
+    """Each list by its effect, largest first; without counts (no run yet), as the model gave them."""
+    lines = []
+    for heading, names, effect, sign in [
+            ("Other titles your jobs are posted under", suggested.variants, counted and counted.adds, "+"),
+            ("Near-misses: titles your titles match that are other jobs", suggested.near_misses,
+             counted and counted.leaves_out, "-")]:
+        lines.append(f"{heading}:" if names else f"{heading}: none suggested")
+        ranked = sorted(names, key=lambda n: (-effect[n], n.casefold())) if effect is not None else names
+        width = max((len(n) for n in names), default=0)
+        lines += [f"  {n:<{width}}  {sign}{effect[n]}" if effect is not None else f"  {n}" for n in ranked]
+    if counted is None:
+        lines.append("No postings stored yet, so nothing to count: after `jobscan run`, ask again to see each one's "
+                     "effect.")
+    else:
+        lines.append("+N: stored postings in your places it would add as matches; -N: current matches it would "
+                     "leave out. Each counts alone; `jobscan preview` shows edits together.")
+    lines += [f"To use one, add it to titles or exclude_titles in {profile_path}, then `jobscan check` and "
+              "`jobscan preview`.", f"Model call: {cost(suggested.usage)}."]
+    return lines
+
+
+def cost(usage: tag.Usage) -> str:
+    return f"${usage.cost:.4f}" if usage.cost_reported else "cost not reported"

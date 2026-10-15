@@ -35,7 +35,7 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="jobscan", formatter_class=argparse.RawDescriptionHelpFormatter,
                                    description=DESCRIPTION, epilog=SET_UP)
     commands = root.add_subparsers(dest="command", required=True)
-    for add in (_init, _email, _boards, _check, _run, _preview, _schedule, _tags, _discover, _eval):
+    for add in (_init, _email, _boards, _check, _run, _preview, _schedule, _titles, _tags, _discover, _eval):
         add(commands)
     return root
 
@@ -171,6 +171,19 @@ def _schedule(commands) -> None:
     when = command.add_mutually_exclusive_group(required=True)
     when.add_argument("--at", type=clock, metavar="HH:MM", help="daily run time, 24-hour clock")
     when.add_argument("--off", action="store_true", help="remove the scheduled run")
+
+
+def _titles(commands) -> None:
+    _command(
+        commands, "titles", "the model suggests other titles for your jobs, and near-misses to leave out",
+        "Ask the model, once, for other titles employers post your jobs under (variants) and for titles your "
+        "titles match as words that are other jobs (near-misses). Each is counted against the postings the last "
+        "run stored in your places: how many a variant would add, how many of your current matches a near-miss "
+        "would leave out. Counts are each suggestion's own effect; `preview` after editing shows them together. "
+        "Before any run there is nothing to count, so only the suggestions show. Nothing is written: copy the ones "
+        "you keep into titles or exclude_titles in your profile, then `jobscan check` and `jobscan preview`. One "
+        "model call, under a cent; exit 1 if it fails or a run holds the database.",
+        ["jobscan titles", "jobscan titles && $EDITOR ~/.jobscan/profiles/*.toml && jobscan preview"])
 
 
 def _tags(commands) -> None:

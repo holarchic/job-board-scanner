@@ -36,7 +36,7 @@ class Preview:
 def preview(conn: sqlite3.Connection, profile: Profile, listed: dict[str, Board], examples: int = 10) -> Preview:
     """`listed`: the boards file's boards by id, whose names the samples show, as the run does. Only the boards the
     next run reads count: the listed ones and the live discovered ones."""
-    reads = set(listed) | {b.id for b in store.live_discovered(conn)}
+    reads = store.next_run_boards(conn, set(listed))
     opened, matched, excluded = 0, [], []
     for brief in store.open_brief(conn):
         if brief.board not in reads:

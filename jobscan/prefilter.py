@@ -28,6 +28,11 @@ def in_places(profile: Profile, text: str) -> bool:
     return _any_term(profile.locations, text)
 
 
+def term_matches(term: str, text: str) -> bool:
+    """One title or location term against text, by the filter's own rule."""
+    return _any_term((term,), text)
+
+
 def _any_term(terms: tuple[str, ...], text: str) -> bool:
     folded = text.casefold()
     return any(_term_pattern(term).search(folded) for term in terms)

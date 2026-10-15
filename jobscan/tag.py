@@ -86,7 +86,7 @@ TagAttempt = TagSuccess | TagFailure
 
 
 @dataclass(frozen=True)
-class _Reply:
+class Reply:
     content: str | None  # None when the response envelope carries no message text
     usage: Usage
 
@@ -242,7 +242,7 @@ def tag_posting(posting: Posting, defs: list[TagDef], model: ModelConfig, api_ke
 def _try_once(posting: Posting, defs: list[TagDef], model: ModelConfig, api_key: str | None) -> TagAttempt:
     """One request; the outcome's usage covers this try only."""
     try:
-        reply = _call(model, api_key, prompt(posting, defs), schema(defs))
+        reply = call(model, api_key, prompt(posting, defs), schema(defs), "tags")
     except urllib.error.HTTPError as e:
         e.close()
         return TagFailure(error=f"HTTP {e.code}", http_status=e.code, usage=Usage())
@@ -270,12 +270,14 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
-def _call(model: ModelConfig, api_key: str | None, text: str, response_schema: dict) -> _Reply:
-    """One chat-completions request. Usage is read before anything is validated, so a rejected reply still counts."""
+def call(model: ModelConfig, api_key: str | None, text: str, response_schema: dict, name: str) -> Reply:
+    """One chat-completions request answering with JSON in `response_schema` (strict, called `name`): every model
+    call goes through here, so each refuses redirects and pins the provider. Usage is read before anything is
+    validated, so a rejected reply still counts."""
     body = {"model": model.slug, "temperature": 0, "usage": {"include": True},
             "messages": [{"role": "user", "content": text}],
             "response_format": {"type": "json_schema",
-                                "json_schema": {"name": "tags", "strict": True, "schema": response_schema}}}
+                                "json_schema": {"name": name, "strict": True, "schema": response_schema}}}
     if model.provider:
         body["provider"] = {"only": [model.provider], "allow_fallbacks": False, "require_parameters": True,
                             **({"quantizations": [model.quantization]} if model.quantization else {})}
@@ -290,7 +292,7 @@ def _call(model: ModelConfig, api_key: str | None, text: str, response_schema: d
         except (OSError, http.client.HTTPException, ValueError, RecursionError):
             reply = None
     if not isinstance(reply, dict):  # answered, possibly billed, but nothing readable: billing unknown
-        return _Reply(content=None, usage=Usage(cost_reported=False))
+        return Reply(content=None, usage=Usage(cost_reported=False))
     usage = reply.get("usage") if isinstance(reply.get("usage"), dict) else {}
     details = usage.get("completion_tokens_details") if isinstance(usage.get("completion_tokens_details"), dict) else {}
     cost, reasoning = usage.get("cost"), details.get("reasoning_tokens")
@@ -300,7 +302,7 @@ def _call(model: ModelConfig, api_key: str | None, text: str, response_schema: d
     message = choices[0].get("message") if isinstance(choices, list) and choices and isinstance(choices[0], dict) \
         else None
     content = message.get("content") if isinstance(message, dict) else None
-    return _Reply(content=content if isinstance(content, str) else None,
+    return Reply(content=content if isinstance(content, str) else None,
                   usage=Usage(cost=float(cost) if cost_ok else 0.0, cost_reported=cost_ok,
                               reasoning_tokens=reasoning if reasoning_ok else 0))
 

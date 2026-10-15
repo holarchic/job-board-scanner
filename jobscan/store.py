@@ -227,6 +227,11 @@ def live_discovered(conn: sqlite3.Connection) -> list[Board]:
     return [Board(ats=r["ats"], slug=r["slug"], company=r["slug"], api_url=r["api_url"]) for r in rows]
 
 
+def next_run_boards(conn: sqlite3.Connection, listed: set[str]) -> set[str]:
+    """The boards the next run reads: the boards file's (`listed`, by id) and the live discovered ones."""
+    return listed | {b.id for b in live_discovered(conn)}
+
+
 def companies(conn: sqlite3.Connection, boards: set[str]) -> dict[str, Company]:
     """The companies looked up for these boards, by board id."""
     rows = conn.execute("SELECT board, name, website FROM companies")

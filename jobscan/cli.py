@@ -23,6 +23,7 @@ from jobscan import (
     schedule,
     store,
     tag,
+    titles,
 )
 from jobscan.config import (
     EMAIL_FILE,
@@ -72,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
         return _boards(home, args)
     if args.command == "preview":
         return _preview(home)
+    if args.command == "titles":
+        return _titles(home)
     return _run(home, args.notify)
 
 
@@ -323,6 +326,37 @@ def _preview(home: Path) -> int:
         print("jobscan: a run is using the database; preview once it has finished", file=sys.stderr)
         return EXIT_INCOMPLETE
     print("\n".join(report.preview_lines(profile, result)))
+    return EXIT_OK
+
+
+def _titles(home: Path) -> int:
+    """With a database, the lock is taken and the database opened before the model call: a run holding it, or a
+    database that won't open, costs no call."""
+    try:
+        config = load_config(home)
+        profile = load_profile(home)
+        listed = {b.id for b in fetch.load_boards(config.boards_file)[0]} if config.boards_file else set()
+        if store.exists(home):
+            with _run_lock(home):
+                conn = store.open_db(home)
+                try:
+                    suggested = titles.suggest(profile, config.model, config.api_key)
+                    counted = titles.count(conn, profile, store.next_run_boards(conn, listed), suggested)
+                finally:
+                    conn.close()
+        else:
+            suggested, counted = titles.suggest(profile, config.model, config.api_key), None
+    except ConfigError as e:
+        print(f"jobscan: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    except RunLocked:
+        print("jobscan: a run is using the database; ask for titles once it has finished", file=sys.stderr)
+        return EXIT_INCOMPLETE
+    except titles.TitlesError as e:
+        spent = f"; {report.cost(e.usage)}" if e.usage else ""
+        print(f"jobscan: no title suggestions: {e}{spent}", file=sys.stderr)
+        return EXIT_INCOMPLETE
+    print("\n".join(report.titles_lines(home / "profiles" / f"{profile.name}.toml", suggested, counted)))
     return EXIT_OK
 
 
