@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from jobscan.config import ConfigError
-from jobscan.records import Board, Posting
+from jobscan.records import Board, Company, Posting
 from jobscan.tag import TagDef, TagResult
 
 SCHEMA = """
@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS boards (
     id TEXT PRIMARY KEY, ats TEXT NOT NULL, slug TEXT NOT NULL, api_url TEXT NOT NULL,
     not_found INTEGER NOT NULL DEFAULT 0,  -- consecutive HTTP 404s; at DEAD_AFTER, run skips the board
     discovered TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS companies (  -- by board id, apart from `boards`, so a lookup survives rediscovery
+    board TEXT PRIMARY KEY, name TEXT NOT NULL, website TEXT, found TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS runs (
     started TEXT NOT NULL, finished TEXT NOT NULL, boards_read INTEGER NOT NULL, boards_failed INTEGER NOT NULL,
@@ -194,6 +197,18 @@ def live_discovered(conn: sqlite3.Connection) -> list[Board]:
     """Discovered boards short of DEAD_AFTER consecutive 404s. A discovered board's company name is its slug."""
     rows = conn.execute("SELECT ats, slug, api_url FROM boards WHERE not_found < ? ORDER BY id", (DEAD_AFTER,))
     return [Board(ats=r["ats"], slug=r["slug"], company=r["slug"], api_url=r["api_url"]) for r in rows]
+
+
+def companies(conn: sqlite3.Connection, boards: set[str]) -> dict[str, Company]:
+    """The companies looked up for these boards, by board id."""
+    rows = conn.execute("SELECT board, name, website FROM companies")
+    return {r["board"]: Company(name=r["name"], website=r["website"]) for r in rows if r["board"] in boards}
+
+
+def save_companies(conn: sqlite3.Connection, found: dict[str, Company], now: str) -> None:
+    with conn:
+        conn.executemany("INSERT OR REPLACE INTO companies (board, name, website, found) VALUES (?, ?, ?, ?)",
+                         [(board, c.name, c.website, now) for board, c in found.items()])
 
 
 def record_board_outcomes(conn: sqlite3.Connection, read: list[str], not_found: list[str]) -> None:

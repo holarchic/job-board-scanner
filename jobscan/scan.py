@@ -1,14 +1,14 @@
-"""One scan for the install's profile: fetch → store → prefilter → describe → tag → digest."""
+"""One scan for the install's profile: fetch → store → prefilter → describe → name → tag → digest."""
 import logging
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 from jobscan import digest, discover, fetch, prefilter, store, tag
 from jobscan.config import Config, ConfigError, Profile
-from jobscan.records import Board
+from jobscan.records import Board, Company
 
 log = logging.getLogger("jobscan")
 
@@ -39,7 +39,11 @@ def scan(config: Config, profile: Profile, defs: list[tag.TagDef]) -> ScanOutcom
         fetched = _fetch(conn, config, started)
         matched = _describe([p for p in store.pending(conn, profile.name, set(fetched.eligible))
                              if prefilter.matches(p.posting, profile)], fetched.eligible)
+        companies = _companies(conn, {s.posting.board for s in matched}, fetched.eligible, started)
+        matched = [_named(s, fetched.eligible[s.posting.board], companies.get(s.posting.board)) for s in matched]
         entries, tagged, usage = _tag(conn, matched, defs, config)
+        entries = [replace(e, website=companies[e.posting.posting.board].website)
+                   if e.posting.posting.board in companies else e for e in entries]
         outcome = _digest(conn, config, profile, entries, carried_over=len(matched) - len(entries),
                           unvalidated=frozenset(d.name for d in defs if not d.validated))
         store.record_run(conn, store.RunRecord(
@@ -118,6 +122,34 @@ def _describe(matched: list[store.StoredPosting], boards: dict[str, Board]) -> l
         elif (posting := described.get(s.posting.key)) is not None:
             kept.append(store.StoredPosting(posting, store.input_hash(posting), s.first_seen))
     return kept
+
+
+def _companies(conn: sqlite3.Connection, wanted: set[str], boards: dict[str, Board], now: str) -> dict[str, Company]:
+    """The company of each wanted board, as stored or looked up now for boards never looked up; a board whose lookup
+    fails is left out, and looked up again the next run it has a matched posting."""
+    known = store.companies(conn, wanted)
+    missing = [boards[b] for b in sorted(wanted - known.keys())]
+    if not missing:
+        return known
+    found = {}
+    for outcome in fetch.company_all(missing):
+        if isinstance(outcome, fetch.CompanyFound):
+            found[outcome.board.id] = outcome.company
+        elif outcome.http_status == 404:
+            log.info("company_not_found board=%s", outcome.board.id)
+        else:
+            log.warning("company_failed board=%s reason=%r", outcome.board.id, outcome.reason)
+    store.save_companies(conn, found, now)
+    log.info("company_done found=%d failed=%d", len(found), len(missing) - len(found))
+    return known | found
+
+
+def _named(stored: store.StoredPosting, board: Board, company: Company | None) -> store.StoredPosting:
+    """The posting under the name it shows: its board's from this run (a boards-file name), else the looked-up one,
+    else the slug. Never the stored row's, which is stale when the board failed this run. Neither the tags nor their
+    cache read the company."""
+    name = board.company if board.company != board.slug or company is None else company.name
+    return replace(stored, posting=replace(stored.posting, company=name))
 
 
 def _tag(conn: sqlite3.Connection, matched: list[store.StoredPosting], defs: list[tag.TagDef], config: Config,

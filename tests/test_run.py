@@ -90,8 +90,11 @@ class RunFixture(unittest.TestCase):
                      ashby_job("3", "Account Executive", location="Berlin"), ashby_job("4", "Engineer")]
         self.ats.routes["/posting-api/job-board/acme"] = (200, lambda _: (200, {"jobs": self.jobs}))
         self.model_ok()
+        # Board pages answer company lookups; the fake answers 404 until a test routes one.
+        pages = [(adapter, "BOARD_PAGE", f"{self.ats.url}/page/{adapter.ATS}/{{slug}}")
+                 for adapter in (ashby, gem, personio, rippling)]
         for target, name, value in [(fetch, "RETRY_PAUSES", (0, 0)), (tag, "PAUSE", 0),
-                                    (tag, "RATE_LIMIT_PAUSES", (0, 0, 0, 0))]:
+                                    (tag, "RATE_LIMIT_PAUSES", (0, 0, 0, 0)), *pages]:
             patcher = mock.patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -221,6 +224,81 @@ class RunTest(RunFixture):
             code, _ = self.run_cli()
         self.assertEqual(code, 2)
         self.assertEqual(self.ats.requests, [])
+
+
+class CompanyRunTest(RunFixture):
+    """Company names and websites in the digest: looked up once per board, kept, and a boards-file name wins."""
+
+    PAGE = "/page/ashby/initech"
+
+    def setUp(self):
+        super().setUp()
+        self.seed_discovery("initech")
+        self.initech = [ashby_job("i1", "Account Executive")]
+        self.ats.routes["/posting-api/job-board/initech"] = (200, lambda _: (200, {"jobs": self.initech}))
+        self.page_answers(200, "Initech Ltd", "https://initech.example/")
+
+    def page_answers(self, status, name="", website=None):
+        app = {"organization": {"name": name, "publicWebsite": website}}
+        self.ats.routes[self.PAGE] = (status, f"<script>window.__appData = {json.dumps(app)};</script>")
+
+    def page_requests(self):
+        return sum(1 for _, path, _ in self.ats.requests if path == self.PAGE)
+
+    def test_a_discovered_board_shows_its_company_and_website(self):
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "3"))
+        text = Path(path).read_text()
+        self.assertIn("## Initech Ltd — Account Executive · London\nhttps://jobs.ashbyhq.com/acme/i1 · Ashby · first "
+                      "seen", text)
+        self.assertIn("· 1 open role\nCompany: Initech Ltd · https://initech.example/\n- founding", text)
+        self.assertNotIn("## initech", text)
+
+    def test_a_board_is_looked_up_once_and_its_company_kept_across_rediscovery(self):
+        self.run_cli()
+        self.page_answers(500)
+        self.seed_discovery("initech")
+        self.initech.append(ashby_job("i2", "Enterprise Account Executive"))
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new, self.page_requests()), (0, "1", 1))
+        self.assertIn("## Initech Ltd — Enterprise Account Executive · London", Path(path).read_text())
+        self.assertIn("Company: Initech Ltd · https://initech.example/", Path(path).read_text())
+
+    def test_a_failed_lookup_shows_the_slug_and_is_tried_again_with_the_next_match(self):
+        self.page_answers(500)
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "3"))
+        text = Path(path).read_text()
+        self.assertIn("## initech — Account Executive", text)
+        self.assertNotIn("Company: initech", text)
+        self.assertIn("company_failed board=ashby:initech reason='HTTP 500'", (self.home / "runs.log").read_text())
+        self.page_answers(200, "Initech Ltd")
+        self.initech.append(ashby_job("i2", "Enterprise Account Executive"))
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "1"))
+        self.assertIn("## Initech Ltd — Enterprise Account Executive", Path(path).read_text())
+        self.assertNotIn("Company:", Path(path).read_text())  # no website given
+
+    def test_a_boards_file_name_wins_even_for_a_posting_kept_from_an_earlier_read(self):
+        self.ats.routes["/page/ashby/acme"] = (200, '<script>window.__appData = {"organization": '
+                                                    '{"name": "Acme Corporation", "publicWebsite": "https://acme.example/"}};'
+                                                    "</script>")
+        stale = Posting(key="ashby:acme:9", ats="ashby", board="ashby:acme", company="Old Acme",
+                        title="Account Executive", location="London", url="https://jobs.ashbyhq.com/acme/9",
+                        description="Account Executive role. We sell software.")
+        conn = store.open_db(self.home)
+        try:
+            store.apply_fetch(conn, "ashby:acme", (stale,), datetime.now(UTC).isoformat(timespec="microseconds"))
+        finally:
+            conn.close()
+        self.ats.routes["/posting-api/job-board/acme"] = (500, {"error": "boom"})
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        text = Path(path).read_text()
+        self.assertIn("## Acme — Account Executive · London\nhttps://jobs.ashbyhq.com/acme/9", text)
+        self.assertIn("Company: Acme · https://acme.example/", text)
+        self.assertNotIn("Old Acme", text)
+        self.assertNotIn("Acme Corporation", text)
 
 
 class GreenhouseRunTest(RunFixture):

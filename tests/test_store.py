@@ -5,7 +5,7 @@ from pathlib import Path
 
 from jobscan import store
 from jobscan.config import ConfigError
-from jobscan.records import Board, Posting
+from jobscan.records import Board, Company, Posting
 
 
 def posting(job_id, board="acme", title="Account Executive"):
@@ -41,6 +41,17 @@ class ApplyFetchTest(unittest.TestCase):
         store.apply_fetch(self.conn, "ashby:acme", (posting("1"), posting("2")), "2026-10-11T12:00:00.000000+00:00")
         store.apply_fetch(self.conn, "ashby:acme", (posting("1"),), "2026-10-11T09:00:00.000000+00:00")
         self.assertEqual(self.closed(), {"ashby:acme:1": 0, "ashby:acme:2": 1})
+
+    def test_companies_are_kept_by_board_and_survive_rediscovery(self):
+        store.save_companies(self.conn, {"ashby:acme": Company("Acme", "https://acme.example/"),
+                                         "gem:beta": Company("Beta", None)}, "2026-10-15T10:00:00.000000+00:00")
+        store.replace_discovered(self.conn, [Board("ashby", "gamma", "gamma", "https://x/gamma")],
+                                 "2026-10-15T11:00:00.000000+00:00")
+        self.assertEqual(store.companies(self.conn, {"ashby:acme", "gem:beta", "ashby:gamma"}),
+                         {"ashby:acme": Company("Acme", "https://acme.example/"), "gem:beta": Company("Beta", None)})
+        self.assertEqual(store.companies(self.conn, {"gem:beta"}), {"gem:beta": Company("Beta", None)})
+        store.save_companies(self.conn, {"gem:beta": Company("Beta Ltd", None)}, "2026-10-15T12:00:00.000000+00:00")
+        self.assertEqual(store.companies(self.conn, {"gem:beta"}), {"gem:beta": Company("Beta Ltd", None)})
 
     def test_open_counts_every_open_role_per_board(self):
         store.apply_fetch(self.conn, "ashby:acme", (posting("1"), posting("2", title="Engineer"), posting("3")),

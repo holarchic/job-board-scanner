@@ -15,7 +15,7 @@ from pathlib import Path
 
 from jobscan import ashby, gem, greenhouse, personio, rippling, smartrecruiters, teamtailor, workable
 from jobscan.config import ConfigError
-from jobscan.records import Board, BoardError, Posting
+from jobscan.records import Board, BoardError, Company, Posting
 
 ADAPTERS = {ashby.ATS: ashby, greenhouse.ATS: greenhouse, workable.ATS: workable, gem.ATS: gem,
             teamtailor.ATS: teamtailor, personio.ATS: personio, smartrecruiters.ATS: smartrecruiters,
@@ -55,6 +55,19 @@ class DescribeFailure:
     posting: Posting
     reason: str
     http_status: int | None = None  # 404: the posting is gone from its board
+
+
+@dataclass(frozen=True)
+class CompanyFound:
+    board: Board
+    company: Company
+
+
+@dataclass(frozen=True)
+class CompanyFailure:
+    board: Board
+    reason: str
+    http_status: int | None = None
 
 
 def load_boards(path: Path) -> tuple[list[Board], int]:
@@ -137,6 +150,20 @@ def _describe_isolated(pair: tuple[Board, Posting]) -> Described | DescribeFailu
         return Described(replace(posting, description=description))
     except FAILURES as e:
         return DescribeFailure(posting, _reason(e), _status(e))
+
+
+def company_all(boards: list[Board]) -> list[CompanyFound | CompanyFailure]:
+    """Each board's company as its adapter looks it up, in order, WORKERS at a time; one board's failure never stops
+    the rest."""
+    with ThreadPoolExecutor(WORKERS) as pool:
+        return list(pool.map(_company_isolated, boards))
+
+
+def _company_isolated(board: Board) -> CompanyFound | CompanyFailure:
+    try:
+        return CompanyFound(board, ADAPTERS[board.ats].company(board, partial(_get, board)))
+    except FAILURES as e:
+        return CompanyFailure(board, _reason(e), _status(e))
 
 
 def _get(board: Board, url: str) -> bytes:
