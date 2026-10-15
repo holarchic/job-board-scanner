@@ -8,7 +8,7 @@ import json
 from urllib.parse import quote
 
 from jobscan.payload import board_slug, detail_text, html_to_text, http_url, named_company, text_field, with_remote
-from jobscan.records import Board, BoardError, Company, Get, Posting
+from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "smartrecruiters"
 DISPLAY_NAME = "SmartRecruiters"
@@ -61,7 +61,7 @@ def company(board: Board, get: Get) -> Company:
     return named_company(owner.get("name") if isinstance(owner, dict) else None)
 
 
-def read(board: Board, get: Get) -> tuple[Posting, ...]:
+def read(board: Board, get: Get, places: Places) -> tuple[Posting, ...]:
     """Every page, each asked for at the count read so far. Drift checks, best effort: each page answers the offset
     asked for, the total holds across pages, the postings read match it and no id repeats. A change that keeps the
     count and moves no id across a page boundary passes; the next run reads it right."""

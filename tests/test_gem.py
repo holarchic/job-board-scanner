@@ -4,7 +4,7 @@ import unittest
 from jobscan import gem, prefilter, tag
 from jobscan.config import Profile
 from jobscan.records import Board, BoardError
-from tests.fakes import gem_job
+from tests.fakes import anywhere, gem_job
 
 API = "https://api.gem.com/job_board/v0/"
 
@@ -43,7 +43,7 @@ class BoardTest(unittest.TestCase):
 
     def test_a_sandbox_board_already_listed_reads_as_empty_without_a_request(self):
         board = Board("gem", "acme-sandbox", "acme-sandbox", API + "acme-sandbox/job_posts/")
-        self.assertEqual(gem.read(board, lambda url: self.fail(f"asked {url}")), ())
+        self.assertEqual(gem.read(board, lambda url: self.fail(f"asked {url}"), anywhere), ())
 
 
 class ParseTest(unittest.TestCase):

@@ -6,7 +6,7 @@ from unittest import mock
 
 from jobscan import fetch, smartrecruiters, tag
 from jobscan.records import BoardError
-from tests.fakes import smartrecruiters_detail, smartrecruiters_job, smartrecruiters_page
+from tests.fakes import anywhere, smartrecruiters_detail, smartrecruiters_job, smartrecruiters_page
 
 API = "https://api.smartrecruiters.com/v1/companies/acme/postings"
 BOARD = smartrecruiters.page_board("Acme", "https://jobs.smartrecruiters.com/Acme/1-account-executive")
@@ -33,7 +33,7 @@ def read(*pages):
         offsets.append(offsets[-1] + len(page["content"]))
     get, _ = getter({f"{API}?limit=2&offset={o}": page for o, page in zip(offsets, pages, strict=True)})
     with mock.patch.object(smartrecruiters, "PAGE", 2):
-        return smartrecruiters.read(BOARD, get)
+        return smartrecruiters.read(BOARD, get, anywhere)
 
 
 class BoardTest(unittest.TestCase):

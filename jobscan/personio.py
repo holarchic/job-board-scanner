@@ -10,7 +10,7 @@ from urllib.parse import quote
 from xml.etree.ElementTree import Element
 
 from jobscan.payload import board_slug, html_title, html_to_text, http_url, named_company, xml_root, xml_text
-from jobscan.records import Board, BoardError, Company, Get, Posting
+from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "personio"
 DISPLAY_NAME = "Personio"
@@ -52,7 +52,7 @@ def company(board: Board, get: Get) -> Company:
     return named_company(title.removeprefix(JOBS_AT))
 
 
-def read(board: Board, get: Get) -> tuple[Posting, ...]:
+def read(board: Board, get: Get, places: Places) -> tuple[Posting, ...]:
     """The English feed, validated before deciding on a second request; then, if some named job has no English
     text, the default-language feed, whose job of the same id lends its sections when it has text. The two feeds
     must list the same jobs, named or not, or they are two different snapshots of the board: it fails this run."""

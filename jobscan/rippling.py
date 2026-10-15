@@ -18,7 +18,7 @@ from jobscan.payload import (
     text_field,
     with_remote,
 )
-from jobscan.records import Board, BoardError, Company, Get, Posting
+from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "rippling"
 DISPLAY_NAME = "Rippling"
@@ -89,7 +89,7 @@ def company(board: Board, get: Get) -> Company:
     return named_company(data.get("companyName") if isinstance(data, dict) else None)
 
 
-def read(board: Board, get: Get) -> tuple[Posting, ...]:
+def read(board: Board, get: Get, places: Places) -> tuple[Posting, ...]:
     """Every page, then rows merged by job id. Drift checks, best effort: each page is the one asked for, no page
     before the last comes back empty, the totals hold across pages and the rows read match them. Rows can't be
     checked for overlap: lists repeat identical rows within one page (6 of 60 boards sampled on 14 Oct). Only a

@@ -8,7 +8,13 @@ from jobscan.records import Posting
 def matches(posting: Posting, profile: Profile) -> bool:
     return (_any_term(profile.titles, posting.title)
             and not _any_term(profile.exclude_titles, posting.title)
-            and _any_term(profile.locations, posting.location))
+            and in_places(profile, posting.location))
+
+
+def in_places(profile: Profile, text: str) -> bool:
+    """Does this place text name one of the profile's locations? The location half of `matches`, also what an adapter
+    reading only the profile's places tests a place by (`records.Places`)."""
+    return _any_term(profile.locations, text)
 
 
 def _any_term(terms: tuple[str, ...], text: str) -> bool:

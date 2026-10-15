@@ -5,7 +5,7 @@ from unittest import mock
 from jobscan import fetch, payload, prefilter, tag, teamtailor
 from jobscan.config import Profile
 from jobscan.records import Board, BoardError
-from tests.fakes import FakeServer, teamtailor_feed, teamtailor_item
+from tests.fakes import FakeServer, anywhere, teamtailor_feed, teamtailor_item
 
 FEED = "https://acme.teamtailor.com/jobs.rss?per_page=1000"
 
@@ -96,7 +96,7 @@ class FetchTest(unittest.TestCase):
         server.routes["/multibyte"] = (200, '<?xml version="1.0" encoding="shift_jis"?><rss/>')
         boards = [Board(ats="teamtailor", slug=s, company=s, api_url=f"{server.url}/{s}")
                   for s in ("good", "unknown", "multibyte")]
-        outcomes = {o.board.slug: o for o in fetch.fetch_each(boards)}
+        outcomes = {o.board.slug: o for o in fetch.fetch_each(boards, anywhere)}
         self.assertEqual(len(outcomes["good"].postings), 1)
         self.assertEqual({outcomes[s].reason for s in ("unknown", "multibyte")}, {"malformed XML"})
 

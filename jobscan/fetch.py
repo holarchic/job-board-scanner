@@ -15,7 +15,7 @@ from pathlib import Path
 
 from jobscan import ashby, gem, greenhouse, personio, rippling, smartrecruiters, teamtailor, workable
 from jobscan.config import ConfigError
-from jobscan.records import Board, BoardError, Company, Posting
+from jobscan.records import Board, BoardError, Company, Places, Posting
 
 ADAPTERS = {ashby.ATS: ashby, greenhouse.ATS: greenhouse, workable.ATS: workable, gem.ATS: gem,
             teamtailor.ATS: teamtailor, personio.ATS: personio, smartrecruiters.ATS: smartrecruiters,
@@ -113,25 +113,26 @@ def _encodable(text: str) -> bool:
     return True
 
 
-def fetch_each(boards: list[Board]) -> Iterator[BoardFetch | BoardFailure]:
-    """Every board's outcome as it completes. A board is submitted only as an earlier outcome is handed over, so
+def fetch_each(boards: list[Board], places: Places) -> Iterator[BoardFetch | BoardFailure]:
+    """Every board's outcome as it completes; `places` is the profile's location test, which an adapter may read only
+    the matching postings by (Workday does). A board is submitted only as an earlier outcome is handed over, so
     at most IN_FLIGHT boards' postings are held here (plus whatever the caller keeps), however many boards there are."""
     queue = iter(boards)
     with ThreadPoolExecutor(WORKERS) as pool:
-        running = {pool.submit(_fetch_isolated, b) for b in itertools.islice(queue, IN_FLIGHT)}
+        running = {pool.submit(_fetch_isolated, b, places) for b in itertools.islice(queue, IN_FLIGHT)}
         while running:
             done, running = wait(running, return_when=FIRST_COMPLETED)
             while done:
                 outcome = done.pop().result()  # popped, so the finished future and its postings aren't kept
-                running |= {pool.submit(_fetch_isolated, b) for b in itertools.islice(queue, 1)}
+                running |= {pool.submit(_fetch_isolated, b, places) for b in itertools.islice(queue, 1)}
                 yield outcome
                 del outcome
 
 
-def _fetch_isolated(board: Board) -> BoardFetch | BoardFailure:
+def _fetch_isolated(board: Board, places: Places) -> BoardFetch | BoardFailure:
     adapter = ADAPTERS[board.ats]
     try:
-        return BoardFetch(board, adapter.read(board, partial(_get, board)))
+        return BoardFetch(board, adapter.read(board, partial(_get, board), places))
     except FAILURES as e:
         return BoardFailure(board, _reason(e), _status(e))
 
@@ -166,9 +167,10 @@ def _company_isolated(board: Board) -> CompanyFound | CompanyFailure:
         return CompanyFailure(board, _reason(e), _status(e))
 
 
-def _get(board: Board, url: str) -> bytes:
-    """One request on the board's behalf: its 429s are logged under its id."""
-    request = urllib.request.Request(url, headers=HEADERS)
+def _get(board: Board, url: str, body: bytes | None = None) -> bytes:
+    """One request on the board's behalf, a GET, or a POST of `body` as JSON: its 429s are logged under its id."""
+    headers = HEADERS if body is None else HEADERS | {"Content-Type": "application/json"}
+    request = urllib.request.Request(url, data=body, headers=headers)
     for attempt, pause in enumerate((*RETRY_PAUSES, None), start=1):
         try:
             with urllib.request.urlopen(request, timeout=TIMEOUT) as response:

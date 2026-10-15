@@ -6,14 +6,25 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from jobscan import fetch, payload
+from jobscan import ashby, fetch, payload
 from jobscan.config import ConfigError
 from jobscan.records import Board, BoardError
-from tests.fakes import FakeServer, ashby_job, smartrecruiters_detail, smartrecruiters_job, smartrecruiters_page
+from tests.fakes import (
+    FakeServer,
+    anywhere,
+    ashby_job,
+    smartrecruiters_detail,
+    smartrecruiters_job,
+    smartrecruiters_page,
+)
 
 
 def split(boards):
-    outcomes = list(fetch.fetch_each(boards))
+    return split_places(boards, anywhere)
+
+
+def split_places(boards, places):
+    outcomes = list(fetch.fetch_each(boards, places))
     return ([o for o in outcomes if isinstance(o, fetch.BoardFetch)],
             [o for o in outcomes if isinstance(o, fetch.BoardFailure)])
 
@@ -217,16 +228,40 @@ class FetchBoardTest(unittest.TestCase):
     def test_slow_consumer_bounds_boards_in_flight(self):
         started = []
 
-        def fake_fetch(board):
+        def fake_fetch(board, places):
             started.append(board.id)
             return fetch.BoardFetch(board, ())
 
         boards = [self.board(f"b{i}") for i in range(5 * fetch.IN_FLIGHT)]
         with mock.patch.object(fetch, "_fetch_isolated", fake_fetch):
-            for consumed, _ in enumerate(fetch.fetch_each(boards), start=1):
+            for consumed, _ in enumerate(fetch.fetch_each(boards, anywhere), start=1):
                 time.sleep(0.001)
                 self.assertLessEqual(len(started) - consumed, fetch.IN_FLIGHT)  # started, not yet handed over
         self.assertEqual(len(started), len(boards))
+
+    def test_a_body_is_posted_as_json_and_a_bare_url_is_a_get(self):
+        self.server.routes["/wday/cxs/acme/ext/jobs"] = (200, lambda payload: (200, {"echo": payload}))
+        board = self.board()
+        posted = fetch._get(board, f"{self.server.url}/wday/cxs/acme/ext/jobs", b'{"limit": 20}')
+        fetched = fetch._get(board, f"{self.server.url}/wday/cxs/acme/ext/jobs")
+        self.assertEqual((json.loads(posted), json.loads(fetched)), ({"echo": {"limit": 20}}, {"echo": None}))
+        self.assertEqual([(method, payload) for method, _, payload in self.server.requests],
+                         [("POST", {"limit": 20}), ("GET", None)])
+        self.assertEqual(self.server.content_types, ["application/json", None])
+
+    def test_places_reach_each_read(self):
+        seen = []
+
+        def read(board, get, places):
+            seen.append(places)
+            return ()
+
+        def places(text):
+            return text == "London"
+
+        with mock.patch.object(ashby, "read", read):
+            split_places([self.board("a"), self.board("b")], places)
+        self.assertEqual(seen, [places, places])
 
     def test_unreachable_board_is_a_failure(self):
         board = Board(ats="ashby", slug="gone", company="Gone", api_url="http://127.0.0.1:9/posting-api/job-board/gone")

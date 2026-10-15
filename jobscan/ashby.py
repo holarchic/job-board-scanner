@@ -6,7 +6,7 @@ import json
 import re
 
 from jobscan.payload import html_to_text, http_url, named_company, text_field
-from jobscan.records import Board, BoardError, Company, Get, Posting
+from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "ashby"
 DISPLAY_NAME = "Ashby"
@@ -54,7 +54,7 @@ def company(board: Board, get: Get) -> Company:
     return named_company(organisation.get("name"), organisation.get("publicWebsite"))
 
 
-def read(board: Board, get: Get) -> tuple[Posting, ...]:
+def read(board: Board, get: Get, places: Places) -> tuple[Posting, ...]:
     return parse(board, json.loads(get(board.api_url)))
 
 

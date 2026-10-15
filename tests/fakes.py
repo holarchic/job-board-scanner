@@ -9,14 +9,20 @@ from unittest import mock
 from xml.sax.saxutils import escape
 
 
+def anywhere(text):
+    """A `records.Places` test passing every place: the read of an adapter that never narrows by place."""
+    return True
+
+
 class FakeServer:
     """Serves `routes[path]` = (status, body). A callable body gets the parsed JSON request and returns
     (status, body). A bytes body is sent truncated: its Content-Length promises more than arrives.
-    Every request is recorded in `requests` as (method, path, json_body)."""
+    Every request is recorded in `requests` as (method, path, json_body), its Content-Type in `content_types`."""
 
     def __init__(self):
         self.routes = {}
         self.requests = []
+        self.content_types = []
         server = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -29,6 +35,7 @@ class FakeServer:
 
             def _answer(self, payload):
                 server.requests.append((self.command, self.path, payload))
+                server.content_types.append(self.headers.get("Content-Type"))
                 status, body = server.routes.get(self.path, (404, {"error": "not found"}))
                 if callable(body):
                     status, body = body(payload)

@@ -8,7 +8,7 @@ from urllib.parse import quote
 from xml.etree.ElementTree import Element
 
 from jobscan.payload import board_slug, html_to_text, http_url, named_company, with_remote, xml_root, xml_text
-from jobscan.records import Board, BoardError, Company, Get, Posting
+from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "teamtailor"
 DISPLAY_NAME = "Teamtailor"
@@ -46,7 +46,7 @@ def company(board: Board, get: Get) -> Company:
     return named_company(root.findtext("channel/title"))
 
 
-def read(board: Board, get: Get) -> tuple[Posting, ...]:
+def read(board: Board, get: Get, places: Places) -> tuple[Posting, ...]:
     return parse(board, xml_root(get(board.api_url)))
 
 

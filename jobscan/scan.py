@@ -4,11 +4,12 @@ import sqlite3
 import time
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
+from functools import partial
 from pathlib import Path
 
 from jobscan import digest, discover, fetch, prefilter, store, tag
 from jobscan.config import Config, ConfigError, Profile
-from jobscan.records import Board, Company
+from jobscan.records import Board, Company, Places
 
 log = logging.getLogger("jobscan")
 
@@ -36,7 +37,7 @@ def scan(config: Config, profile: Profile, defs: list[tag.TagDef]) -> ScanOutcom
         discover.refresh_if_stale(conn, started_at)
         log.info("prefetch db_open_seconds=%.1f discovery_check_seconds=%.1f", checking - opening,
                  time.monotonic() - checking)
-        fetched = _fetch(conn, config, started)
+        fetched = _fetch(conn, config, partial(prefilter.in_places, profile), started)
         matched = _describe([p for p in store.pending(conn, profile.name, set(fetched.eligible))
                              if prefilter.matches(p.posting, profile)], fetched.eligible)
         companies = _companies(conn, {s.posting.board for s in matched}, fetched.eligible, started)
@@ -61,11 +62,12 @@ class FetchSummary:
     # may clear), each as this run read it, so a boards-file entry's endpoint wins
 
 
-def _fetch(conn: sqlite3.Connection, config: Config, now: str) -> FetchSummary:
-    """Fetches and stores every board. A 404 isn't a reason that may clear: that board is gone."""
+def _fetch(conn: sqlite3.Connection, config: Config, places: Places, now: str) -> FetchSummary:
+    """Fetches and stores every board (a Workday board read through its place filters stores only the postings in the
+    profile's places). A 404 isn't a reason that may clear: that board is gone."""
     boards = _boards(conn, config)
     read, not_found, transient, postings = [], [], [], 0
-    for outcome in fetch.fetch_each(list(boards.values())):
+    for outcome in fetch.fetch_each(list(boards.values()), places):
         if isinstance(outcome, fetch.BoardFetch):
             store.apply_fetch(conn, outcome.board.id, outcome.postings, now)
             read.append(outcome.board.id)

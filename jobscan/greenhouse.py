@@ -7,7 +7,7 @@ import re
 from urllib.parse import parse_qs, quote, unquote
 
 from jobscan.payload import board_slug, html_to_text, http_url, named_company, text_field
-from jobscan.records import Board, BoardError, Company, Get, Posting
+from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "greenhouse"
 DISPLAY_NAME = "Greenhouse"
@@ -68,7 +68,7 @@ def company(board: Board, get: Get) -> Company:
     return named_company(data.get("name") if isinstance(data, dict) else None)
 
 
-def read(board: Board, get: Get) -> tuple[Posting, ...]:
+def read(board: Board, get: Get, places: Places) -> tuple[Posting, ...]:
     return parse(board, json.loads(get(board.api_url)))
 
 

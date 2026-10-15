@@ -39,6 +39,7 @@ from jobscan.records import Board, Posting
 from tests.fakes import (
     FakeFiles,
     FakeServer,
+    anywhere,
     ashby_job,
     cdx_line,
     crawl_files,
@@ -544,7 +545,7 @@ class SmartRecruitersRunTest(RunFixture):
     def described_hash(self, text):
         board = fetch.board_for("Initrode", f"{self.ats.url}{self.LIST}")
         (posting,) = [p for p in smartrecruiters.read(board, lambda url: json.dumps(
-            self.ats.routes[url.removeprefix(self.ats.url)][1]).encode()) if p.key.endswith(":sr1")]
+            self.ats.routes[url.removeprefix(self.ats.url)][1]).encode(), anywhere) if p.key.endswith(":sr1")]
         return store.input_hash(replace(posting, description=text))
 
     def block_digests(self):

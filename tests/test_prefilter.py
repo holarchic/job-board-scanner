@@ -1,7 +1,7 @@
 import unittest
 
 from jobscan.config import Profile
-from jobscan.prefilter import matches
+from jobscan.prefilter import in_places, matches
 from jobscan.records import Posting
 
 PROFILE = Profile(
@@ -47,6 +47,10 @@ class PrefilterTest(unittest.TestCase):
         self.assertTrue(matches(posting("Account Executive", "Remote (UK)"), only))
         self.assertTrue(matches(posting("Account Executive", "London / remote (uk)"), only))
         self.assertFalse(matches(posting("Account Executive", "Remote (UKI)"), only))
+
+    def test_in_places_is_the_location_half_of_matches(self):
+        for place in ["UK & Ireland", "Berlin / London", "Kyiv, Ukraine", "Londonderry", "", "remote (uk)"]:
+            self.assertEqual(in_places(PROFILE, place), matches(posting("Account Executive", place), PROFILE), place)
 
 
 if __name__ == "__main__":

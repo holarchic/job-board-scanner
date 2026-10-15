@@ -5,7 +5,7 @@ from unittest import mock
 
 from jobscan import fetch, rippling
 from jobscan.records import BoardError
-from tests.fakes import rippling_detail, rippling_item, rippling_page
+from tests.fakes import anywhere, rippling_detail, rippling_item, rippling_page
 
 API = "https://ats.rippling.com/api/v2/board/Acme-Careers/jobs"
 BOARD = rippling.page_board("Acme", "https://ats.rippling.com/Acme-Careers/jobs")
@@ -24,7 +24,7 @@ def getter(pages):
 def read(*pages, page_size=1000):
     get = getter({f"{API}?page={n}&pageSize={page_size}": page for n, page in enumerate(pages)})
     with mock.patch.object(rippling, "PAGE", page_size):
-        return rippling.read(BOARD, get)
+        return rippling.read(BOARD, get, anywhere)
 
 
 class BoardTest(unittest.TestCase):

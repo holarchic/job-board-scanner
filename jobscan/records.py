@@ -1,9 +1,18 @@
 """Records shared across the pipeline: boards and postings, independent of which ATS they came from."""
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
-# An adapter's HTTP GET: the body of an HTTP 200 answer, after fetch's retries; raises on anything else.
-Get = Callable[[str], bytes]
+
+class Get(Protocol):
+    """An adapter's HTTP request through fetch: GET `url`, or POST `body` to it as JSON (Workday's list is POST-only);
+    the body of an HTTP 200 answer, after fetch's retries. Raises on anything else."""
+
+    def __call__(self, url: str, body: bytes | None = None) -> bytes: ...
+
+
+# The profile's location test: does this place's text name one of its locations? (`prefilter.in_places`)
+Places = Callable[[str], bool]
 
 
 @dataclass(frozen=True)

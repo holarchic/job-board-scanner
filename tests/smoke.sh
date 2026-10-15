@@ -18,12 +18,13 @@ clean_env() {
 headless_run() { clean_env python3 -m jobscan run </dev/null; }
 
 clean_env python3 - <<'PY'
+from functools import partial
 from jobscan import fetch, prefilter
 from jobscan.config import jobscan_home, load_config, load_profile
 home = jobscan_home()
 config, profile = load_config(home), load_profile(home)
 boards, _skipped = fetch.load_boards(config.boards_file)
-outcomes = list(fetch.fetch_each(boards))
+outcomes = list(fetch.fetch_each(boards, partial(prefilter.in_places, profile)))
 fetched = [o for o in outcomes if isinstance(o, fetch.BoardFetch)]
 failed = [o for o in outcomes if isinstance(o, fetch.BoardFailure)]
 matched = [p for r in fetched for p in r.postings if prefilter.matches(p, profile)]

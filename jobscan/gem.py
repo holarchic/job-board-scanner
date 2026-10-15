@@ -8,7 +8,7 @@ import json
 from urllib.parse import quote
 
 from jobscan.payload import board_slug, html_title, html_to_text, http_url, named_company, text_field, with_remote
-from jobscan.records import Board, BoardError, Company, Get, Posting
+from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "gem"
 DISPLAY_NAME = "Gem"
@@ -64,7 +64,7 @@ def company(board: Board, get: Get) -> Company:
     return named_company(title.removesuffix(CAREERS))
 
 
-def read(board: Board, get: Get) -> tuple[Posting, ...]:
+def read(board: Board, get: Get, places: Places) -> tuple[Posting, ...]:
     """A sandbox board still in the discovered list (stored before sandboxes were refused) reads as empty, without
     a request, so its postings close."""
     if _sandbox(board.slug):

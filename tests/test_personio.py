@@ -3,7 +3,7 @@ import unittest
 
 from jobscan import fetch, personio, tag
 from jobscan.records import BoardError
-from tests.fakes import personio_feed, personio_position
+from tests.fakes import anywhere, personio_feed, personio_position
 
 FEED = "https://acme.jobs.personio.com/xml?language=en"
 BOARD = personio.page_board("Acme", "https://acme.jobs.personio.de/")
@@ -15,7 +15,7 @@ def board_for(url):
 
 def parse(*positions):
     """The board read from one feed, served for both languages."""
-    return personio.read(BOARD, lambda url: personio_feed(*positions).encode())
+    return personio.read(BOARD, lambda url: personio_feed(*positions).encode(), anywhere)
 
 
 class BoardTest(unittest.TestCase):
@@ -48,7 +48,7 @@ class ReadTest(unittest.TestCase):
         def get(url):
             asked.append(url)
             return feeds[url].encode()
-        return personio.read(BOARD, get), asked
+        return personio.read(BOARD, get, anywhere), asked
 
     def test_english_text_needs_one_request(self):
         postings, asked = self.read([personio_position("1", "AE"), personio_position("2", " ", sections=[])])
@@ -80,7 +80,7 @@ class ReadTest(unittest.TestCase):
             asked.append(url)
             return personio_feed(personio_position(" ", "AE", sections=[])).encode()
         with self.assertRaisesRegex(BoardError, "no id"):
-            personio.read(BOARD, get)
+            personio.read(BOARD, get, anywhere)
         self.assertEqual(asked, [FEED])
 
     def test_feeds_listing_different_jobs_fail_the_board(self):
@@ -116,7 +116,7 @@ class ParseTest(unittest.TestCase):
                 parse(*positions)
         for feed in [b"<rss><position/></rss>", b"<workzag-jobs><position><name>AE</name></position>"]:
             with self.assertRaises(BoardError, msg=feed):
-                personio.read(BOARD, lambda url, feed=feed: feed)
+                personio.read(BOARD, lambda url, feed=feed: feed, anywhere)
 
     def test_a_job_without_a_name_is_skipped_and_the_rest_of_the_board_read(self):
         self.assertEqual([p.key for p in parse(personio_position("1", " "), personio_position("2", "AE"))],
