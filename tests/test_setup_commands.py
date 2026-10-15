@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from jobscan import cli
+from jobscan import cli, init
 
 PROFILE = """titles = ["Account Executive"]
 locations = ["London"]
@@ -42,6 +42,16 @@ class CliHome(unittest.TestCase):
     def write_profile(self, text=PROFILE, name="ae"):
         (self.home / "profiles").mkdir(parents=True, exist_ok=True)
         (self.home / "profiles" / f"{name}.toml").write_text(text)
+
+    def write_install(self, key="sk-or-v1-abc"):
+        self.write_profile()
+        (self.home / "config.toml").write_text(init.CONFIG)
+        if key is not None:
+            (self.home / "openrouter.key").write_text(key + "\n")
+            (self.home / "openrouter.key").chmod(0o600)
+
+    def files(self):
+        return sorted(str(p.relative_to(self.home)) for p in self.home.rglob("*"))
 
 
 class TagsTest(CliHome):
@@ -92,6 +102,82 @@ class TagsTest(CliHome):
         code, _, err = self.cli("tags")
         self.assertEqual(code, 2)
         self.assertIn("ae.toml", err)
+
+
+class CheckTest(CliHome):
+    def test_a_good_install_is_described_and_nothing_written(self):
+        self.write_install()
+        before = self.files()
+        code, out, err = self.cli("check")
+        self.assertEqual((code, err), (0, ""))
+        for line in ["Profile: " + str(self.home / "profiles" / "ae.toml"), "  titles: Account Executive",
+                     "  excluded titles: (none)", "  tags: founding, location_eligible; custom: climate",
+                     "(key: openrouter.key)", "Email: off", "Boards file: none", "OK: `jobscan run` can start."]:
+            self.assertIn(line, out)
+        self.assertNotIn("Warning", out)
+        self.assertEqual(self.files(), before)
+
+    def test_a_key_only_in_the_environment_is_a_warning(self):
+        self.write_install(key=None)
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or-v1-env"}):
+            code, out, _ = self.cli("check")
+        self.assertEqual(code, 0)
+        self.assertIn("(key: OPENROUTER_API_KEY)", out)
+        self.assertIn("Warning: the key is only in OPENROUTER_API_KEY, which a scheduled run won't see", out)
+
+    def test_no_key_anywhere_is_exit_2(self):
+        self.write_install(key=None)
+        code, out, err = self.cli("check")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("no OpenRouter key", err)
+
+    def test_a_key_file_a_scheduled_run_cant_use_is_exit_2_even_with_the_environment_set(self):
+        self.write_install()
+        (self.home / "openrouter.key").chmod(0o644)
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or-v1-env"}):
+            code, _, err = self.cli("check")
+        self.assertEqual(code, 2)
+        self.assertIn("chmod 600", err)
+
+    def test_a_malformed_key_in_the_environment_is_exit_2(self):
+        self.write_install()
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or v1"}):
+            code, _, err = self.cli("check")
+        self.assertEqual(code, 2)
+        self.assertIn("whitespace", err)
+
+    def test_both_keys_are_named(self):
+        self.write_install()
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or-v1-env"}):
+            self.assertIn("(key: OPENROUTER_API_KEY here, openrouter.key for scheduled runs)", self.cli("check")[1])
+
+    def test_a_local_model_needs_no_key(self):
+        self.write_install(key=None)
+        (self.home / "config.toml").write_text('[model]\nbase_url = "http://localhost:11434/v1"\nslug = "qwen"\n')
+        code, out, _ = self.cli("check")
+        self.assertEqual(code, 0)
+        self.assertIn("(key: none needed)", out)
+
+    def test_each_broken_file_is_named(self):
+        for name, text in [("profiles/ae.toml", "titles = ["), ("email.toml", "to = 1"), ("config.toml", "x = 1"),
+                           ("boards.json", "{")]:
+            self.write_install()
+            if name == "boards.json":
+                (self.home / "config.toml").write_text(f'boards_file = "boards.json"\n{init.CONFIG}')
+            path = self.home / name
+            path.write_text(text)
+            path.chmod(0o600)
+            code, out, err = self.cli("check")
+            self.assertEqual((code, out), (2, ""), name)
+            self.assertIn(Path(name).name, err)
+            path.unlink()
+
+    def test_a_tag_the_profile_cant_ask_is_exit_2(self):
+        self.write_install()
+        self.write_profile(PROFILE.replace('"founding"', '"founder"'))
+        code, _, err = self.cli("check")
+        self.assertEqual(code, 2)
+        self.assertIn("unknown tags ['founder']", err)
 
 
 if __name__ == "__main__":

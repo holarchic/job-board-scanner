@@ -2,14 +2,17 @@
 import argparse
 import fcntl
 import logging
+import os
 import sys
 from datetime import time
 from pathlib import Path
 from time import monotonic
 
-from jobscan import discover, evaluate, init, mail, notify, report, scan, schedule, store, tag
+from jobscan import discover, evaluate, fetch, init, mail, notify, report, scan, schedule, store, tag
 from jobscan.config import (
     EMAIL_FILE,
+    KEY_FILE,
+    Config,
     ConfigError,
     EmailConfig,
     Profile,
@@ -44,6 +47,14 @@ def main(argv: list[str] | None = None) -> int:
     email_parser = commands.add_parser(
         "email", help="email each digest from your own mail account: asks, sends a test email, then saves")
     email_parser.add_argument("--off", action="store_true", help="stop emailing digests")
+    commands.add_parser(
+        "check", help="load the install as a run would and print what it holds, or the first problem",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Load config.toml, the key, the profile and its tags, email.toml and the boards file exactly as "
+                    "`jobscan run` loads them here, then the key as a scheduled run reads it (with no shell "
+                    "environment). Prints what the install holds, or the first problem with exit 2. Reads only: "
+                    "no network, no database. Run it after editing the profile by hand.",
+        epilog="Examples:\n  jobscan check\n  $EDITOR ~/.jobscan/profiles/*.toml && jobscan check")
     tags_parser = commands.add_parser(
         "tags", help="list the tags the model can answer, or show one's definition",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -71,6 +82,8 @@ def main(argv: list[str] | None = None) -> int:
         return _email(home, args.off)
     if args.command == "tags":
         return _tags(home, args.name)
+    if args.command == "check":
+        return _check(home)
     return _run(home, args.notify)
 
 
@@ -228,6 +241,46 @@ def _discover(home: Path) -> int:
         return EXIT_INCOMPLETE
     print(f"discovered\t{outcome.boards}\t{','.join(outcome.crawls)}")
     return EXIT_OK
+
+
+def _check(home: Path) -> int:
+    try:
+        config = load_config(home)
+        profile = load_profile(home)
+        tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
+        email = load_email(home)
+        listed, unrecognised = fetch.load_boards(config.boards_file) if config.boards_file else (None, 0)
+        warnings = _scheduled_key(home, config)
+    except ConfigError as e:
+        print(f"jobscan: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    print("\n".join(report.install(config, profile, email, None if listed is None else len(listed), unrecognised,
+                                   _key_source(home, config), warnings)))
+    return EXIT_OK
+
+
+def _scheduled_key(home: Path, config: Config) -> list[str]:
+    """The key as launchd's run reads it, with no shell environment: a key file present but unusable is an error, a
+    key only in this shell's environment a warning."""
+    if config.api_key is None:
+        return []
+    try:
+        load_config(home, environ={})
+    except ConfigError:
+        if (home / KEY_FILE).exists():
+            raise
+        return [f"the key is only in OPENROUTER_API_KEY, which a scheduled run won't see: save it in "
+                f"{home / KEY_FILE}, readable only by you (chmod 600)"]
+    return []
+
+
+def _key_source(home: Path, config: Config) -> str:
+    if config.api_key is None:
+        return "none needed"
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return f"OPENROUTER_API_KEY here, {KEY_FILE} for scheduled runs" if (home / KEY_FILE).exists() \
+            else "OPENROUTER_API_KEY"
+    return KEY_FILE
 
 
 def _tags(home: Path, name: str | None) -> int:
