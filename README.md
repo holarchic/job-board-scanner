@@ -55,7 +55,7 @@ It works best where a few titles narrow the field and the posting answers the re
 - **No new matches, no file.** A second digest on the same day gets `-2`, `-3`.
 - **Company names** come from each job site, looked up once per board the first time it has a match. Ashby also gives the company's website, shown under the posting. Some Personio boards name no company and show the board name (`ddock`). A company you list in a boards file keeps your name.
 - **Demo jobs** on Gem's trial and sandbox boards are skipped.
-- **Workday** sites are read through their own location filters, so only jobs in your locations are fetched, and for most sites the open-role count covers just those. The company shows as Workday's account name (`autodesk`). A company with several Workday sites can list the same job on two of them, and it then appears twice.
+- **Workday** sites with location filters are read through them, so only jobs in your locations are fetched and the open-role count covers just those; a site without them is read whole. The company shows as Workday's account name (`autodesk`). A company with several Workday sites can list the same job on two of them, and it then appears twice.
 - **Dead boards:** a discovered board is skipped after three "not found" answers without a successful read between them. Boards you list are always tried.
 - **Failed emails** aren't resent; the digest stays on disk.
 

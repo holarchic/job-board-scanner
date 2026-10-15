@@ -5,8 +5,16 @@ import re
 import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import NamedTuple
 from unittest import mock
 from xml.sax.saxutils import escape
+
+
+class ContentType(NamedTuple):
+    """A request's Content-Type header as the fake server saw it."""
+    method: str
+    path: str
+    header: str | None
 
 
 def anywhere(text):
@@ -17,8 +25,7 @@ def anywhere(text):
 class FakeServer:
     """Serves `routes[path]` = (status, body). A callable body gets the parsed JSON request and returns
     (status, body). A bytes body is sent truncated: its Content-Length promises more than arrives.
-    Every request is recorded in `requests` as (method, path, json_body), and in `content_types` as (method, path,
-    Content-Type header)."""
+    Every request is recorded in `requests` as (method, path, json_body), and in `content_types` as a `ContentType`."""
 
     def __init__(self):
         self.routes = {}
@@ -36,7 +43,7 @@ class FakeServer:
 
             def _answer(self, payload):
                 server.requests.append((self.command, self.path, payload))
-                server.content_types.append((self.command, self.path, self.headers.get("Content-Type")))
+                server.content_types.append(ContentType(self.command, self.path, self.headers.get("Content-Type")))
                 status, body = server.routes.get(self.path, (404, {"error": "not found"}))
                 if callable(body):
                     status, body = body(payload)
