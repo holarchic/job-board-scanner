@@ -53,13 +53,18 @@ def with_remote(places: list[str]) -> list[str]:
     return places if any(REMOTE.search(p.casefold()) for p in places) else [*places, "Remote"]
 
 
+def one_line(text: str) -> str:
+    """`text` as one printable line: unprintable characters (zero-width spaces) dropped, any run of whitespace
+    (newlines and non-breaking spaces included) one space."""
+    return " ".join("".join(c for c in text if c.isprintable() or c.isspace()).split())
+
+
 def named_company(name, website=None) -> Company:
     """A company as a digest heading can show it: the name with entities decoded, unprintable characters dropped and
     whitespace (newlines included) collapsed; a website only if it is an http(s) URL of printable characters without
     whitespace (else it could break a digest line, or fail to store). A name that leaves nothing is a BoardError: the
     board keeps its slug and is asked again another run."""
-    text = html.unescape(name) if isinstance(name, str) else ""
-    text = " ".join("".join(c for c in text if c.isprintable() or c.isspace()).split())
+    text = one_line(html.unescape(name) if isinstance(name, str) else "")
     if not text:
         raise BoardError("no company name")
     site = website.strip() if isinstance(website, str) else ""

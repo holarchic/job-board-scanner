@@ -17,6 +17,7 @@ from jobscan.payload import (
     html_to_text,
     http_url,
     named_company,
+    one_line,
     text_field,
     with_remote,
 )
@@ -63,7 +64,7 @@ def page_board(company: str, url: str) -> Board | None:
     the pod is a test or dev copy (they repeat real jobs)."""
     parsed = http_url(url)
     labels = parsed.hostname.split(".") if parsed else []
-    if len(labels) != 5 or labels[1] != "fa" or ".".join(labels[3:]) != DOMAIN:
+    if len(labels) != 5 or not all(labels) or labels[1] != "fa" or ".".join(labels[3:]) != DOMAIN:
         return None
     path = [p for p in parsed.path.split("/") if p]
     if (tuple(path[:2]) != SITE_PATH or len(path) < 5 or not LANGUAGE.fullmatch(path[2]) or path[3] != "sites"
@@ -85,10 +86,10 @@ def _url(slug: str, path: str, **fields) -> str:
 
 def company(board: Board, get: Get) -> Company:
     """The site page's title; Oracle's default title, or none, names nobody."""
-    title = html_title(get(_url(board.slug, PAGE_PATH)))
-    if title.casefold() == DEFAULT_TITLE:
+    named = named_company(html_title(get(_url(board.slug, PAGE_PATH))))
+    if named.name.casefold() == DEFAULT_TITLE:
         raise BoardError("the site page has Oracle's default title")
-    return named_company(title)
+    return named
 
 
 @dataclass(frozen=True)
@@ -101,18 +102,21 @@ def read(board: Board, get: Get, places: Places) -> tuple[Posting, ...]:
     """Every page, 200 apart, until the first page's count. The count includes jobs the list never shows (one site
     counts 66 and shows 25 at any page size), so a page can come back short before the end, and the count only
     bounds the rows. A page before the end holding under 180 would mean a pod paging fewer than 200 at a time (no
-    15 Oct page before a site's last held under 198), skipping jobs. Drift checks, best effort: a count that
-    changes, a job twice, more rows than the count, or a short page before the end fail the board."""
+    15 Oct page before a site's last held under 195), skipping jobs. Drift checks, best effort: a count that
+    changes, a job twice (titled or not), more rows than the count, or a short page before the end fail the board."""
     first = _page(get(_url(board.slug, LIST, limit=PAGE, offset=0)))
     if first.total > WINDOW:
         raise BoardError(f"over {WINDOW:,} jobs: Oracle pages no further")
-    page, offset, rows, postings = first, 0, 0, {}
+    page, offset, rows, seen, postings = first, 0, 0, set(), []
     while True:
         for row in page.rows:
-            posting = _posting(board, rows, row)
-            rows += 1
-            if posting is not None and postings.setdefault(posting.key, posting) is not posting:
+            job_id = _job_id(row, rows)
+            if job_id in seen:
                 raise BoardError("list changed while paging: a job came back twice")
+            seen.add(job_id)
+            if (posting := _posting(board, rows, row, job_id)) is not None:
+                postings.append(posting)
+            rows += 1
         offset += PAGE
         if offset >= first.total:
             break
@@ -123,7 +127,7 @@ def read(board: Board, get: Get, places: Places) -> tuple[Posting, ...]:
             raise BoardError("list changed while paging: the count moved")
     if rows > first.total:
         raise BoardError(f"read {rows} jobs of a count of {first.total}")
-    return tuple(postings.values())
+    return tuple(postings)
 
 
 def _page(raw: bytes) -> _Page:
@@ -139,15 +143,19 @@ def _page(raw: bytes) -> _Page:
     return _Page(total=total, rows=rows)
 
 
-def _posting(board: Board, index: int, row) -> Posting | None:
-    """A list row as a posting; None for a row without a title (some sites list one), which no title filter could
-    match. Titles lose their invisible characters (zero-width spaces) and any run of whitespace becomes one space."""
+def _job_id(row, index: int) -> str:
     if not isinstance(row, dict):
         raise BoardError(f"job {index} is not an object")
     job_id = text_field(row, "Id", index, required=True).strip()
     if not job_id.isprintable():
         raise BoardError(f"job {index}: `Id` is not printable")
-    title = _clean(text_field(row, "Title", index) or "")
+    return job_id
+
+
+def _posting(board: Board, index: int, row: dict, job_id: str) -> Posting | None:
+    """A list row as a posting, its title and places as one line each; None for a row the list leaves untitled
+    (some sites list one; its detail may name it), which no title filter could match."""
+    title = one_line(text_field(row, "Title", index) or "")
     if not title:
         return None
     return Posting(key=f"{board.id}:{job_id}", ats=ATS, board=board.id, company=board.company, title=title,
@@ -155,21 +163,18 @@ def _posting(board: Board, index: int, row) -> Posting | None:
                    description="")
 
 
-def _clean(text: str) -> str:
-    return " ".join("".join(c for c in text if c.isprintable() or c.isspace()).split())
-
-
 def _places(row: dict, index: int) -> list[str]:
     """The primary location, then each secondary one, without repeats; `Remote` added for a remote job."""
-    secondary = row.get("secondaryLocations") or []
+    secondary = row.get("secondaryLocations")
+    secondary = [] if secondary is None else secondary
     if not isinstance(secondary, list) or not all(isinstance(s, dict) for s in secondary):
         raise BoardError(f"job {index}: `secondaryLocations` is not a list of objects")
     places = []
     for named in [text_field(row, "PrimaryLocation", index)] + [text_field(s, "Name", index) for s in secondary]:
-        place = _clean(named or "")
+        place = one_line(named or "")
         if place and place not in places:
             places.append(place)
-    return with_remote(places) if row.get("WorkplaceTypeCode") == REMOTE else places
+    return with_remote(places) if text_field(row, "WorkplaceTypeCode", index) == REMOTE else places
 
 
 def same_job(key: str) -> str:
@@ -183,7 +188,7 @@ def same_job(key: str) -> str:
 def describe(board: Board, posting: Posting, get: Get) -> str:
     """The job's detail, its description sections as text; a detail without any text fails the posting: it would be
     tagged and delivered with no description, and never described again."""
-    job_id = posting.key.rsplit(":", 1)[-1]
+    job_id = posting.key.split(":", 2)[2]  # the board id holds one colon; the job id may hold more
     data = json.loads(get(_url(board.slug, DETAIL, id=job_id)))
     items = data.get("items") if isinstance(data, dict) else None
     detail = items[0] if isinstance(items, list) and items else None

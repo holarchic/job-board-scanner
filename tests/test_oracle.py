@@ -50,6 +50,7 @@ class BoardTest(unittest.TestCase):
                     "https://acme.em2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX",
                     "https://acme.fa.em2.oraclecloud.com.evil.example/hcmUI/CandidateExperience/en/sites/CX",
                     "https://www.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX",
+                    "https://acme.fa..oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX",
                     "ftp://acme.fa.em2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX"]:
             self.assertIsNone(oracle.page_board("", url), url)
 
@@ -76,7 +77,7 @@ class ReadTest(unittest.TestCase):
             self.asked.append(offset(url))
             answer = pages(offset(url)) if callable(pages) else pages[offset(url)]
             return json.dumps(answer).encode()
-        return {p.key.rsplit(":", 1)[1]: p for p in oracle.read(BOARD, get, anywhere)}
+        return {p.key.split(":", 2)[2]: p for p in oracle.read(BOARD, get, anywhere)}
 
     def jobs(self, n):
         return [oracle_job(str(i), "Account Executive") for i in range(n)]
@@ -122,14 +123,18 @@ class ReadTest(unittest.TestCase):
 
     def test_drift_fails_the_board(self):
         jobs = self.jobs(450)
-        cases = {
-            "the count moved": lambda at: oracle_page(jobs, at, total=450 if at == 0 else 451),
-            "a page before the end holds 0 jobs": lambda at: oracle_page(jobs if at in (0, 400) else [], at, total=450),
-            "came back twice": lambda at: oracle_page(jobs[:200] * 3, at if at < 400 else 0, total=450),
-            "read 400 jobs of a count of 300": lambda at: oracle_page(jobs[at:at + 200], total=300),
-            "more jobs than asked for": lambda at: oracle_page(jobs, at, size=201),
-        }
-        for reason, pages in cases.items():
+        untitled = {"Id": "0", "Title": None}  # only it repeats, standing in for a titled job page two loses
+        repeated = {0: [untitled, *jobs[1:200]], 200: [untitled, *jobs[200:399]], 400: jobs[399:]}
+        cases = [
+            ("the count moved", lambda at: oracle_page(jobs, at, total=450 if at == 0 else 451)),
+            ("a page before the end holds 0 jobs",
+             lambda at: oracle_page(jobs if at in (0, 400) else [], at, total=450)),
+            ("came back twice", lambda at: oracle_page(jobs[:200] * 3, at if at < 400 else 0, total=450)),
+            ("came back twice", lambda at: oracle_page(repeated[at], total=450)),
+            ("read 400 jobs of a count of 300", lambda at: oracle_page(jobs[at:at + 200], total=300)),
+            ("more jobs than asked for", lambda at: oracle_page(jobs, at, size=201)),
+        ]
+        for reason, pages in cases:
             with self.assertRaisesRegex(BoardError, reason):
                 self.read(pages)
 
@@ -141,7 +146,9 @@ class ReadTest(unittest.TestCase):
                        oracle_page([{"Id": 1, "Title": "AE"}]),
                        oracle_page(["AE"]), oracle_page([{"Id": "1\n2", "Title": "AE"}]),
                        oracle_page([{**oracle_job("1", "AE"), "secondaryLocations": "Leeds"}]),
-                       oracle_page([{**oracle_job("1", "AE"), "PrimaryLocation": 7}])]:
+                       oracle_page([{**oracle_job("1", "AE"), "PrimaryLocation": 7}]),
+                       *(oracle_page([{**oracle_job("1", "AE"), "secondaryLocations": v}]) for v in ({}, False, 0, "")),
+                       oracle_page([{**oracle_job("1", "AE"), "WorkplaceTypeCode": ["ORA_REMOTE"]}])]:
             with self.assertRaises(BoardError, msg=answer):
                 self.read({0: answer})
 
@@ -178,12 +185,22 @@ class DescribeTest(unittest.TestCase):
     def test_every_section_with_text_in_reading_order(self):
         text = self.describe(oracle_detail(ExternalQualificationsStr="<p>Five years.</p>",
                                            CorporateDescriptionStr="<p>We sell software.</p>",
+                                           ExternalResponsibilitiesStr="<p>Close deals.</p>",
                                            ExternalDescriptionStr="<ul><li>Sell it.</li></ul>",
-                                           OrganizationDescriptionStr="  "))
-        self.assertEqual(text, "We sell software.\n\nSell it.\n\nFive years.")
+                                           OrganizationDescriptionStr="<p>The UK team.</p>"))
+        self.assertEqual(text, "We sell software.\n\nThe UK team.\n\nSell it.\n\nClose deals.\n\nFive years.")
+        only = oracle_detail(CorporateDescriptionStr="  ", ExternalDescriptionStr="<p>Sell.</p>")
+        self.assertEqual(self.describe(only), "Sell.")
         self.assertEqual(self.asked, ["https://acme.fa.em2.oraclecloud.com/hcmRestApi/resources/latest/"
                                       "recruitingCEJobRequisitionDetails?expand=all&onlyData=true"
                                       "&finder=ById;Id=%2242%22,siteNumber=cx_1001"])
+
+    def test_a_job_id_holding_a_colon_is_asked_for_whole(self):
+        self.POSTING = oracle.read(BOARD, lambda url: json.dumps(oracle_page([oracle_job("42:7", "AE")])).encode(),
+                                   anywhere)[0]
+        self.assertEqual(oracle.same_job(self.POSTING.key), "oracle:acme.em2:42:7")
+        self.describe(oracle_detail(ExternalDescriptionStr="x"))
+        self.assertIn("Id=%2242%3A7%22", self.asked[0])
 
     def test_a_detail_without_text_or_malformed_fails_the_posting(self):
         for detail in [oracle_detail(), oracle_detail(ExternalDescriptionStr="<p> </p>"), {"items": []}, {},
@@ -209,7 +226,7 @@ class CompanyTest(unittest.TestCase):
 
     def test_oracles_default_title_or_none_names_nobody(self):
         for page in ["<title>Candidate Experience site</title>", "<title>CANDIDATE EXPERIENCE SITE</title>",
-                     "<title> </title>", "<html></html>"]:
+                     "<title>Candidate&#32;Experience&nbsp;site</title>", "<title> </title>", "<html></html>"]:
             with self.assertRaises(BoardError, msg=page):
                 self.look_up(page)
 
