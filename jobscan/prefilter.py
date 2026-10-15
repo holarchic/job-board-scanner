@@ -1,14 +1,25 @@
 """Profile filter: title and location text, before any model call."""
 import re
+from enum import Enum
 
 from jobscan.config import Profile
 from jobscan.records import Posting
 
 
+class Verdict(Enum):
+    MATCH = "match"
+    EXCLUDED = "excluded"  # title and place pass, but an excluded title hits
+    OTHER = "other"
+
+
 def matches(posting: Posting, profile: Profile) -> bool:
-    return (_any_term(profile.titles, posting.title)
-            and not _any_term(profile.exclude_titles, posting.title)
-            and in_places(profile, posting.location))
+    return verdict(profile, posting.title, posting.location) is Verdict.MATCH
+
+
+def verdict(profile: Profile, title: str, location: str) -> Verdict:
+    if not _any_term(profile.titles, title) or not in_places(profile, location):
+        return Verdict.OTHER
+    return Verdict.EXCLUDED if _any_term(profile.exclude_titles, title) else Verdict.MATCH
 
 
 def in_places(profile: Profile, text: str) -> bool:

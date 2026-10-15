@@ -2,6 +2,7 @@
 import logging
 import sqlite3
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from functools import partial
@@ -105,16 +106,21 @@ def _one_per_job(conn: sqlite3.Connection, profile: str,
     """One posting per job (`fetch.same_job`): of a job's matched postings, the first by key, and none once the job
     was delivered under any key. The others stay pending and are skipped this way each run; when the kept one's board
     goes, the next by key takes over."""
-    delivered = {fetch.same_job(key) for key in store.delivered_keys(conn, profile)}
-    first: dict[str, str] = {}
-    for s in matched:
-        job = fetch.same_job(s.posting.key)
-        first[job] = min(first.get(job, s.posting.key), s.posting.key)
-    kept = [s for s in matched if fetch.same_job(s.posting.key) not in delivered
-            and first[fetch.same_job(s.posting.key)] == s.posting.key]
+    keep = first_per_job([s.posting.key for s in matched], store.delivered_keys(conn, profile))
+    kept = [s for s in matched if s.posting.key in keep]
     if len(kept) < len(matched):
         log.info("twins_skipped postings=%d", len(matched) - len(kept))
     return kept
+
+
+def first_per_job(keys: Iterable[str], delivered: Iterable[str]) -> set[str]:
+    """Of the keys, one per job (`fetch.same_job`): the first by key, and none of a job delivered under any key."""
+    done = {fetch.same_job(key) for key in delivered}
+    first: dict[str, str] = {}
+    for key in keys:
+        job = fetch.same_job(key)
+        first[job] = min(first.get(job, key), key)
+    return {key for job, key in first.items() if job not in done}
 
 
 def _describe(matched: list[store.StoredPosting], boards: dict[str, Board]) -> list[store.StoredPosting]:
@@ -166,8 +172,15 @@ def _named(stored: store.StoredPosting, board: Board, company: Company | None) -
     """The posting under the name it shows: its board's from this run (a boards-file name), else the looked-up one,
     else the slug. Never the stored row's, which is stale when the board failed this run. Neither the tags nor their
     cache read the company."""
-    name = board.company if board.company != board.slug or company is None else company.name
-    return replace(stored, posting=replace(stored.posting, company=name))
+    return replace(stored, posting=replace(stored.posting, company=shown_company(board, company, board.slug)))
+
+
+def shown_company(board: Board | None, looked_up: Company | None, slug: str) -> str:
+    """The name a posting shows: a boards-file name (a board whose company isn't its slug), else the looked-up one,
+    else the board's slug."""
+    if board is not None and board.company != board.slug:
+        return board.company
+    return looked_up.name if looked_up else slug
 
 
 def _tag(conn: sqlite3.Connection, matched: list[store.StoredPosting], defs: list[tag.TagDef], config: Config,

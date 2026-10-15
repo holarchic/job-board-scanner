@@ -5,6 +5,7 @@ from pathlib import Path
 from jobscan import fetch, tag
 from jobscan.boards import Added, Entry
 from jobscan.config import Config, EmailConfig, Profile
+from jobscan.preview import Preview, Sample
 
 VALIDATED = {"yes": "validated", "uk": "validated for the UK only", "no": "not validated"}
 WHERE = "<where you can work from>"  # stands in for `eligible_where` before there is a profile
@@ -94,3 +95,24 @@ def boards_added(file: Path, outcome: Added) -> list[str]:
     if outcome.added:
         lines.append(f"Saved {file}; the next run reads {'it' if len(outcome.added) == 1 else 'them'}.")
     return lines
+
+
+def preview_lines(profile: Profile, p: Preview) -> list[str]:
+    lines = [
+        f"{profile.name}, against the {p.open:,} open postings the last run stored:",
+        f"  matching your titles and locations: {p.matched:,} postings",
+        f"  new jobs the next run would tag: {p.new_jobs:,} (about ${p.cost:.2f})",
+        f"  already sent to you: {p.sent:,}",
+        f"  left out by your excluded titles: {p.excluded:,}",
+    ]
+    if p.new_samples:
+        lines += ["New jobs, newest first:", *map(_sample, p.new_samples)]
+    if p.excluded_samples:
+        lines += ["Left out by your excluded titles:", *map(_sample, p.excluded_samples)]
+    lines.append("Workday sites store only postings in the places of the last run: a place just added finds Workday "
+                 "jobs after the next run.")
+    return lines
+
+
+def _sample(s: Sample) -> str:
+    return f"  {s.company} — {s.title} — {s.location or '(no location)'}"

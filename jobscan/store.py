@@ -65,10 +65,18 @@ class RunRecord:
     cost_complete: bool
 
 
+DB_FILE = "jobscan.sqlite"
+
+
+def exists(home: Path) -> bool:
+    """Whether a run has made the database yet; checking never creates it, as opening does."""
+    return (home / DB_FILE).exists()
+
+
 def open_db(home: Path) -> sqlite3.Connection:
     """Opens (creating if needed) the install's database; a file that can't be opened is a setup error. Code that
     hasn't opened it before copies it first (`backup`), before any migration or write."""
-    path = home / "jobscan.sqlite"
+    path = home / DB_FILE
     backup.before_open(path)
     try:
         conn = sqlite3.connect(path)
@@ -152,6 +160,23 @@ def pending(conn: sqlite3.Connection, profile: str, boards: set[str]) -> Iterato
             input_hash=r["input_hash"],
             first_seen=r["first_seen"],
         )
+
+
+@dataclass(frozen=True)
+class Brief:
+    """An open posting as the title and place filter sees it: no description."""
+    key: str
+    board: str
+    title: str
+    location: str
+    first_seen: str
+
+
+def open_brief(conn: sqlite3.Connection) -> Iterator[Brief]:
+    rows = conn.execute("SELECT key, board, title, location, first_seen FROM postings WHERE closed = 0")
+    for r in rows:
+        yield Brief(key=r["key"], board=r["board"], title=r["title"], location=r["location"],
+                    first_seen=r["first_seen"])
 
 
 def open_counts(conn: sqlite3.Connection, boards: set[str]) -> dict[str, int]:

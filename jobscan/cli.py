@@ -8,7 +8,7 @@ from datetime import time
 from pathlib import Path
 from time import monotonic
 
-from jobscan import boards, discover, evaluate, fetch, init, mail, notify, report, scan, schedule, store, tag
+from jobscan import boards, discover, evaluate, fetch, init, mail, notify, preview, report, scan, schedule, store, tag
 from jobscan.config import (
     EMAIL_FILE,
     KEY_FILE,
@@ -131,6 +131,17 @@ def main(argv: list[str] | None = None) -> int:
                "  jobscan boards add https://acme.wd3.myworkdayjobs.com/Careers --company Acme")
     boards_add.add_argument("urls", nargs="+", metavar="URL", help="a board or careers-page URL")
     boards_add.add_argument("--company", help="the company's name for the digest (one URL only)")
+    commands.add_parser(
+        "preview", help="what the saved profile matches among the postings the last run stored",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Count what the saved profile's titles, excluded titles and locations match among the open "
+                    "postings in the database: new jobs as the next run would count and tag them (one per job, none "
+                    "already sent), with the tagging cost, postings already sent, and samples, plus samples of what "
+                    "the excluded titles leave out. Edit the profile, then preview again, to tune a search without "
+                    "a run. A snapshot of what the last run stored: it fetches nothing, so before the first run there "
+                    "is nothing to preview. It waits for no run: while one is going, exit 1. The first time new "
+                    "code opens the database it backs it up first, as a run would.",
+        epilog="Examples:\n  jobscan preview\n  $EDITOR ~/.jobscan/profiles/*.toml && jobscan check && jobscan preview")
     tags_parser = commands.add_parser(
         "tags", help="list the tags the model can answer, or show one's definition",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -162,6 +173,8 @@ def main(argv: list[str] | None = None) -> int:
         return _check(home)
     if args.command == "boards":
         return _boards(home, args)
+    if args.command == "preview":
+        return _preview(home)
     return _run(home, args.notify)
 
 
@@ -420,6 +433,30 @@ def _key_source(home: Path, config: Config) -> str:
         return f"OPENROUTER_API_KEY here, {KEY_FILE} for scheduled runs" if (home / KEY_FILE).exists() \
             else "OPENROUTER_API_KEY"
     return KEY_FILE
+
+
+def _preview(home: Path) -> int:
+    try:
+        config = load_config(home)
+        profile = load_profile(home)
+        listed = {b.id: b for b in fetch.load_boards(config.boards_file)[0]} if config.boards_file else {}
+        if not store.exists(home):
+            print("No postings yet: `jobscan run` fetches them, then `jobscan preview` can count them.")
+            return EXIT_OK
+        with _run_lock(home):
+            conn = store.open_db(home)
+            try:
+                result = preview.preview(conn, profile, listed)
+            finally:
+                conn.close()
+    except ConfigError as e:
+        print(f"jobscan: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    except RunLocked:
+        print("jobscan: a run is using the database; preview once it has finished", file=sys.stderr)
+        return EXIT_INCOMPLETE
+    print("\n".join(report.preview_lines(profile, result)))
+    return EXIT_OK
 
 
 def _boards(home: Path, args: argparse.Namespace) -> int:

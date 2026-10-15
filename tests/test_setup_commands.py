@@ -10,8 +10,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from jobscan import cli, init, tag
+from jobscan import cli, init, store, tag
 from jobscan.config import load_config, load_email, load_profile
+from jobscan.records import Company, Posting
 from tests.fakes import patch_smtp
 
 PROFILE = """titles = ["Account Executive"]
@@ -386,6 +387,76 @@ class BoardsTest(CliHome):
         code, out, _ = self.cli("boards")
         self.assertEqual(code, 0)
         self.assertIn(f"No boards file yet ({self.file})", out)
+
+
+def posting(board, key, title, location="London, UK"):
+    return Posting(key=f"{board}:{key}", ats=board.split(":")[0], board=board, company=board.split(":")[1],
+                   title=title, location=location, url=f"https://example.com/{key}", description="")
+
+
+class PreviewTest(CliHome):
+    def setUp(self):
+        super().setUp()
+        self.write_install()
+        self.write_profile(PROFILE.replace('titles = ["Account Executive"]',
+                                           'titles = ["Account Executive"]\nexclude_titles = ["Assistant"]'))
+
+    def seed(self):
+        conn = store.open_db(self.home)
+        try:
+            for board, postings, day in [
+                ("ashby:acme", [posting("ashby:acme", "1", "Account Executive"),
+                                posting("ashby:acme", "2", "Account Executive Assistant"),
+                                posting("ashby:acme", "3", "Engineer"),
+                                posting("ashby:acme", "4", "Account Executive", "Paris")], "01"),
+                ("greenhouse:beta", [posting("greenhouse:beta", "9", "Senior Account Executive")], "03"),
+                ("workday:wd.wd3.ext", [posting("workday:wd.wd3.ext", "R1", "Account Executive"),
+                                        posting("workday:wd.wd3.ext", "R2", "Account Executive")], "02"),
+                ("workday:wd.wd3.uni", [posting("workday:wd.wd3.uni", "R1", "Account Executive"),
+                                        posting("workday:wd.wd3.uni", "R2", "Account Executive")], "02"),
+            ]:
+                store.apply_fetch(conn, board, tuple(postings), f"2026-10-{day}T00:00:00+00:00")
+            store.deliver(conn, "ae", ["workday:wd.wd3.ext:R2"], self.home / "d.md")
+            store.save_companies(conn, {"greenhouse:beta": Company(name="Beta Inc", website=None)}, "2026-10-03")
+        finally:
+            conn.close()
+
+    def test_new_jobs_are_counted_as_the_run_counts_them(self):
+        self.seed()
+        (self.home / "boards.json").write_text(json.dumps({"companies": [
+            {"company": "Acme AI", "board_url": "https://jobs.ashbyhq.com/acme"}]}))
+        code, out, err = self.cli("preview")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("ae, against the 9 open postings the last run stored:", out)
+        self.assertIn("matching your titles and locations: 6 postings", out)  # 1, 9, R1 and R2 on both sites
+        self.assertIn("new jobs the next run would tag: 3 (about $0.00)", out)  # 1, 9, R1 once
+        self.assertIn("already sent to you: 2", out)  # R2 on both sites
+        self.assertIn("left out by your excluded titles: 1", out)
+        lines = out.splitlines()
+        new = lines[lines.index("New jobs, newest first:") + 1:lines.index("Left out by your excluded titles:")]
+        self.assertEqual(new, ["  Beta Inc — Senior Account Executive — London, UK",
+                               "  wd.wd3.ext — Account Executive — London, UK",
+                               "  Acme AI — Account Executive — London, UK"])
+        self.assertIn("  Acme AI — Account Executive Assistant — London, UK", out)
+
+    def test_before_any_run_it_says_so_and_creates_nothing(self):
+        before = self.files()
+        code, out, _ = self.cli("preview")
+        self.assertEqual(code, 0)
+        self.assertIn("No postings yet: `jobscan run` fetches them", out)
+        self.assertEqual(self.files(), before)
+
+    def test_a_run_holding_the_lock_is_exit_1_and_the_database_unopened(self):
+        self.seed()
+        with cli._run_lock(self.home), mock.patch.object(store, "open_db", side_effect=AssertionError) as opened:
+            code, out, err = self.cli("preview")
+        opened.assert_not_called()
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("a run is using the database", err)
+
+    def test_no_profile_is_exit_2(self):
+        (self.home / "profiles" / "ae.toml").unlink()
+        self.assertEqual(self.cli("preview")[0], 2)
 
 
 if __name__ == "__main__":
