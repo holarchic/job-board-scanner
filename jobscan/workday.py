@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import quote, unquote
 
-from jobscan.payload import board_slug, detail_text, html_to_text, http_url, named_company, text_field
+from jobscan.payload import board_slug, detail_text, html_to_text, http_url, named_company, one_line, text_field
 from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "workday"
@@ -194,9 +194,10 @@ def _usable(text) -> bool:
 def _value(parameter: str, value) -> _Value:
     value_id = value.get("id") if isinstance(value, dict) else None
     descriptor = value.get("descriptor") if isinstance(value, dict) else None
-    if not _usable(value_id) or not _usable(descriptor):
+    name = one_line(descriptor) if isinstance(descriptor, str) else ""  # Airbus: 'Istres (AD - Base 125\xa0) \xa0'
+    if not _usable(value_id) or not name:
         raise BoardError(f"filter {parameter}: a value without a usable `id` or `descriptor`")
-    return _Value(parameter=parameter, id=value_id, name=descriptor.strip())
+    return _Value(parameter=parameter, id=value_id, name=name)
 
 
 def _postings(board: Board, found: list[_Found]) -> tuple[Posting, ...]:
@@ -225,12 +226,14 @@ def _job(index: int, row) -> _Job | None:
         raise BoardError(f"job {index} is not an object")
     if row.get("title") is None and row.get("externalPath") is None:
         return None
-    title = text_field(row, "title", index, required=True).strip()
+    title = one_line(text_field(row, "title", index, required=True))
+    if not title:
+        raise BoardError(f"job {index}: `title` holds no visible text")
     path = text_field(row, "externalPath", index, required=True).strip()
     posting_id = path.rsplit("/", 1)[-1]
     if not path.startswith("/job/") or not posting_id:
         raise BoardError(f"job {index}: `externalPath` is not a job path")
-    text = (text_field(row, "locationsText", index) or "").strip()
+    text = one_line(text_field(row, "locationsText", index) or "")
     return _Job(job_id=_requisition(posting_id, row.get("bulletFields")) or FALLBACK + posting_id,
                 posting_id=posting_id, title=title, path=path, text="" if SEVERAL.fullmatch(text) else text)
 

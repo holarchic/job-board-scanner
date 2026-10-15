@@ -171,6 +171,17 @@ class ReadTest(unittest.TestCase):
             with self.assertRaisesRegex(BoardError, reason):
                 self.read(answer)
 
+    def test_a_place_name_loses_invisible_characters_and_its_id_is_queried_as_given(self):
+        odd = "Istres (Base 125\xa0) \xa0\u200b London"  # Airbus's names carry non-breaking spaces
+        row = {k: v for k, v in workday_job("AE_R1", "Account\xa0Executive\u200b", [odd]).items() if k != "_places"}
+        facets = [{"facetParameter": "locations", "values": [{"id": "541855e9", "descriptor": odd}]}]
+        (posting,) = self.read(lambda body: (200, {"total": 1, "jobPostings": [row], "facets": facets}),
+                               places=lambda text: text == "Istres (Base 125 ) London").values()
+        self.assertEqual(self.filters_asked()[1:], [{"locations": ["541855e9"]}])
+        self.assertIn("Istres (Base 125 ) London", posting.location)
+        self.assertTrue(posting.location.isprintable())
+        self.assertEqual(posting.title, "Account Executive")  # so a title filter matches it
+
     def test_a_malformed_place_value_fails_the_board_and_other_filters_are_ignored(self):
         def answer(facets):
             return lambda body: (200, {"total": 0, "jobPostings": [], "facets": facets})
@@ -178,8 +189,8 @@ class ReadTest(unittest.TestCase):
             self.read(answer([{"facetParameter": "locations", "values": [{"id": "1"}]}]))
         with self.assertRaisesRegex(BoardError, "locationCountry"):
             self.read(answer([{"facetParameter": "locationCountry", "values": "UK"}]))
-        for value in [{"id": "1", "descriptor": "London\ud800"}, {"id": "1", "descriptor": " "},
-                      {"id": "", "descriptor": "London"}, {"id": "1", "descriptor": "Lon\ndon"}]:
+        for value in [{"id": "1", "descriptor": "\xa0\u200b"}, {"id": "1", "descriptor": " "},
+                      {"id": "", "descriptor": "London"}, {"id": "1\n2", "descriptor": "London"}]:
             with self.assertRaisesRegex(BoardError, "usable", msg=value):
                 self.read(answer([{"facetParameter": "locations", "values": [value]}]))
         for group in [{"facetParameter": None, "values": [{"id": "1", "descriptor": "London"}]},
