@@ -58,7 +58,8 @@ class TagResult:
 
 @dataclass(frozen=True)
 class Usage:
-    """Billing and reasoning evidence summed over every reply received for one posting, rejected ones included."""
+    """Billing and reasoning evidence summed over every reply received for one operation (a posting's tags, a
+    titles request), rejected ones included."""
     cost: float = 0.0
     cost_reported: bool = True  # False if any reply came without a cost (local endpoints never report one)
     reasoning_tokens: int = 0

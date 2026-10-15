@@ -9,7 +9,7 @@ from tests.fakes import FakeServer, model_reply
 from tests.test_setup_commands import CliHome, posting
 
 PROFILE = """titles = ["Account Executive"]
-exclude_titles = ["Assistant"]
+exclude_titles = [" Assistant "]
 locations = ["London"]
 eligible_where = "the UK"
 tags = ["founding"]
@@ -23,7 +23,7 @@ class TitlesTest(CliHome):
         self.addCleanup(self.model.close)
         self.write_profile(PROFILE)
         (self.home / "config.toml").write_text(f'[model]\nbase_url = "{self.model.url}"\nslug = "test/model"\n')
-        self.answer({"variants": ["Sales Executive", "sales executive", " AE ", "Account Executive", "", "x" * 81, 7,
+        self.answer({"variants": ["Sales Executive", "sales executive", " AE ", "Account Executive", "", "x" * 81,
                                   "Enterprise Account Executive"],  # the profile's title matches it already
                      "near_misses": ["Account Manager", "Partnerships", "Executive", "assistant"]})
 
@@ -103,10 +103,12 @@ class TitlesTest(CliHome):
         code, out, err = self.cli("titles")
         self.assertEqual((code, out), (1, ""))
         self.assertIn("no title suggestions: HTTP 500", err)
-        self.answer({"variants": "Sales Executive"}, cost=0.0002)
-        code, _, err = self.cli("titles")
-        self.assertEqual(code, 1)
-        self.assertIn("the reply isn't the two lists; $0.0002", err)
+        for reply in [{"variants": "Sales Executive"}, {"variants": [7], "near_misses": []},
+                      {"variants": [], "near_misses": [], "note": "x"}]:
+            self.answer(reply, cost=0.0002)
+            code, _, err = self.cli("titles")
+            self.assertEqual(code, 1, reply)
+            self.assertIn("the reply isn't the two lists of titles; $0.0002", err)
 
     def test_an_unreported_cost_says_so(self):
         self.model.routes["/chat/completions"] = (200, lambda payload: (200, {"choices": [{"message": {

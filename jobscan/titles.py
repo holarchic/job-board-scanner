@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from jobscan import store, tag
 from jobscan.config import ModelConfig, Profile
 from jobscan.payload import encodable, one_line
-from jobscan.prefilter import Verdict, in_places, term_matches, verdict
+from jobscan.prefilter import Verdict, excluded, in_places, term_matches, verdict
 
 MOST = 15  # suggestions per list
 LONGEST = 80  # characters in one suggested title
@@ -23,7 +23,7 @@ Where they can work from: {where}
 1. `variants`: up to {most} other job titles that employers post the same jobs under, which their titles miss as
    words (for "Account Executive": "Sales Executive", "AE"). Real titles only, as job ads write them.
 2. `near_misses`: up to {most} titles their titles match as words that are different jobs, to leave out (for
-   "Account Executive": "Account Executive Assistant"; for "Product Manager": "Product Marketing Manager").
+   "Account Executive": "Account Executive Assistant"; for "Product Manager": "Product Manager Intern").
 
 Return JSON with both lists."""
 SCHEMA = {"type": "object", "additionalProperties": False, "required": ["variants", "near_misses"],
@@ -68,12 +68,14 @@ def suggest(profile: Profile, model: ModelConfig, api_key: str | None) -> Sugges
         data = json.loads(reply.content) if reply.content is not None else None
     except (ValueError, RecursionError):
         data = None
-    if not isinstance(data, dict) or not all(isinstance(data.get(k), list) for k in ("variants", "near_misses")):
-        raise TitlesError("the reply isn't the two lists", usage=reply.usage)
-    own = {t.casefold() for t in profile.titles}
-    variants = tuple(v for v in _clean(data["variants"], own | {t.casefold() for t in profile.exclude_titles})
+    if not isinstance(data, dict) or set(data) != {"variants", "near_misses"} or not all(
+            isinstance(data[k], list) and all(isinstance(item, str) for item in data[k]) for k in data):
+        raise TitlesError("the reply isn't the two lists of titles", usage=reply.usage)
+    own = {t.strip().casefold() for t in profile.titles}  # as the filter reads its terms
+    excluded_already = {t.strip().casefold() for t in profile.exclude_titles}
+    variants = tuple(v for v in _clean(data["variants"], own | excluded_already)
                      if not any(term_matches(title, v) for title in profile.titles))  # matched already
-    near = [n for n in _clean(data["near_misses"], {t.casefold() for t in profile.exclude_titles} | own)
+    near = [n for n in _clean(data["near_misses"], excluded_already | own)
             if not any(term_matches(n, title) for title in profile.titles)]  # it would exclude the search itself
     return Suggested(variants=variants, near_misses=tuple(near), usage=reply.usage)
 
@@ -92,14 +94,14 @@ def count(conn: sqlite3.Connection, profile: Profile, reads: set[str], suggested
                 # In its places, no title of the profile's matches it: a variant matching it makes it a match
                 # unless an excluded title hits it, exactly as `verdict` with the variant added would say.
                 hits = [v for v in suggested.variants if term_matches(v, brief.title)]
-                if hits and not any(term_matches(x, brief.title) for x in profile.exclude_titles):
+                if hits and not excluded(profile, brief.title):
                     for variant in hits:
                         adds[variant] += 1
     return Counted(adds=adds, leaves_out=leaves_out)
 
 
 def _listed(values: tuple[str, ...]) -> str:
-    return "; ".join(values) or "(none)"
+    return "; ".join(v.strip() for v in values) or "(none)"
 
 
 def _clean(raw: list, taken: set[str]) -> tuple[str, ...]:

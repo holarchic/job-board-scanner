@@ -19,7 +19,12 @@ def matches(posting: Posting, profile: Profile) -> bool:
 def verdict(profile: Profile, title: str, location: str) -> Verdict:
     if not _any_term(profile.titles, title) or not in_places(profile, location):
         return Verdict.OTHER
-    return Verdict.EXCLUDED if _any_term(profile.exclude_titles, title) else Verdict.MATCH
+    return Verdict.EXCLUDED if excluded(profile, title) else Verdict.MATCH
+
+
+def excluded(profile: Profile, title: str) -> bool:
+    """Does one of the profile's excluded titles hit this title?"""
+    return _any_term(profile.exclude_titles, title)
 
 
 def in_places(profile: Profile, text: str) -> bool:
