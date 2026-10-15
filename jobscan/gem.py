@@ -1,7 +1,8 @@
 """Gem adapter: board URLs → API URL, and the public job board API payload → postings.
 
 The payload is a bare list of jobs, shaped like Greenhouse's. Parsing is all-or-nothing per board, as for the
-others."""
+others, except that a demo job is skipped (and closed, if it was open). Gem's trial and integration-sandbox boards
+carry the same six demo jobs, CFO to intern, whose whole description is DEMO; sandbox boards are refused outright."""
 import json
 from urllib.parse import quote
 
@@ -15,6 +16,7 @@ CRAWL_HOSTS = ("jobs.gem.com",)
 API_PATH = ("job_board", "v0")
 API = "https://api.gem.com/" + "/".join(API_PATH) + "/"
 LIST = "/job_posts/"
+DEMO = "***DEMO JOB POST***"
 
 
 # Gem board paths are case-sensitive (`BigPanda` is a 404 where `bigpanda` reads), so a slug keeps its case.
@@ -40,12 +42,21 @@ def page_board(company: str, url: str) -> Board | None:
 
 
 def _board(company: str, slug: str | None, base: str) -> Board | None:
-    if slug is None:
+    if slug is None or _sandbox(slug):
         return None
     return Board(ats=ATS, slug=slug, company=company or slug, api_url=base + quote(slug, safe="") + LIST)
 
 
+def _sandbox(slug: str) -> bool:
+    """An integration sandbox's board (`vercel-ats-sandbox`, `sandboxschonfeld-com`): test postings only."""
+    return "sandbox" in slug.casefold()
+
+
 def read(board: Board, get: Get) -> tuple[Posting, ...]:
+    """A sandbox board still in the discovered list (stored before sandboxes were refused) reads as empty, without
+    a request, so its postings close."""
+    if _sandbox(board.slug):
+        return ()
     return parse(board, json.loads(get(board.api_url)))
 
 
@@ -55,7 +66,7 @@ def parse(board: Board, data) -> tuple[Posting, ...]:
     postings = tuple(_posting(board, i, job) for i, job in enumerate(data))
     if len({p.key for p in postings}) != len(postings):
         raise BoardError("duplicate job ids")
-    return postings
+    return tuple(p for p in postings if p.description != DEMO)
 
 
 def _posting(board: Board, index: int, job) -> Posting:

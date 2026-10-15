@@ -3,7 +3,7 @@ import unittest
 
 from jobscan import gem, prefilter, tag
 from jobscan.config import Profile
-from jobscan.records import BoardError
+from jobscan.records import Board, BoardError
 from tests.fakes import gem_job
 
 API = "https://api.gem.com/job_board/v0/"
@@ -34,6 +34,16 @@ class BoardTest(unittest.TestCase):
         for url in ["https://jobs.gem.com/", "https://jobs.gem.com/a%3Ab", "https://api.gem.com/job_board/v0/",
                     "https://www.gem.com/acme", "https://jobs.ashbyhq.com/acme", "not a url"]:
             self.assertIsNone(board_for(url), url)
+
+
+    def test_sandbox_boards_are_not_boards(self):
+        for url in ["https://jobs.gem.com/vercel-ats-sandbox", "https://jobs.gem.com/SandboxSchonfeld-com/am9i",
+                    "https://api.gem.com/job_board/v0/atssandboxyello-co/job_posts/"]:
+            self.assertIsNone(board_for(url), url)
+
+    def test_a_sandbox_board_already_listed_reads_as_empty_without_a_request(self):
+        board = Board("gem", "acme-sandbox", "acme-sandbox", API + "acme-sandbox/job_posts/")
+        self.assertEqual(gem.read(board, lambda url: self.fail(f"asked {url}")), ())
 
 
 class ParseTest(unittest.TestCase):
@@ -87,6 +97,12 @@ class ParseTest(unittest.TestCase):
         for data in [{}, {"jobs": []}, None, [gem_job("1", "A"), gem_job("1", "B")]]:
             with self.assertRaises(BoardError, msg=data):
                 gem.parse(self.board, data)
+
+    def test_a_demo_job_is_skipped_and_the_rest_of_the_board_read(self):
+        jobs = [gem_job("1", "Enterprise Account Executive", content_plain="\n***DEMO JOB POST***\n"),
+                {**gem_job("2", "CFO"), "content_plain": "", "content": "<p>***DEMO JOB POST***</p>"},
+                gem_job("3", "AE", content_plain="Not a ***DEMO JOB POST*** at all."), gem_job("4", "SE")]
+        self.assertEqual([p.key for p in gem.parse(self.board, jobs)], ["gem:acme:3", "gem:acme:4"])
 
     def test_no_jobs_is_an_empty_board(self):
         self.assertEqual(gem.parse(self.board, []), ())

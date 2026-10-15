@@ -35,7 +35,7 @@ from jobscan import (
     teamtailor,
     workable,
 )
-from jobscan.records import Board
+from jobscan.records import Board, Posting
 from tests.fakes import (
     FakeFiles,
     FakeServer,
@@ -282,6 +282,29 @@ class WorkableGemRunTest(RunFixture):
                       text)
         self.assertEqual(text.count("· 2 open roles"), 2)  # one per new board: jobs, not Workable's entries
         self.assertEqual(self.run_cli()[1][1:], ["0", "-"])
+
+
+    def test_a_sandbox_board_already_discovered_closes_its_postings_without_a_request(self):
+        board = Board("gem", "acme-sandbox", "acme-sandbox", f"{self.ats.url}/job_board/v0/acme-sandbox/job_posts/")
+        stored = Posting(key="gem:acme-sandbox:g1", ats="gem", board=board.id, company=board.company,
+                         title="Account Executive", location="London, UK", url="https://jobs.gem.com/acme-sandbox/g1",
+                         description="Test posting.")
+        conn = store.open_db(self.home)
+        try:
+            store.replace_discovered(conn, [board, *SENTINELS], datetime.now(UTC).isoformat(timespec="microseconds"))
+            store.apply_fetch(conn, board.id, (stored,), datetime.now(UTC).isoformat(timespec="microseconds"))
+        finally:
+            conn.close()
+        self.ats.routes["/job_board/v0/acme-sandbox/job_posts/"] = (200, [gem_job("g1", "Account Executive")])
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        self.assertNotIn("acme-sandbox", Path(path).read_text())
+        self.assertNotIn(("GET", "/job_board/v0/acme-sandbox/job_posts/", None), self.ats.requests)
+        conn = store.open_db(self.home)
+        try:
+            self.assertEqual(conn.execute("SELECT closed FROM postings WHERE key = ?", (stored.key,)).fetchone()[0], 1)
+        finally:
+            conn.close()
 
 
 class TeamtailorPersonioRunTest(RunFixture):
