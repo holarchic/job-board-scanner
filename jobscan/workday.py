@@ -25,8 +25,9 @@ API = "/wday/cxs/{tenant}/{site}"
 LIST = "/jobs"
 PAGE = 20  # the API's maximum: 21 is refused
 CAP = 2000  # a total some sites report when they hold more (pnc); others report theirs (PwC: 3,864)
+MAX_ROWS = 10 * CAP  # a capped query that never ends a page short fails here
 DATA_CENTRE = re.compile(r"wd\d+")
-REGIONAL = re.compile(r"[a-z]{2}-[a-z]{2,3}", re.IGNORECASE)  # en-US, en-us, es-419: a locale, never a site
+REGIONAL = re.compile(r"[a-z]{2}-(?:[a-z]{2}|\d{3})", re.IGNORECASE)  # en-US, en-us, es-419: a locale, never a site
 LANGUAGE = re.compile(r"[a-z]{2}", re.IGNORECASE)  # `es`: a locale before a site, or a site (`WM`)
 NOT_SITES = frozenset({"wday", "job"})  # the API, and a job page with its site missing
 GEOGRAPHIC = re.compile(r"location|country|city|geograph|region|state|province", re.IGNORECASE)
@@ -86,13 +87,18 @@ class _Value:
     name: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class _Job:
     posting_id: str
     title: str
     path: str
-    text: str  # `locationsText`
-    places: list[str]  # the matched values' names
+    text: str  # `locationsText`, "" for `N Locations`
+
+
+@dataclass(frozen=True)
+class _Found:
+    job: _Job
+    place: str | None  # the name of the filter value it came back under; None from an unfiltered read
 
 
 def read(board: Board, get: Get, places: Places) -> tuple[Posting, ...]:
@@ -101,11 +107,11 @@ def read(board: Board, get: Get, places: Places) -> tuple[Posting, ...]:
     first = _page(get(board.api_url, _body(0, {})))
     values = _place_values(first.facets)
     if not any(GEOGRAPHIC.search(v.parameter) for v in values):
-        return _postings(board, [(row, None) for row in _query(board, get, {}, first)])
+        return _postings(board, [_Found(job, None) for job in _query(board, get, {}, first)])
     found = []
     for value in values:
         if places(value.name):
-            found += [(row, value.name) for row in _query(board, get, {value.parameter: [value.id]})]
+            found += [_Found(job, value.name) for job in _query(board, get, {value.parameter: [value.id]})]
     return _postings(board, found)
 
 
@@ -113,29 +119,30 @@ def _body(offset: int, facets: dict) -> bytes:
     return json.dumps({"limit": PAGE, "offset": offset, "searchText": "", "appliedFacets": facets}).encode()
 
 
-def _query(board: Board, get: Get, facets: dict, first: _Page | None = None) -> list:
-    """Every row one query answers, placeholders included. A total of exactly CAP may be a cap, so paging runs to a
-    short page and needs at least CAP rows; any other total must equal the rows read. Drift checks, best effort: a
-    page before the end coming back empty, an id twice, or a count failing those rules fails the board."""
+def _query(board: Board, get: Get, facets: dict, first: _Page | None = None) -> list[_Job]:
+    """Every job one query answers, its rows counted raw (placeholders included). A total of exactly CAP may be a cap,
+    so paging runs to a short page and needs at least CAP rows, up to MAX_ROWS; any other total must equal the rows
+    read. Drift checks, best effort: a page before the end coming back empty, a job twice, or a count failing those
+    rules fails the board."""
     page = first or _page(get(board.api_url, _body(0, facets)))
-    total, rows, ids = page.total, [], set()
+    total, rows, jobs = page.total, 0, {}
     while True:
         for row in page.rows:
-            path = row.get("externalPath") if isinstance(row, dict) else None
-            if path is not None and path in ids:
+            job = _job(rows, row)
+            rows += 1
+            if job is not None and jobs.setdefault(job.posting_id, job) is not job:
                 raise BoardError("list changed while paging: a job came back twice")
-            ids.add(path)
-        rows += page.rows
-        more = len(page.rows) == PAGE if total == CAP else len(rows) < total
+        more = len(page.rows) == PAGE if total == CAP else rows < total
         if not more:
             break
-        page = _page(get(board.api_url, _body(len(rows), facets)))
+        if rows >= MAX_ROWS:
+            raise BoardError(f"list doesn't end: {rows} rows read")
+        page = _page(get(board.api_url, _body(rows, facets)))
         if not page.rows and total != CAP:
             raise BoardError("list changed while paging: a page came back empty")
-    short = len(rows) < CAP if total == CAP else len(rows) != total
-    if short:
+    if rows < CAP if total == CAP else rows != total:
         raise BoardError("list changed while paging: the rows read don't match the total")
-    return rows
+    return list(jobs.values())
 
 
 def _page(raw: bytes) -> _Page:
@@ -150,51 +157,58 @@ def _page(raw: bytes) -> _Page:
     return _Page(total=total, rows=rows, facets=facets)
 
 
-def _place_values(facets: list) -> list[_Value]:
+def _place_values(facets: list, in_place: bool = False) -> list[_Value]:
     """Every value of the geographic and remote-work filters, groups (`locationMainGroup`) flattened. Other filters
-    (job family, time type) are ignored, malformed or not; a malformed place value fails the board, since skipping it
-    could hide every job in that place."""
+    (job family, time type) are ignored, malformed or not. Anything malformed in a place filter, or in a group under
+    one, fails the board: skipping it could hide every job in that place, and closing them."""
     values = []
     for facet in facets:
         parameter = facet.get("facetParameter") if isinstance(facet, dict) else None
-        if not isinstance(parameter, str):
-            continue
-        listed = facet.get("values")
-        place = GEOGRAPHIC.search(parameter) or ARRANGEMENT.search(parameter)
-        if not isinstance(listed, list):
+        listed = facet.get("values") if isinstance(facet, dict) else None
+        place = in_place or (isinstance(parameter, str) and _is_place(parameter))
+        if not isinstance(parameter, str) or not isinstance(listed, list):
             if place:
-                raise BoardError(f"filter {parameter}: no `values` list")
-            continue
-        nested = [v for v in listed if isinstance(v, dict) and "facetParameter" in v]
-        values += _place_values(nested)
-        if not place:
+                raise BoardError(f"filter {parameter!r}: no `facetParameter` or `values` list")
             continue
         for value in listed:
-            if value in nested:
-                continue
-            if not isinstance(value, dict) or not all(isinstance(value.get(k), str) for k in ("id", "descriptor")):
-                raise BoardError(f"filter {parameter}: a value has no `id` or `descriptor`")
-            values.append(_Value(parameter=parameter, id=value["id"], name=value["descriptor"]))
+            if isinstance(value, dict) and "facetParameter" in value:
+                values += _place_values([value], in_place=place)
+            elif place:
+                values.append(_value(parameter, value))
     return values
 
 
-def _postings(board: Board, found: list[tuple[object, str | None]]) -> tuple[Posting, ...]:
-    """Rows merged by posting id, each job with every place name it matched. Placeholder rows, with neither a title
-    nor a link (one in Autodesk's 395), are skipped: no title filter could match them."""
+def _is_place(parameter: str) -> bool:
+    return bool(GEOGRAPHIC.search(parameter) or ARRANGEMENT.search(parameter))
+
+
+def _value(parameter: str, value) -> _Value:
+    """A place value with a non-empty, printable id and name: printable also rules out a lone surrogate from a JSON
+    escape, which could not be stored."""
+    fields = [value.get(key) if isinstance(value, dict) else None for key in ("id", "descriptor")]
+    if not all(isinstance(f, str) and f.strip() and f.isprintable() for f in fields):
+        raise BoardError(f"filter {parameter}: a value without a usable `id` or `descriptor`")
+    return _Value(parameter=parameter, id=fields[0], name=fields[1].strip())
+
+
+def _postings(board: Board, found: list[_Found]) -> tuple[Posting, ...]:
+    """Jobs merged by posting id, each with every place name it matched; the same job under two names must agree on
+    the title."""
     jobs: dict[str, _Job] = {}
-    for index, (row, place) in enumerate(found):
-        job = _job(index, row)
-        if job is None:
-            continue
-        merged = jobs.setdefault(job.posting_id, job)
-        if merged.title != job.title:
+    places: dict[str, list[str]] = {}
+    for item in found:
+        job = jobs.setdefault(item.job.posting_id, item.job)
+        if job.title != item.job.title:
             raise BoardError(f"job {job.posting_id}: its rows disagree on the title")
-        if place is not None and place not in merged.places:
-            merged.places.append(place)
-    return tuple(_posting(board, job) for job in jobs.values())
+        named = places.setdefault(job.posting_id, [])
+        if item.place is not None and item.place not in named:
+            named.append(item.place)
+    return tuple(_posting(board, job, places[job.posting_id]) for job in jobs.values())
 
 
 def _job(index: int, row) -> _Job | None:
+    """A list row as a job; None for a placeholder, with neither a title nor a link (one in Autodesk's 395): no title
+    filter could match it."""
     if not isinstance(row, dict):
         raise BoardError(f"job {index} is not an object")
     if row.get("title") is None and row.get("externalPath") is None:
@@ -205,13 +219,12 @@ def _job(index: int, row) -> _Job | None:
     if not path.startswith("/job/") or not posting_id:
         raise BoardError(f"job {index}: `externalPath` is not a job path")
     text = (text_field(row, "locationsText", index) or "").strip()
-    return _Job(posting_id=posting_id, title=title, path=path, text="" if SEVERAL.fullmatch(text) else text,
-                places=[])
+    return _Job(posting_id=posting_id, title=title, path=path, text="" if SEVERAL.fullmatch(text) else text)
 
 
-def _posting(board: Board, job: _Job) -> Posting:
+def _posting(board: Board, job: _Job, matched: list[str]) -> Posting:
     tenant, dc, site = board.slug.split(".", 2)
-    places = list(dict.fromkeys(p for p in (job.text, *job.places) if p))
+    places = list(dict.fromkeys(p for p in (job.text, *matched) if p))
     return Posting(key=f"{board.id}:{job.posting_id}", ats=ATS, board=board.id, company=board.company,
                    title=job.title, location=" / ".join(places),
                    url=SITE.format(tenant=tenant, dc=dc) + "/" + quote(site, safe="") + job.path, description="")

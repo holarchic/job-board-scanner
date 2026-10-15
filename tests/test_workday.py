@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest import mock
 
 from jobscan import fetch, workday
 from jobscan.records import BoardError
@@ -17,7 +18,8 @@ class BoardTest(unittest.TestCase):
     def test_site_pages_name_one_board_whatever_the_locale_or_case(self):
         for url in [URL, "https://acme.wd3.myworkdayjobs.com/Careers", "https://ACME.WD3.myworkdayjobs.com/careers",
                     "https://acme.wd3.myworkdayjobs.com/en-us/Careers/job/London/AE_R1",
-                    "https://acme.wd3.myworkdayjobs.com/ko-kr/Careers/details/x", "http://acme.wd3.myworkdayjobs.com/es/CAREERS"]:
+                    "https://acme.wd3.myworkdayjobs.com/ko-kr/Careers/details/x", "http://acme.wd3.myworkdayjobs.com/es/CAREERS",
+                    "https://acme.wd3.myworkdayjobs.com/es-419/Careers"]:
             board = workday.page_board("", url)
             self.assertEqual((board.slug, board.api_url), (
                 "acme.wd3.careers", "https://acme.wd3.myworkdayjobs.com/wday/cxs/acme/careers/jobs"), url)
@@ -118,6 +120,21 @@ class ReadTest(unittest.TestCase):
             with self.assertRaises(BoardError, msg=row):
                 self.read(workday_site([row], {}))
 
+    def test_a_malformed_link_fails_the_board_through_fetch(self):
+        for path in [[], {}]:
+            site = workday_site([{"title": "AE", "externalPath": path, "locationsText": "London"}], {})
+            with mock.patch.object(fetch, "_get", lambda board, url, body=None, site=site: json.dumps(
+                    site(json.loads(body))[1]).encode()):
+                (outcome,) = fetch.fetch_each([BOARD], uk)
+            self.assertIsInstance(outcome, fetch.BoardFailure, path)
+
+    def test_a_capped_list_that_never_ends_a_page_short_fails_the_board(self):
+        def endless(body):
+            return 200, {"total": 2000 if body["offset"] == 0 else 0, "jobPostings": [{"bulletFields": ["x"]}] * 20}
+        with self.assertRaisesRegex(BoardError, "doesn't end"):
+            self.read(endless)
+        self.assertEqual(len(self.asked), workday.MAX_ROWS // 20)
+
     def test_a_list_that_changes_while_paging_fails_the_board(self):
         jobs = [workday_job(f"R{n}", "AE", ["X"]) for n in range(30)]
         site = workday_site(jobs, {})
@@ -144,6 +161,14 @@ class ReadTest(unittest.TestCase):
             self.read(answer([{"facetParameter": "locations", "values": [{"id": "1"}]}]))
         with self.assertRaisesRegex(BoardError, "locationCountry"):
             self.read(answer([{"facetParameter": "locationCountry", "values": "UK"}]))
+        for value in [{"id": "1", "descriptor": "London\ud800"}, {"id": "1", "descriptor": " "},
+                      {"id": "", "descriptor": "London"}, {"id": "1", "descriptor": "Lon\ndon"}]:
+            with self.assertRaisesRegex(BoardError, "usable", msg=value):
+                self.read(answer([{"facetParameter": "locations", "values": [value]}]))
+        for group in [{"facetParameter": None, "values": [{"id": "1", "descriptor": "London"}]},
+                      {"facetParameter": "locationCountry", "values": None}]:  # a broken group under a place filter
+            with self.assertRaises(BoardError, msg=group):
+                self.read(answer([{"facetParameter": "locationMainGroup", "values": [group]}]))
         self.assertEqual(self.read(answer([{"facetParameter": "jobFamily", "values": [{"id": 1}]}, "junk"])), {})
 
     def test_a_malformed_page_fails_the_board(self):

@@ -19,11 +19,7 @@ from tests.fakes import (
 )
 
 
-def split(boards):
-    return split_places(boards, anywhere)
-
-
-def split_places(boards, places):
+def split(boards, places=anywhere):
     outcomes = list(fetch.fetch_each(boards, places))
     return ([o for o in outcomes if isinstance(o, fetch.BoardFetch)],
             [o for o in outcomes if isinstance(o, fetch.BoardFailure)])
@@ -260,7 +256,7 @@ class FetchBoardTest(unittest.TestCase):
             return text == "London"
 
         with mock.patch.object(ashby, "read", read):
-            split_places([self.board("a"), self.board("b")], places)
+            split([self.board("a"), self.board("b")], places)
         self.assertEqual(seen, [places, places])
 
     def test_unreachable_board_is_a_failure(self):

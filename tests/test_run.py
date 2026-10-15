@@ -772,6 +772,11 @@ class WorkdayRunTest(RunFixture):
         for job in ("AE_R1", "AE_R2", "AE_R3"):
             self.detail(job)
 
+        def quoting_the_description(payload):  # a quote only the fetched detail holds
+            return model_reply({**tags_quoting_the_posting(payload),
+                                "tech_company": {"value": "yes", "quote": "We sell software."}})
+        self.model.routes["/chat/completions"] = (200, quoting_the_description)
+
     def detail(self, job, status=200):
         self.ats.routes[f"{self.SITE}/job/{job}"] = (status, workday_detail("<p>We sell software.</p>"))
 
@@ -801,6 +806,9 @@ class WorkdayRunTest(RunFixture):
                       "AE_R1 · Workday · first seen", text)
         self.assertIn("/careers/job/Somewhere/AE_R3 · Workday", text)  # `2 Locations`, placed by its filter value
         self.assertNotIn("⚠", text)
+        self.assertEqual(text.count('tech_company ⓘ: **yes** — "We sell software."'), 2)
+        self.assertTrue(all("We sell software." in body["messages"][0]["content"]
+                            for _, _, body in self.model.requests))
         self.assertIn("describe_done described=2 failed=0", (self.home / "runs.log").read_text())
 
     def test_the_stored_list_follows_the_profiles_places_and_returns_without_redelivery(self):
