@@ -2,7 +2,8 @@
 
 The payload is a bare list of jobs, shaped like Greenhouse's. Parsing is all-or-nothing per board, as for the
 others, except that a demo job is skipped (and closed, if it was open). Gem's trial and integration-sandbox boards
-carry the same six demo jobs, CFO to intern, whose whole description is DEMO; sandbox boards are refused outright."""
+carry the same six demo jobs, CFO to intern, with DEMO as a line of the description (alone, or after the company's
+own blurb); sandbox boards are refused outright."""
 import json
 from urllib.parse import quote
 
@@ -73,7 +74,7 @@ def parse(board: Board, data) -> tuple[Posting, ...]:
     postings = tuple(_posting(board, i, job) for i, job in enumerate(data))
     if len({p.key for p in postings}) != len(postings):
         raise BoardError("duplicate job ids")
-    return tuple(p for p in postings if p.description != DEMO)
+    return tuple(p for p in postings if DEMO not in (line.strip() for line in p.description.splitlines()))
 
 
 def _posting(board: Board, index: int, job) -> Posting:

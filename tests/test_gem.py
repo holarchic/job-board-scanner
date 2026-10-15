@@ -101,7 +101,8 @@ class ParseTest(unittest.TestCase):
     def test_a_demo_job_is_skipped_and_the_rest_of_the_board_read(self):
         jobs = [gem_job("1", "Enterprise Account Executive", content_plain="\n***DEMO JOB POST***\n"),
                 {**gem_job("2", "CFO"), "content_plain": "", "content": "<p>***DEMO JOB POST***</p>"},
-                gem_job("3", "AE", content_plain="Not a ***DEMO JOB POST*** at all."), gem_job("4", "SE")]
+                gem_job("3", "AE", content_plain="Not a ***DEMO JOB POST*** at all."), gem_job("4", "SE"),
+                gem_job("5", "AE", content_plain="Acme is the leading platform.\n ***DEMO JOB POST*** \nApply!")]
         self.assertEqual([p.key for p in gem.parse(self.board, jobs)], ["gem:acme:3", "gem:acme:4"])
 
     def test_no_jobs_is_an_empty_board(self):
