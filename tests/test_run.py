@@ -19,6 +19,7 @@ from unittest import mock
 
 from jobscan import (
     ashby,
+    backup,
     cli,
     crawl,
     digest,
@@ -880,6 +881,28 @@ class WorkdayTwinsRunTest(RunFixture):
         self.discover("careers", "europe", "emea")  # a third site lists it later
         self.assertEqual(self.run_cli()[1][1], "0")
         self.assertEqual(len(self.model.requests), 2)
+
+
+class BackupRunTest(RunFixture):
+    """The first run of new code copies the database before using it; a copy that fails stops the run."""
+
+    def setUp(self):
+        super().setUp()
+        mock.patch.object(backup, "code_identity", lambda: "f" * 64).start()  # code this database hasn't seen
+
+    def test_the_first_run_of_new_code_copies_the_database(self):
+        self.assertEqual(self.run_cli()[0], 0)
+        (copy,) = (self.home / "backups").glob("auto-*-ffffffff.sqlite")
+        self.assertIn(f"backup_done path={copy}", (self.home / "runs.log").read_text())
+        self.assertEqual(self.run_cli()[0], 0)
+        self.assertEqual(len(list((self.home / "backups").glob("auto-*.sqlite"))), 1)
+
+    def test_a_copy_that_fails_stops_the_run_before_any_work(self):
+        with mock.patch.object(os, "link", side_effect=OSError(28, "No space left on device")):
+            code, _ = self.run_cli()
+        self.assertEqual(code, 2)
+        self.assertEqual(self.ats.requests, [])
+        self.assertEqual(self.model.requests, [])
 
 
 class EmailRunTest(RunFixture):

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from jobscan import backup
 from jobscan.config import ConfigError
 from jobscan.records import Board, Company, Posting
 from jobscan.tag import TagDef, TagResult
@@ -65,8 +66,10 @@ class RunRecord:
 
 
 def open_db(home: Path) -> sqlite3.Connection:
-    """Opens (creating if needed) the install's database; a file that can't be opened is a setup error."""
+    """Opens (creating if needed) the install's database; a file that can't be opened is a setup error. Code that
+    hasn't opened it before copies it first (`backup`), before any migration or write."""
     path = home / "jobscan.sqlite"
+    backup.before_open(path)
     try:
         conn = sqlite3.connect(path)
     except sqlite3.Error as e:
