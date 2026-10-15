@@ -288,8 +288,8 @@ def _check_email(text: str) -> EmailConfig:
 
 def _choose_tags() -> list[str]:
     while True:
-        tags = [n for n, summary in tag.builtin_summaries().items()
-                if _answer(f"  {n} — {summary} [y/n]", "y", lambda a: a in ("y", "n")) == "y"]
+        tags = [t.name for t in tag.builtins()
+                if _answer(f"  {t.name} — {t.summary} [y/n]", "y", lambda a: a in ("y", "n")) == "y"]
         if tags:
             return tags
         print("  Pick at least one; you can add your own tags to the profile afterwards.")

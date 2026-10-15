@@ -99,9 +99,22 @@ def builtin_names() -> tuple[str, ...]:
     return tuple(_builtins())
 
 
-def builtin_summaries() -> dict[str, str]:
-    """One line per built-in tag, for people choosing tags; the model never sees it."""
-    return {name: spec["summary"] for name, spec in _builtins().items()}
+@dataclass(frozen=True)
+class BuiltinTag:
+    """A built-in tag as people choosing tags see it; the model never sees `summary`."""
+    name: str
+    summary: str
+    validated: str  # "yes", "no", or "uk": validated only when `eligible_where` names the UK
+
+
+def builtins() -> tuple[BuiltinTag, ...]:
+    return tuple(BuiltinTag(name=name, summary=spec["summary"], validated=_validated(spec))
+                 for name, spec in _builtins().items())
+
+
+def _validated(spec: dict) -> str:
+    validated = spec.get("validated", False)
+    return "uk" if validated == "uk" else "yes" if validated is True else "no"
 
 
 def _builtins() -> dict:

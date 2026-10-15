@@ -7,8 +7,17 @@ from datetime import time
 from pathlib import Path
 from time import monotonic
 
-from jobscan import discover, evaluate, init, mail, notify, scan, schedule, store, tag
-from jobscan.config import EMAIL_FILE, ConfigError, EmailConfig, jobscan_home, load_config, load_email, load_profile
+from jobscan import discover, evaluate, init, mail, notify, report, scan, schedule, store, tag
+from jobscan.config import (
+    EMAIL_FILE,
+    ConfigError,
+    EmailConfig,
+    Profile,
+    jobscan_home,
+    load_config,
+    load_email,
+    load_profile,
+)
 from jobscan.crawl import CrawlError
 
 EXIT_OK, EXIT_INCOMPLETE, EXIT_USAGE = 0, 1, 2
@@ -35,6 +44,14 @@ def main(argv: list[str] | None = None) -> int:
     email_parser = commands.add_parser(
         "email", help="email each digest from your own mail account: asks, sends a test email, then saves")
     email_parser.add_argument("--off", action="store_true", help="stop emailing digests")
+    tags_parser = commands.add_parser(
+        "tags", help="list the tags the model can answer, or show one's definition",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="List the built-in tags (and the profile's custom ones), marking those the profile asks and "
+                    "whether each has been validated against labelled postings. With a NAME, print that tag's "
+                    "definition exactly as the model reads it. Works before `init` too.",
+        epilog="Examples:\n  jobscan tags\n  jobscan tags founding")
+    tags_parser.add_argument("name", nargs="?", help="a tag's name, to show its definition")
     eval_parser = commands.add_parser("eval", help="score the tagging path against a labelled posting set")
     eval_parser.add_argument("set", type=Path, help="JSON list of {id, title, location, description, labels}")
     try:
@@ -52,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
         return _schedule(home, args.at)
     if args.command == "email":
         return _email(home, args.off)
+    if args.command == "tags":
+        return _tags(home, args.name)
     return _run(home, args.notify)
 
 
@@ -209,6 +228,25 @@ def _discover(home: Path) -> int:
         return EXIT_INCOMPLETE
     print(f"discovered\t{outcome.boards}\t{','.join(outcome.crawls)}")
     return EXIT_OK
+
+
+def _tags(home: Path, name: str | None) -> int:
+    try:
+        profile = _profile_if_any(home)
+        lines = report.tag_list(profile) if name is None else report.tag_detail(name, profile)
+    except ConfigError as e:
+        print(f"jobscan: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    if lines is None:
+        print(f"jobscan: no tag named {name!r}; `jobscan tags` lists them", file=sys.stderr)
+        return EXIT_USAGE
+    print("\n".join(lines))
+    return EXIT_OK
+
+
+def _profile_if_any(home: Path) -> Profile | None:
+    """None before `init` has written a profile; a broken profile is still a ConfigError."""
+    return load_profile(home) if any((home / "profiles").glob("*.toml")) else None
 
 
 def _eval(home: Path, set_path: Path) -> int:
