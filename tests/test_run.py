@@ -27,6 +27,7 @@ from jobscan import (
     gem,
     greenhouse,
     notify,
+    oracle,
     personio,
     rippling,
     scan,
@@ -49,6 +50,9 @@ from tests.fakes import (
     gem_job,
     greenhouse_job,
     model_reply,
+    oracle_detail,
+    oracle_job,
+    oracle_page,
     patch_smtp,
     personio_feed,
     personio_position,
@@ -100,6 +104,7 @@ class RunFixture(unittest.TestCase):
         pages = [(adapter, "BOARD_PAGE", f"{self.ats.url}/page/{adapter.ATS}/{{slug}}")
                  for adapter in (ashby, gem, personio, rippling)]
         pages.append((workday, "SITE", self.ats.url + "/workday/{tenant}.{dc}"))  # Workday's API is on each site
+        pages.append((oracle, "SITE", self.ats.url + "/oracle/{pod}.{region}"))  # so are Oracle's API and pages
         for target, name, value in [(fetch, "RETRY_PAUSES", (0, 0)), (tag, "PAUSE", 0),
                                     (tag, "RATE_LIMIT_PAUSES", (0, 0, 0, 0)), *pages]:
             patcher = mock.patch.object(target, name, value)
@@ -883,6 +888,78 @@ class WorkdayTwinsRunTest(RunFixture):
         self.assertEqual(len(self.model.requests), 2)
 
 
+class OracleRunTest(RunFixture):
+    """Oracle sites read whole: matched postings described and named from the site page, one entry per job across a
+    pod's sites, and a read that comes up short closing nothing."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_config(boards_file=False)
+        self.boards = [oracle.page_board("", f"https://acme.fa.em2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/{s}")
+                       for s in ("CX", "HTV")]
+        conn = store.open_db(self.home)
+        try:
+            store.replace_discovered(conn, [*self.boards, *SENTINELS],
+                                     datetime.now(UTC).isoformat(timespec="microseconds"))
+            with conn:
+                conn.execute("UPDATE boards SET not_found = ? WHERE slug = 'sentinel'", (store.DEAD_AFTER,))
+        finally:
+            conn.close()
+        self.sites = {"cx": [oracle_job("42", "Account Executive", "London, United Kingdom"),
+                             oracle_job("43", "Account Executive", "Paris, France")],
+                      "htv": [oracle_job("42", "Account Executive", "London, United Kingdom")]}
+        for site in self.sites:
+            self.list(site)
+            self.route(oracle.PAGE_PATH.format(site=site), "<html><title>Acme Television</title></html>")
+            for job in self.sites[site]:
+                self.route(oracle.DETAIL.format(site=site, id=job["Id"]),
+                           oracle_detail(ExternalDescriptionStr="<p>We sell software.</p>"))
+
+        def quoting_the_description(payload):  # a quote only the fetched detail holds
+            return model_reply({**tags_quoting_the_posting(payload),
+                                "tech_company": {"value": "yes", "quote": "We sell software."}})
+        self.model.routes["/chat/completions"] = (200, quoting_the_description)
+
+    def route(self, path, answer):
+        self.ats.routes["/oracle/acme.em2" + path] = (200, answer)
+
+    def list(self, site, total=None):
+        self.route(oracle.LIST.format(site=site, limit=200, offset=0), oracle_page(self.sites[site], total=total))
+
+    def asked(self, word):
+        return [path for _, path, _ in self.ats.requests if word in path]
+
+    def test_a_job_on_two_sites_of_a_pod_is_described_named_and_shown_once(self):
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "1"))
+        text = Path(path).read_text()
+        self.assertEqual(text.count("## Acme Television — Account Executive"), 1)
+        self.assertIn("/hcmUI/CandidateExperience/en/sites/cx/job/42 · Oracle", text)
+        self.assertIn("We sell software.", json.dumps(self.model.requests))  # the fetched description was tagged
+        self.assertEqual(len(self.model.requests), 1)
+        self.assertEqual(len(self.asked("recruitingCEJobRequisitionDetails")), 1)
+        self.assertEqual(self.asked("/hcmUI/CandidateExperience/en/sites/"), [
+            "/oracle/acme.em2/hcmUI/CandidateExperience/en/sites/cx"])
+        self.assertIn("twins_skipped postings=1", (self.home / "runs.log").read_text())
+        self.assertEqual(self.run_cli()[1][1], "0")
+        self.assertEqual(len(self.model.requests), 1)
+
+    def test_a_read_that_comes_up_short_fails_the_board_and_closes_nothing(self):
+        self.assertEqual(self.run_cli()[0], 0)
+        self.list("cx", total=10)  # one job of ten
+        self.list("htv", total=10_001)
+        self.run_cli()
+        log = (self.home / "runs.log").read_text()
+        self.assertIn("read 2 jobs of a count of 10", log)
+        self.assertIn("over 10,000 jobs", log)
+        conn = store.open_db(self.home)
+        try:
+            closed = dict(conn.execute("SELECT key, closed FROM postings WHERE ats = 'oracle'"))
+        finally:
+            conn.close()
+        self.assertEqual(closed, {"oracle:acme.em2.cx:42": 0, "oracle:acme.em2.cx:43": 0, "oracle:acme.em2.htv:42": 0})
+
+
 class BackupRunTest(RunFixture):
     """The first run of new code copies the database before using it; a copy that fails stops the run."""
 
@@ -1125,8 +1202,8 @@ class BoardSourcesTest(RunFixture):
         self.assertEqual(self.run_cli()[1][1], "2")
 
 
-DISCOVERED = ["ashby:acme", "gem:gem-acme", "greenhouse:gh-acme", "greenhouse:gh-eu", "personio:pe-acme",
-              "rippling:rp-acme", "smartrecruiters:sr-acme", "teamtailor:tt-acme",
+DISCOVERED = ["ashby:acme", "gem:gem-acme", "greenhouse:gh-acme", "greenhouse:gh-eu", "oracle:or-acme.em2.cx",
+              "personio:pe-acme", "rippling:rp-acme", "smartrecruiters:sr-acme", "teamtailor:tt-acme",
               "workday:wd-acme.wd3.careers"]  # never Workable
 
 
@@ -1163,6 +1240,8 @@ class DiscoveryRefreshTest(RunFixture):
                                                         cdx_line("https://careers.smartrecruiters.com/sr-acme"),
                                                         cdx_line("https://ats.rippling.com/rp-acme/jobs"),
                                                         cdx_line("https://wd-acme.wd3.myworkdayjobs.com/Careers"),
+                                                        cdx_line("https://or-acme.fa.em2.oraclecloud.com/hcmUI/"
+                                                                 "CandidateExperience/en/sites/CX"),
                                                         cdx_line("https://www.example.com/")]))
         self.write_config(boards_file=False)
         self.ats.routes["/teamtailor/tt-acme/jobs.rss?per_page=1000"] = (200, teamtailor_feed(

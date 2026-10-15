@@ -8,23 +8,26 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from jobscan import cli, crawl, store
+from jobscan import cli, crawl, oracle, store
 from tests.fakes import FakeFiles, cdx_line, crawl_files, crawl_list
 
 CRAWLS = ("CC-MAIN-2026-39", "CC-MAIN-2026-34", "CC-MAIN-2026-30")
+ORACLE_SITE = "https://or-acme.fa.em2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001"
 
 
 FIRST_LIST = ["ashby:acme", "ashby:beta", "ashby:gamma", "gem:gem-acme", "greenhouse:gh-eu", "greenhouse:gh-us",
-              "personio:pe-acme", "rippling:rp-acme", "smartrecruiters:sr-acme", "teamtailor:tt-acme",
-              "workday:wd-acme.wd3.careers"]
+              "oracle:or-acme.em2.cx_1001", "personio:pe-acme", "rippling:rp-acme", "smartrecruiters:sr-acme",
+              "teamtailor:tt-acme", "workday:wd-acme.wd3.careers"]
 
 
 def captures(*slugs, greenhouse=("gh-us",), greenhouse_eu=("gh-eu",), workable=("wk-acme",), gem=("gem-acme",),
              teamtailor=("tt-acme",), personio_de=("pe-acme",), personio_com=("pe-acme",), sr_jobs=("SR-Acme",),
-             sr_careers=("sr-acme",), rippling=("rp-acme",), workday=("wd-acme.wd3/en-US/Careers",)):
+             sr_careers=("sr-acme",), rippling=("rp-acme",), workday=("wd-acme.wd3/en-US/Careers",),
+             oracle=("or-acme.em2/en/sites/CX_1001",)):
     """One crawl's index lines: Ashby boards, Greenhouse boards on both hosts, Gem boards, Teamtailor and Personio
     subdomains, SmartRecruiters boards on both hosts, Rippling boards (a slug may carry a locale or `embed/` prefix),
-    Workday sites (`<tenant>.<dc>/<path>`), and noise, including Workable boards, which are never discovered."""
+    Workday sites (`<tenant>.<dc>/<path>`), Oracle sites (`<pod>.<region>/<language>/sites/<site>`), and noise,
+    including Workable boards, which are never discovered."""
     return [cdx_line(f"https://jobs.ashbyhq.com/{slug}/job-1") for slug in slugs] + \
         [cdx_line(f"https://job-boards.greenhouse.io/{slug}/jobs/1") for slug in greenhouse] + \
         [cdx_line(f"https://job-boards.eu.greenhouse.io/{slug}") for slug in greenhouse_eu] + \
@@ -42,6 +45,10 @@ def captures(*slugs, greenhouse=("gh-us",), greenhouse_eu=("gh-eu",), workable=(
         [cdx_line(f"https://{host}.myworkdayjobs.com/{path}/job/London/AE_R1") for host, _, path in
          (site.partition("/") for site in workday)] + \
         [cdx_line("https://wd-acme.wd3.myworkdayjobs.com/"), cdx_line("https://www.myworkdayjobs.com/Careers")] + \
+        [cdx_line(f"https://{pod}.fa.{region}.oraclecloud.com/hcmUI/CandidateExperience/{path}/job/1")
+         for pod, region, path in (site.replace(".", "/", 1).split("/", 2) for site in oracle)] + \
+        [cdx_line("https://or-acme-test.fa.em2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001"),
+         cdx_line("https://www.oraclecloud.com/en/careers")] + \
         [cdx_line("https://app.teamtailor.com/login"), cdx_line("https://teamtailor.com/en")] + \
         [cdx_line("https://app.ashbyhq.com/login"), cdx_line("https://www.example.com/")]
 
@@ -84,7 +91,7 @@ class DiscoverTest(unittest.TestCase):
             conn.close()
 
     def test_union_of_three_crawls_case_folded(self):
-        self.assertEqual(self.run_cli(), (0, "discovered\t11\t" + ",".join(CRAWLS)))
+        self.assertEqual(self.run_cli(), (0, "discovered\t12\t" + ",".join(CRAWLS)))
         self.assertEqual(self.discovered(), [
             ("ashby:acme", "https://api.ashbyhq.com/posting-api/job-board/acme"),
             ("ashby:beta", "https://api.ashbyhq.com/posting-api/job-board/beta"),
@@ -92,6 +99,7 @@ class DiscoverTest(unittest.TestCase):
             ("gem:gem-acme", "https://api.gem.com/job_board/v0/gem-acme/job_posts/"),
             ("greenhouse:gh-eu", "https://boards-api.greenhouse.io/v1/boards/gh-eu/jobs?content=true"),
             ("greenhouse:gh-us", "https://boards-api.greenhouse.io/v1/boards/gh-us/jobs?content=true"),
+            ("oracle:or-acme.em2.cx_1001", oracle.page_board("", ORACLE_SITE).api_url),
             ("personio:pe-acme", "https://pe-acme.jobs.personio.com/xml?language=en"),
             ("rippling:rp-acme", "https://ats.rippling.com/api/v2/board/rp-acme/jobs"),
             ("smartrecruiters:sr-acme", "https://api.smartrecruiters.com/v1/companies/sr-acme/postings"),
@@ -106,8 +114,9 @@ class DiscoverTest(unittest.TestCase):
         self.assertEqual(self.run_cli()[0], 0)
         self.assertEqual([b for b, _ in self.discovered()],
                          ["ashby:acme", "gem:gem-acme", "greenhouse:ep+co", "greenhouse:eu-only", "greenhouse:gh-eu",
-                          "greenhouse:shared", "greenhouse:us-only", "personio:pe-acme", "rippling:rp-acme",
-                          "smartrecruiters:sr-acme", "teamtailor:tt-acme", "workday:wd-acme.wd3.careers"])
+                          "greenhouse:shared", "greenhouse:us-only", "oracle:or-acme.em2.cx_1001", "personio:pe-acme",
+                          "rippling:rp-acme", "smartrecruiters:sr-acme", "teamtailor:tt-acme",
+                          "workday:wd-acme.wd3.careers"])
 
     def test_gem_slugs_keep_their_case_and_workable_is_never_discovered(self):
         self.serve({CRAWLS[0]: captures("acme", workable=("Mixed", "mixed"), gem=("Gem-B", "gem-b")),
@@ -142,6 +151,15 @@ class DiscoverTest(unittest.TestCase):
             ("workday:wd-acme.wd3.careers", "https://wd-acme.wd3.myworkdayjobs.com/wday/cxs/wd-acme/careers/jobs"),
             ("workday:wd-acme.wd5.careers", "https://wd-acme.wd5.myworkdayjobs.com/wday/cxs/wd-acme/careers/jobs"),
             ("workday:wm.wd12.wm", "https://wm.wd12.myworkdayjobs.com/wday/cxs/wm/wm/jobs")])
+
+    def test_oracle_sites_fold_their_languages_keep_their_region_and_skip_test_pods(self):
+        first = ("or-acme.em2/en/sites/CX_1001", "or-acme.em2/fr/sites/cx_1001")
+        second = ("or-acme.em3/pt-BR/sites/CX_1001", "or-acme-dev2.em2/en/sites/CX")
+        self.serve({CRAWLS[0]: captures("acme", oracle=first), CRAWLS[1]: captures("acme", oracle=second),
+                    CRAWLS[2]: captures("acme")})
+        self.assertEqual(self.run_cli()[0], 0)
+        self.assertEqual([b for b, _ in self.discovered() if b.startswith("oracle")],
+                         ["oracle:or-acme.em2.cx_1001", "oracle:or-acme.em3.cx_1001"])
 
     def test_rippling_slugs_keep_their_case_past_a_locale_or_embed_prefix(self):
         self.serve({CRAWLS[0]: captures("acme", rippling=("en-GB/Mixed-Case", "embed/mixed-case")),

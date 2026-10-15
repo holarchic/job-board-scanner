@@ -298,6 +298,26 @@ def workday_detail(description="<p>Sell our software in London.</p>"):
             "hiringOrganization": {"name": "Acme Ltd (UK)"}}
 
 
+def oracle_job(job_id, title, place="London, United Kingdom", secondary=(), workplace=None):
+    """An Oracle jobs-list row with only the fields the adapter asks for."""
+    return {"Id": job_id, "Title": title, "PrimaryLocation": place, "WorkplaceTypeCode": workplace,
+            "secondaryLocations": [{"Name": name} for name in secondary]}
+
+
+def oracle_page(jobs, offset=0, total=None, size=200):
+    """The page of an Oracle jobs list at `offset`: up to `size` rows (200, the API's page), the count reported on
+    every page (`total` overrides it)."""
+    return {"items": [{"TotalJobsCount": len(jobs) if total is None else total,
+                       "requisitionList": list(jobs[offset:offset + size])}]}
+
+
+def oracle_detail(**sections):
+    """An Oracle job detail: each section named (`ExternalDescriptionStr=…`) holds that HTML, the others null."""
+    return {"items": [{"Id": "1", "Title": "Account Executive", "CorporateDescriptionStr": None,
+                       "OrganizationDescriptionStr": None, "ExternalDescriptionStr": None,
+                       "ExternalResponsibilitiesStr": None, "ExternalQualificationsStr": None, **sections}]}
+
+
 def model_reply(tags: dict, cost: float = 0.0005):
     """An OpenRouter-shaped chat-completions response carrying `tags` as the message content."""
     return 200, {"choices": [{"message": {"content": json.dumps(tags)}}], "usage": {"cost": cost}}
