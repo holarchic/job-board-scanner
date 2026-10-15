@@ -23,7 +23,8 @@ SET_UP = """Set up, in order (a person in a terminal, or an agent by flags):
   7. jobscan schedule --at 08:00   macOS: a daily run, with a notification when there's something new
 
 The profile is profiles/NAME.toml: edit it by hand (titles, exclude_titles, locations, eligible_where, tags,
-[custom_tags.NAME]), then `jobscan check`. `jobscan tags` lists the tags.
+[custom_tags.NAME]), then `jobscan check`. `jobscan titles` suggests titles to add or leave out; `jobscan tags`
+lists the tags.
 Secrets never go on the command line: the key comes from stdin or OPENROUTER_API_KEY, the app password from stdin.
 Exit codes: 0 done; 1 finished with something left undone (untagged postings carried over, a digest not written or
 emailed, a test email refused, a run holding the database); 2 a config or usage error, before any work.

@@ -93,7 +93,7 @@ jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line f
 
 `run` prints the search name, the count of new postings and the digest's path, in `~/.jobscan/digests/<search>/`.
 
-**With an agent.** Every step also works without a terminal, so a coding agent can set it up for you: point it at this repo and have it read `jobscan --help`, which lists the steps in order with examples. `init` and `email` take flags instead of asking, the key and the app password are read from stdin, and `jobscan check` confirms the install loads. After the first run, `jobscan preview` shows what your titles match among the stored postings, so you can tune them without another run.
+**With an agent.** Every step also works without a terminal, so a coding agent can set it up for you: point it at this repo and have it read `jobscan --help`, which lists the steps in order with examples. `init` and `email` take flags instead of asking, the key and the app password are read from stdin, and `jobscan check` confirms the install loads. After the first run, `jobscan titles` suggests titles to add or leave out and `jobscan preview` shows what your titles match among the stored postings, so you can tune them without another run.
 
 ## Commands
 
@@ -102,6 +102,7 @@ jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line f
 | `jobscan init` | Asks for your search, your OpenRouter key and, optionally, an email account; writes `~/.jobscan`. With flags (`--name`, `--title`, `--location`, `--eligible-where`, `--key-stdin`…) it asks nothing |
 | `jobscan check` | Loads the install as a run would and shows what it holds, or the first problem |
 | `jobscan preview` | What your search matches among the postings the last run stored: new jobs, the cost to tag them, samples |
+| `jobscan titles` | The model suggests other titles your jobs go by and near-misses to leave out, each with how many stored postings it would add or drop. Writes nothing |
 | `jobscan tags [NAME]` | Lists the tags, or shows one's full definition |
 | `jobscan boards` · `boards add URL…` | Lists, or adds to, your boards file |
 | `jobscan run [--notify]` | Fetch, filter, tag, write the digest. `--notify` raises a Mac notification on news or a problem |
