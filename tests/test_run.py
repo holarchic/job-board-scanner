@@ -287,7 +287,8 @@ class WorkableGemRunTest(RunFixture):
 class TeamtailorPersonioRunTest(RunFixture):
     def setUp(self):
         super().setUp()
-        for adapter, feed in [(teamtailor, "/teamtailor/{slug}/jobs.rss"), (personio, "/personio/{slug}/xml")]:
+        for adapter, feed in [(teamtailor, "/teamtailor/{slug}/jobs.rss"),
+                              (personio, "/personio/{slug}/xml?language=en")]:
             mock.patch.object(adapter, "FEED", self.ats.url + feed).start()
         (self.home / "boards.json").write_text(json.dumps({"companies": [
             {"company": "Initech", "board_url": "https://initech.teamtailor.com/jobs"},
@@ -296,7 +297,7 @@ class TeamtailorPersonioRunTest(RunFixture):
         self.feed = [teamtailor_item("tt1", "Account Executive"), teamtailor_item("tt2", "Engineer")]
         self.ats.routes["/teamtailor/initech/jobs.rss?per_page=1000"] = (
             200, lambda _: (200, teamtailor_feed(*self.feed)))
-        self.ats.routes["/personio/hooli/xml"] = (200, personio_feed(
+        self.ats.routes["/personio/hooli/xml?language=en"] = (200, personio_feed(
             personio_position("p1", "Account Executive", "London", additional=["Berlin"]),
             personio_position("p2", "Engineer")))
 
@@ -317,11 +318,27 @@ class TeamtailorPersonioRunTest(RunFixture):
         self.assertNotIn("⚠", text)
         self.assertEqual(self.run_cli()[1][1:], ["0", "-"])
 
+    def test_a_german_only_personio_job_is_tagged_on_the_default_feeds_text(self):
+        german = [("Deine Rolle", "<p>Du verkaufst Software.</p>")]
+        self.ats.routes["/personio/hooli/xml?language=en"] = (200, personio_feed(
+            personio_position("p1", "Account Executive", "London", sections=[])))
+        self.ats.routes["/personio/hooli/xml"] = (200, personio_feed(
+            personio_position("p1", "Account Executive", "London", sections=german)))
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        self.assertIn("## Hooli — Account Executive · London\n", Path(path).read_text())
+        conn = store.open_db(self.home)
+        try:
+            (description,) = conn.execute("SELECT description FROM postings WHERE key = 'personio:hooli:p1'").fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(description, "Deine Rolle\nDu verkaufst Software.")
+
     def test_a_personio_job_that_loses_its_name_closes_and_reopens_without_a_second_delivery(self):
         named = personio_position("p1", "Account Executive", "London")
         for position, new, open_roles in [(named, "2", 1), (personio_position("p1", " ", "London"), "0", 0),
                                           (named, "0", 1)]:
-            self.ats.routes["/personio/hooli/xml"] = (200, personio_feed(position))
+            self.ats.routes["/personio/hooli/xml?language=en"] = (200, personio_feed(position))
             self.assertEqual(self.run_cli()[1][1], new)
             conn = store.open_db(self.home)
             try:

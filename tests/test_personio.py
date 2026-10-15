@@ -35,6 +35,50 @@ class BoardTest(unittest.TestCase):
         self.assertIsNone(fetch.board_for("", "https://careers.example.com/xml"))
 
 
+class ReadTest(unittest.TestCase):
+    """The English feed, and the default-language feed only when some named job has no English text."""
+
+    def read(self, english, default=None):
+        feeds = {FEED: personio_feed(*english)}
+        if default is not None:
+            feeds["https://acme.jobs.personio.com/xml"] = personio_feed(*default)
+        asked = []
+
+        def get(url):
+            asked.append(url)
+            return feeds[url].encode()
+        return personio.read(BOARD, get), asked
+
+    def test_english_text_needs_one_request(self):
+        postings, asked = self.read([personio_position("1", "AE"), personio_position("2", " ", sections=[])])
+        self.assertEqual([p.description for p in postings], ["Your role\nAE role. We sell software."])
+        self.assertEqual(asked, [FEED])
+
+    def test_a_job_with_no_english_text_takes_the_default_feeds_by_id(self):
+        german = [("Deine Rolle", "<p>Du verkaufst Software.</p>")]
+        english = [personio_position("1", "AE", sections=[]), personio_position("2", "SE", sections=[("Role", "")]),
+                   personio_position("3", "PM", sections=[("Role", "<p> </p>")]), personio_position("4", "CSM")]
+        default = [personio_position(i, "x", sections=german) for i in ("4", "3", "2", "1")]
+        postings, asked = self.read(english, default)
+        self.assertEqual(asked, [FEED, "https://acme.jobs.personio.com/xml"])
+        german_text = "Deine Rolle\nDu verkaufst Software."
+        self.assertEqual([(p.title, p.description) for p in postings],
+                         [("AE", german_text), ("SE", german_text), ("PM", german_text),
+                          ("CSM", "Your role\nCSM role. We sell software.")])
+        self.assertTrue(tag.verify_quote("Du verkaufst Software.", postings[0]))
+
+    def test_a_job_with_text_in_neither_feed_keeps_the_english_one(self):
+        postings, _ = self.read([personio_position("1", "AE", sections=[("Role", "")])],
+                                [personio_position("1", "AE", sections=[("Rolle", "")])])
+        self.assertEqual(postings[0].description, "Role")
+
+    def test_feeds_listing_different_jobs_fail_the_board(self):
+        for default in [[personio_position("1", "AE")], [personio_position("1", "AE"), personio_position("3", "x")],
+                        [personio_position("1", "AE"), personio_position("2", "x"), personio_position("4", " ")]]:
+            with self.assertRaisesRegex(BoardError, "feeds disagree", msg=default):
+                self.read([personio_position("1", "AE", sections=[]), personio_position("2", "SE")], default)
+
+
 class ParseTest(unittest.TestCase):
     def test_posting_fields(self):
         position = personio_position(
