@@ -26,6 +26,7 @@ from jobscan import (
     fetch,
     gem,
     greenhouse,
+    init,
     notify,
     oracle,
     personio,
@@ -1111,6 +1112,42 @@ class CustomTagsTest(RunFixture):
         text = Path(path).read_text()
         self.assertEqual(text.count(digest.LEGEND), 1)
         self.assertEqual(text.count('- motion ⓘ: **b2b** — "We sell software."'), 2)
+
+
+class AgentSetupTest(RunFixture):
+    """The set-up an agent runs, with no terminal: every step by flags, secrets on stdin, then a run and a preview."""
+
+    def setUp(self):
+        super().setUp()
+        for name in ("config.toml", "listed.json", "profiles/ae.toml"):
+            (self.home / name).unlink()
+        self.calls = []
+        for patcher in patch_smtp(self.calls):
+            patcher.start()
+        # init writes the OpenRouter config; here the model is the fake one.
+        mock.patch.object(init, "CONFIG", f'[model]\nbase_url = "{self.model.url}"\nslug = "test/model"\n').start()
+
+    def step(self, *argv, stdin=""):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
+                mock.patch("sys.stdin", io.StringIO(stdin)):
+            code = cli.main(list(argv))
+        self.assertEqual(code, 0, (argv, err.getvalue()))
+        return out.getvalue()
+
+    def test_flags_alone_set_up_an_install_that_runs_and_previews(self):
+        self.step("init", "--name", "ae", "--title", "Account Executive", "--location", "London",
+                  "--eligible-where", "the UK", "--key-stdin", stdin="sk-or-v1-abc\n")
+        self.step("email", "--to", "me@gmail.com", "--password-stdin", stdin="abcd efgh ijkl mnop\n")
+        self.step("boards", "add", f"{self.ats.url}/posting-api/job-board/acme", "--company", "Acme")
+        self.assertIn("OK: `jobscan run` can start.", self.step("check"))
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        self.assertIn("## Acme — Enterprise Account Executive · London", Path(path).read_text())
+        self.assertEqual(sum(1 for name, _ in self.calls if name == "send"), 2)  # the test email, then the digest
+        out = self.step("preview")
+        self.assertIn("new jobs the next run would tag: 0", out)
+        self.assertIn("already sent to you: 2", out)
 
 
 class BoardSourcesTest(RunFixture):
