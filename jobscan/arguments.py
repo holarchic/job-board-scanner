@@ -1,0 +1,200 @@
+"""jobscan's commands, flags and help text. `jobscan --help` lays out set-up in order, and each command's help has
+examples, so a person or an agent can set an install up from the help alone."""
+import argparse
+from datetime import time
+from pathlib import Path
+
+DESCRIPTION = """Self-hosted job-board scanner. jobscan finds company job boards itself (Ashby, Greenhouse, Gem,
+Teamtailor, Personio, SmartRecruiters, Rippling, Workday and Oracle sites, from Common Crawl; Workable boards from the
+boards file), keeps the postings whose titles and locations match your search, has a language model answer your tags
+about each one, quoting the posting, and writes a markdown digest of what is new: emailed if you like, daily if you
+schedule it. Everything lives under $JOBSCAN_HOME (default ~/.jobscan)."""
+SET_UP = """Set up, in order (a person in a terminal, or an agent by flags):
+  1. jobscan init                  the search and the OpenRouter key (openrouter.ai/keys)
+       printf '%s\\n' "$KEY" | jobscan init --name ae --title 'Account Executive' \\
+           --location London --location Remote --eligible-where 'the UK' --key-stdin
+  2. jobscan email                 optional: each digest emailed from your own Gmail or iCloud account
+       printf '%s\\n' "$APP_PASSWORD" | jobscan email --to me@gmail.com --password-stdin
+  3. jobscan boards add URL        optional: a company discovery misses
+  4. jobscan check                 the install loads as a run would; run it after editing the profile
+  5. jobscan run                   fetch, filter, tag, write the digest; the first run finds the boards too and
+                                   tags every match, so it can take over an hour
+  6. jobscan preview               what the profile matches among the stored postings: tune titles without a run
+  7. jobscan schedule --at 08:00   macOS: a daily run, with a notification when there's something new
+
+The profile is profiles/NAME.toml: edit it by hand (titles, exclude_titles, locations, eligible_where, tags,
+[custom_tags.NAME]), then `jobscan check`. `jobscan tags` lists the tags.
+Secrets never go on the command line: the key comes from stdin or OPENROUTER_API_KEY, the app password from stdin.
+Exit codes: 0 done; 1 finished with something left undone (untagged postings carried over, a digest not written or
+emailed, a test email refused, a run holding the database); 2 a config or usage error, before any work.
+Every command has --help with examples."""
+
+
+def parser() -> argparse.ArgumentParser:
+    """The commands in the order set-up uses them."""
+    root = argparse.ArgumentParser(prog="jobscan", formatter_class=argparse.RawDescriptionHelpFormatter,
+                                   description=DESCRIPTION, epilog=SET_UP)
+    commands = root.add_subparsers(dest="command", required=True)
+    for add in (_init, _email, _boards, _check, _run, _preview, _schedule, _tags, _discover, _eval):
+        add(commands)
+    return root
+
+
+def clock(text: str) -> time:
+    hour, _, minute = text.partition(":")
+    if not (hour.isdigit() and minute.isdigit() and len(minute) == 2 and int(hour) < 24 and int(minute) < 60):
+        raise argparse.ArgumentTypeError("use HH:MM, 24-hour, e.g. 08:00")
+    return time(int(hour), int(minute))
+
+
+def _command(commands, name: str, summary: str, description: str, examples: list[str]) -> argparse.ArgumentParser:
+    """A command whose help keeps its own line breaks and ends with examples."""
+    return commands.add_parser(name, help=summary, description=description, epilog="Examples:\n" + "\n".join(
+        f"  {line}" for line in examples), formatter_class=argparse.RawDescriptionHelpFormatter)
+
+
+def _init(commands) -> None:
+    command = _command(
+        commands, "init", "set up a search: asks in the terminal, or takes flags; writes config, profile and key",
+        "Write a new install: config.toml, the profile (profiles/NAME.toml) and the OpenRouter key file "
+        "(openrouter.key, readable only by you), under $JOBSCAN_HOME (default ~/.jobscan). With no flags it asks in "
+        "the terminal. With flags it asks nothing: --name, --title, --location and --eligible-where are then "
+        "required; repeat a list flag once per value (a value may hold a comma). Titles and locations match whole "
+        "words, case-folded, anywhere in a posting's title or location text. The key never goes on the command "
+        "line: --key-stdin reads it from stdin, else OPENROUTER_API_KEY is saved. Nothing is written if any value "
+        "is refused, or if the home already holds an install. Next: `jobscan email` (optional), `jobscan check`, "
+        "`jobscan run`.",
+        ["jobscan init",
+         "printf '%s\\n' \"$KEY\" | jobscan init --name ae --title 'Account Executive' \\",
+         "    --title 'Enterprise Account Executive' --exclude-title 'Account Manager' \\",
+         "    --location London --location UK --location Remote \\",
+         "    --eligible-where 'the UK, working from London' --key-stdin",
+         "OPENROUTER_API_KEY=... jobscan init --name pm --title 'Product Manager' --location Berlin \\",
+         "    --eligible-where 'Germany' --tag founding --tag location_eligible"])
+    command.add_argument("--name", help="the search's name: lower-case letters, digits and -")
+    command.add_argument("--title", action="append", default=[], metavar="TITLE",
+                         help="a job title to look for (repeat for each)")
+    command.add_argument("--exclude-title", action="append", default=[], metavar="TITLE",
+                         help="a title to leave out even if it matches (repeat for each)")
+    command.add_argument("--location", action="append", default=[], metavar="PLACE",
+                         help="a place to keep, as job ads write it (repeat for each)")
+    command.add_argument("--eligible-where", metavar="TEXT",
+                         help="where you can work from, in a few words: what the location tag tests")
+    command.add_argument("--tag", action="append", default=[], metavar="NAME",
+                         help="a built-in tag to ask (repeat for each; default: all; see `jobscan tags`)")
+    command.add_argument("--key-stdin", action="store_true", help="read the OpenRouter key from stdin")
+
+
+def _email(commands) -> None:
+    command = _command(
+        commands, "email", "email each digest from your own mail account: asks or takes flags, sends a test, saves",
+        "Email each digest from your own mail account to an address. With no flags it asks in the terminal. With "
+        "flags it asks nothing: --to and --password-stdin are required; the sender defaults to --to, and Gmail and "
+        "iCloud addresses need no server (other providers: --host and --port together). The app password is read "
+        "from stdin, never the command line: Gmail's from myaccount.google.com/apppasswords (needs 2-Step "
+        "Verification), iCloud's from account.apple.com. Outlook.com and Hotmail can't be used (OAuth only). A test "
+        "email is sent first; the settings are saved to email.toml (readable only by you) only once it is accepted. "
+        "Exit 1 when the test email is refused.",
+        ["jobscan email",
+         "printf '%s\\n' \"$APP_PASSWORD\" | jobscan email --to me@gmail.com --password-stdin",
+         "printf '%s\\n' \"$APP_PASSWORD\" | jobscan email --to me@work.example --from me@fastmail.com \\",
+         "    --host smtp.fastmail.com --port 465 --password-stdin",
+         "jobscan email --off"])
+    command.add_argument("--off", action="store_true", help="stop emailing digests")
+    command.add_argument("--to", metavar="ADDRESS", help="where each digest goes")
+    command.add_argument("--from", dest="sender", metavar="ADDRESS",
+                         help="the account that sends it, also the login (default: --to)")
+    command.add_argument("--host", help="the mail (SMTP) server, for a provider other than Gmail or iCloud")
+    command.add_argument("--port", type=int, help="its port: 465 (TLS) or 587 (STARTTLS)")
+    command.add_argument("--password-stdin", action="store_true", help="read the app password from stdin")
+
+
+def _boards(commands) -> None:
+    command = _command(
+        commands, "boards", "list the boards file's boards, or add board URLs to it",
+        "Discovery finds most boards by itself. Companies it misses (a board Common Crawl never captured, or one "
+        "embedded in a company's own careers page) go in the boards file, read by every run beside the discovered "
+        "boards: config.toml's boards_file, else $JOBSCAN_HOME/boards.json. With no subcommand, list it.",
+        ["jobscan boards", "jobscan boards add https://job-boards.greenhouse.io/acme"])
+    add = _command(
+        command.add_subparsers(dest="boards_command"), "add", "add board URLs to the boards file",
+        "Add each board by its careers-page or board URL (Ashby, Greenhouse, Workable, Gem, Teamtailor, Personio, "
+        "SmartRecruiters, Rippling, Workday, Oracle). Every URL is checked first: one no adapter recognises adds "
+        "nothing (exit 2). A board the file lists already is skipped. Without --company, the run looks the "
+        "company's name up. No request is made: the next run reads it.",
+        ["jobscan boards add https://job-boards.greenhouse.io/acme https://apply.workable.com/beta",
+         "jobscan boards add https://acme.wd3.myworkdayjobs.com/Careers --company Acme"])
+    add.add_argument("urls", nargs="+", metavar="URL", help="a board or careers-page URL")
+    add.add_argument("--company", help="the company's name for the digest (one URL only)")
+
+
+def _check(commands) -> None:
+    _command(
+        commands, "check", "load the install as a run would and print what it holds, or the first problem",
+        "Load config.toml, the key, the profile and its tags, email.toml and the boards file exactly as `jobscan "
+        "run` loads them here, then the key as a scheduled run reads it (with no shell environment). Prints what "
+        "the install holds, or the first problem with exit 2. Reads only: no network, no database. Run it after "
+        "editing the profile by hand.",
+        ["jobscan check", "$EDITOR ~/.jobscan/profiles/*.toml && jobscan check"])
+
+
+def _run(commands) -> None:
+    command = _command(
+        commands, "run", "fetch → filter → tag → write the profile's digest",
+        "Rediscover boards when the list is over 30 days old, fetch every board, keep the postings matching the "
+        "profile's titles and locations, have the model answer the profile's tags about each new one, and write "
+        "digests/NAME/DATE.md; email it when email is set up. Prints `NAME<tab>NEW<tab>DIGEST PATH`. Exit 1 leaves "
+        "untagged postings for the next run; logs go to runs.log.",
+        ["jobscan run", "jobscan run --notify"])
+    command.add_argument("--notify", action="store_true",
+                         help="macOS: a desktop notification on new postings or a problem")
+
+
+def _preview(commands) -> None:
+    _command(
+        commands, "preview", "what the saved profile matches among the postings the last run stored",
+        "Count what the saved profile's titles, excluded titles and locations match among the open postings in the "
+        "database: new jobs as the next run would count and tag them (one per job, none already sent), with the "
+        "tagging cost, postings already sent, and samples, plus samples of what the excluded titles leave out. Edit "
+        "the profile, then preview again, to tune a search without a run. A snapshot of what the last run stored: "
+        "it fetches nothing, so before the first run there is nothing to preview. It waits for no run: while one "
+        "is going, exit 1. The first time new code opens the database it backs it up first, as a run would.",
+        ["jobscan preview", "$EDITOR ~/.jobscan/profiles/*.toml && jobscan check && jobscan preview"])
+
+
+def _schedule(commands) -> None:
+    command = _command(
+        commands, "schedule", "macOS: run every day at a set time, even after sleep (launchd); elsewhere: a cron line",
+        "On macOS, install a launchd job running `jobscan run --notify` daily at --at; a slot missed while the Mac "
+        "slept runs on wake. Elsewhere, print the cron line to add. Use the installed `jobscan`, not a checkout.",
+        ["jobscan schedule --at 08:00", "jobscan schedule --off"])
+    when = command.add_mutually_exclusive_group(required=True)
+    when.add_argument("--at", type=clock, metavar="HH:MM", help="daily run time, 24-hour clock")
+    when.add_argument("--off", action="store_true", help="remove the scheduled run")
+
+
+def _tags(commands) -> None:
+    command = _command(
+        commands, "tags", "list the tags the model can answer, or show one's definition",
+        "List the built-in tags (and the profile's custom ones), marking those the profile asks and whether each "
+        "has been validated against labelled postings. With a NAME, print that tag's definition exactly as the "
+        "model reads it. Works before `init` too.",
+        ["jobscan tags", "jobscan tags founding"])
+    command.add_argument("name", nargs="?", help="a tag's name, to show its definition")
+
+
+def _discover(commands) -> None:
+    _command(
+        commands, "discover", "rebuild the board list from the newest Common Crawl crawls (monthly)",
+        "Rebuild the discovered board list from the three newest Common Crawl crawls (about 90 seconds). `run` "
+        "does this itself when the list is over 30 days old; run it by hand only to refresh sooner.",
+        ["jobscan discover"])
+
+
+def _eval(commands) -> None:
+    command = _command(
+        commands, "eval", "score the tagging path against a labelled posting set",
+        "Tag a labelled set of postings through the same code `run` uses and score each tag's accuracy, minority "
+        "recall and quote rate. Predictions are saved under $JOBSCAN_HOME/eval/.",
+        ["jobscan eval my-labelled-set.json"])
+    command.add_argument("set", type=Path, help="JSON list of {id, title, location, description, labels}")
