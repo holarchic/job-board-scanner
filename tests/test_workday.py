@@ -128,6 +128,22 @@ class ReadTest(unittest.TestCase):
                 (outcome,) = fetch.fetch_each([BOARD], uk)
             self.assertIsInstance(outcome, fetch.BoardFailure, path)
 
+    def test_an_exact_total_beyond_the_capped_reads_limit_is_read_in_full(self):
+        jobs = [workday_job(f"R{n}", "AE", ["X"]) for n in range(workday.MAX_ROWS + 1)]
+        self.assertEqual(len(self.read(workday_site(jobs, {}))), workday.MAX_ROWS + 1)
+
+    def test_one_job_under_two_values_must_keep_its_title(self):
+        site = workday_site([workday_job("R1", "AE", ["London"])], {"locations": ["London", "United Kingdom"]})
+
+        def retitled(body):
+            status, page = site(body)
+            if body["appliedFacets"] == {"locations": ["id-United Kingdom"]}:
+                page = page | {"total": 1, "jobPostings": [page["jobPostings"][0] | {"title": "Director"}]
+                               if page["jobPostings"] else [workday_job("R1", "Director")]}
+            return status, page
+        with self.assertRaisesRegex(BoardError, "disagree on the title"):
+            self.read(retitled)
+
     def test_a_capped_list_that_never_ends_a_page_short_fails_the_board(self):
         def endless(body):
             return 200, {"total": 2000 if body["offset"] == 0 else 0, "jobPostings": [{"bulletFields": ["x"]}] * 20}
@@ -166,10 +182,15 @@ class ReadTest(unittest.TestCase):
             with self.assertRaisesRegex(BoardError, "usable", msg=value):
                 self.read(answer([{"facetParameter": "locations", "values": [value]}]))
         for group in [{"facetParameter": None, "values": [{"id": "1", "descriptor": "London"}]},
+                      {"facetParameter": "", "values": [{"id": "1", "descriptor": "London"}]},
                       {"facetParameter": "locationCountry", "values": None}]:  # a broken group under a place filter
             with self.assertRaises(BoardError, msg=group):
                 self.read(answer([{"facetParameter": "locationMainGroup", "values": [group]}]))
         self.assertEqual(self.read(answer([{"facetParameter": "jobFamily", "values": [{"id": 1}]}, "junk"])), {})
+        grouped = [{"facetParameter": "locationMainGroup", "values": [
+            {"facetParameter": "jobFamilyGroup", "values": [{"id": 1}, {"id": "s", "descriptor": "London Sales"}]}]}]
+        self.assertEqual(self.read(answer(grouped)), {})  # a non-place filter in a place group is ignored
+        self.assertEqual(len(self.asked), 1)  # and read whole: no place filter, so no value queried
 
     def test_a_malformed_page_fails_the_board(self):
         for page in [[], {"total": "3", "jobPostings": []}, {"total": 0, "jobPostings": {}},

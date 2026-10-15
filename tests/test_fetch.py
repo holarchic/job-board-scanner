@@ -243,7 +243,8 @@ class FetchBoardTest(unittest.TestCase):
         self.assertEqual((json.loads(posted), json.loads(fetched)), ({"echo": {"limit": 20}}, {"echo": None}))
         self.assertEqual([(method, payload) for method, _, payload in self.server.requests],
                          [("POST", {"limit": 20}), ("GET", None)])
-        self.assertEqual(self.server.content_types, ["application/json", None])
+        self.assertEqual(self.server.content_types, [("POST", "/wday/cxs/acme/ext/jobs", "application/json"),
+                                                     ("GET", "/wday/cxs/acme/ext/jobs", None)])
 
     def test_places_reach_each_read(self):
         seen = []

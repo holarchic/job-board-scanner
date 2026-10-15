@@ -135,7 +135,7 @@ def _query(board: Board, get: Get, facets: dict, first: _Page | None = None) -> 
         more = len(page.rows) == PAGE if total == CAP else rows < total
         if not more:
             break
-        if rows >= MAX_ROWS:
+        if total == CAP and rows >= MAX_ROWS:
             raise BoardError(f"list doesn't end: {rows} rows read")
         page = _page(get(board.api_url, _body(rows, facets)))
         if not page.rows and total != CAP:
@@ -157,22 +157,23 @@ def _page(raw: bytes) -> _Page:
     return _Page(total=total, rows=rows, facets=facets)
 
 
-def _place_values(facets: list, in_place: bool = False) -> list[_Value]:
-    """Every value of the geographic and remote-work filters, groups (`locationMainGroup`) flattened. Other filters
-    (job family, time type) are ignored, malformed or not. Anything malformed in a place filter, or in a group under
-    one, fails the board: skipping it could hide every job in that place, and closing them."""
+def _place_values(facets: list, in_place_group: bool = False) -> list[_Value]:
+    """Every value of the geographic and remote-work filters, groups (`locationMainGroup`) flattened; each filter is
+    classed by its own parameter. Other filters (job family, time type) are ignored, malformed or not. A malformed
+    place filter, or anything malformed directly in a place group, fails the board: skipping it could hide every job
+    in that place, and close them."""
     values = []
     for facet in facets:
         parameter = facet.get("facetParameter") if isinstance(facet, dict) else None
         listed = facet.get("values") if isinstance(facet, dict) else None
-        place = in_place or (isinstance(parameter, str) and _is_place(parameter))
-        if not isinstance(parameter, str) or not isinstance(listed, list):
-            if place:
-                raise BoardError(f"filter {parameter!r}: no `facetParameter` or `values` list")
+        if not _usable(parameter) or not isinstance(listed, list):
+            if in_place_group or (isinstance(parameter, str) and _is_place(parameter)):
+                raise BoardError(f"filter {parameter!r}: no usable `facetParameter` or `values` list")
             continue
+        place = _is_place(parameter)
         for value in listed:
             if isinstance(value, dict) and "facetParameter" in value:
-                values += _place_values([value], in_place=place)
+                values += _place_values([value], in_place_group=place)
             elif place:
                 values.append(_value(parameter, value))
     return values
@@ -182,13 +183,18 @@ def _is_place(parameter: str) -> bool:
     return bool(GEOGRAPHIC.search(parameter) or ARRANGEMENT.search(parameter))
 
 
+def _usable(text) -> bool:
+    """A non-empty, printable string: printable also rules out a lone surrogate from a JSON escape, which could not
+    be stored."""
+    return isinstance(text, str) and bool(text.strip()) and text.isprintable()
+
+
 def _value(parameter: str, value) -> _Value:
-    """A place value with a non-empty, printable id and name: printable also rules out a lone surrogate from a JSON
-    escape, which could not be stored."""
-    fields = [value.get(key) if isinstance(value, dict) else None for key in ("id", "descriptor")]
-    if not all(isinstance(f, str) and f.strip() and f.isprintable() for f in fields):
+    value_id = value.get("id") if isinstance(value, dict) else None
+    descriptor = value.get("descriptor") if isinstance(value, dict) else None
+    if not _usable(value_id) or not _usable(descriptor):
         raise BoardError(f"filter {parameter}: a value without a usable `id` or `descriptor`")
-    return _Value(parameter=parameter, id=fields[0], name=fields[1].strip())
+    return _Value(parameter=parameter, id=value_id, name=descriptor.strip())
 
 
 def _postings(board: Board, found: list[_Found]) -> tuple[Posting, ...]:
