@@ -53,6 +53,15 @@ def with_remote(places: list[str]) -> list[str]:
     return places if any(REMOTE.search(p.casefold()) for p in places) else [*places, "Remote"]
 
 
+def encodable(text: str) -> bool:
+    """Text that can be stored and written as UTF-8: no lone surrogate (from a JSON escape or a terminal)."""
+    try:
+        text.encode()
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def one_line(text: str) -> str:
     """`text` as one printable line: unprintable characters (zero-width spaces) dropped, any run of whitespace
     (newlines and non-breaking spaces included) one space."""

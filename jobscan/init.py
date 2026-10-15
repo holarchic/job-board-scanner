@@ -28,6 +28,7 @@ from jobscan.config import (
     load_profile,
     usable_key,
 )
+from jobscan.payload import encodable
 
 CONFIG = """# The model that tags postings: DeepSeek V4 Flash on OpenRouter, pinned to one provider and quantisation.
 [model]
@@ -45,9 +46,8 @@ CUSTOM_TAGS_EXAMPLE = """
 """
 NEXT_STEPS = """
 Next:
-  jobscan run                    the first run finds about 4,000 job boards, then tags every matching posting:
-                                 a few hundred, so anything from ten minutes to most of an hour, and roughly
-                                 $0.05 to $0.30. Later runs take minutes.
+  jobscan run                    the first run finds the job boards, then reads them all and tags every
+                                 matching posting, so it can take over an hour. Later runs tag only new ones.
   jobscan schedule --at 08:00    then a run every day, with a notification when there's something new.
 
 Change your search, or add your own tags, in {profile}"""
@@ -144,7 +144,7 @@ def validate(answers: Answers) -> None:
                           ("locations", answers.locations), ("tags", answers.tags),
                           ("where you can work from", [answers.eligible_where])]:
         for value in values:
-            if not value.strip() or value != value.strip() or not _encodable(value):
+            if not value.strip() or value != value.strip() or not encodable(value):
                 raise ConfigError(f"{label}: {value!r} is empty, padded with spaces or not valid text")
     unknown = [t for t in answers.tags if t not in tag.builtin_names()]
     if unknown:
@@ -219,7 +219,7 @@ def app_password(server: MailServer, typed: str) -> str:
 def email_config(to: str, sender: str | None, host: str | None, port: int | None, typed_password: str) -> EmailConfig:
     """The settings the questions would build from these answers, for flags: the sender defaults to `to`, the server
     to the sender's preset; ConfigError names the first answer refused."""
-    sender = sender or to
+    sender = to if sender is None else sender
     for flag, value in [("--to", to), ("--from", sender)]:
         if not is_mailbox(value):
             raise ConfigError(f"{flag}: not an email address (see `jobscan email --help`)")
@@ -382,17 +382,10 @@ def _answer(question: str, default: str | None, valid) -> str:
     prompt = f"{question}{f' [{default}]' if default else ''}: "
     while True:
         answer = input(prompt).strip() or (default or "")
-        if _encodable(answer) and valid(answer):
+        if encodable(answer) and valid(answer):
             return answer
         print("  Not a valid answer; try again.")
 
-
-def _encodable(text: str) -> bool:
-    try:
-        text.encode()
-    except UnicodeEncodeError:  # a lone surrogate from a terminal that sent undecodable bytes
-        return False
-    return True
 
 
 def _items(answer: str) -> bool:

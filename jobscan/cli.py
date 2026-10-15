@@ -32,6 +32,7 @@ from jobscan.config import (
     EmailConfig,
     Profile,
     jobscan_home,
+    key_only_in_environment,
     load_config,
     load_email,
     load_profile,
@@ -169,7 +170,7 @@ EMAIL_FLAGS = ("to", "sender", "host", "port", "password_stdin")
 
 def _email(home: Path, args: argparse.Namespace) -> int:
     """Saves the settings only once a test email is accepted; `--off` works however broken the saved file is."""
-    flagged = any(getattr(args, flag) is not None and getattr(args, flag) is not False for flag in EMAIL_FLAGS)
+    flagged = any(getattr(args, flag) not in (None, False) for flag in EMAIL_FLAGS)  # "" is a flag given
     try:
         if args.off:
             if flagged:
@@ -210,7 +211,7 @@ def _email_settings(args: argparse.Namespace) -> EmailConfig:
 
 def _init(home: Path, args: argparse.Namespace) -> int:
     try:
-        if any(getattr(args, flag) for flag in INIT_FLAGS):
+        if any(getattr(args, flag) not in (None, False, []) for flag in INIT_FLAGS):  # "" is a flag given
             setup = init.init_from(home, _init_answers(args))
         elif not sys.stdin.isatty():
             raise ConfigError("no terminal to ask in: give the flags instead (see `jobscan init --help`)")
@@ -231,7 +232,7 @@ def _init(home: Path, args: argparse.Namespace) -> int:
 
 def _init_answers(args: argparse.Namespace) -> init.Answers:
     missing = [f"--{flag.replace('_', '-')}" for flag in ("name", "title", "location", "eligible_where")
-               if not getattr(args, flag)]
+               if getattr(args, flag) in (None, [])]
     if missing:
         raise ConfigError(f"missing {', '.join(missing)} (see `jobscan init --help`)")
     if args.key_stdin:
@@ -275,28 +276,15 @@ def _check(home: Path) -> int:
         tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
         email = load_email(home)
         listed, unrecognised = fetch.load_boards(config.boards_file) if config.boards_file else (None, 0)
-        warnings = _scheduled_key(home, config)
+        warnings = [f"the key is only in OPENROUTER_API_KEY, which a scheduled run won't see: save it in "
+                    f"{home / KEY_FILE}, readable only by you (chmod 600)"] if key_only_in_environment(home, config) \
+            else []
     except ConfigError as e:
         print(f"jobscan: {e}", file=sys.stderr)
         return EXIT_USAGE
     print("\n".join(report.install(config, profile, email, None if listed is None else len(listed), unrecognised,
                                    _key_source(home, config), warnings)))
     return EXIT_OK
-
-
-def _scheduled_key(home: Path, config: Config) -> list[str]:
-    """The key as launchd's run reads it, with no shell environment: a key file present but unusable is an error, a
-    key only in this shell's environment a warning."""
-    if config.api_key is None:
-        return []
-    try:
-        load_config(home, environ={})
-    except ConfigError:
-        if (home / KEY_FILE).exists():
-            raise
-        return [f"the key is only in OPENROUTER_API_KEY, which a scheduled run won't see: save it in "
-                f"{home / KEY_FILE}, readable only by you (chmod 600)"]
-    return []
 
 
 def _key_source(home: Path, config: Config) -> str:

@@ -1,13 +1,16 @@
 """The boards file as `jobscan boards` edits it: list its entries, add board URLs. Its format and reading rules are
 `fetch`'s; this module only appends, replacing the file in one rename so a run reads the old list or the new."""
+import fcntl
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 from jobscan import fetch
 from jobscan.config import BOARDS_FILE, Config, ConfigError
+from jobscan.payload import encodable
 from jobscan.records import Board
 
 
@@ -42,7 +45,7 @@ def add(file: Path, urls: list[str], company: str | None) -> Added:
     one no adapter knows adds nothing. `company` names the board (one URL only); without it, a run looks it up."""
     if company is not None and len(urls) != 1:
         raise ConfigError("--company names one board: give one URL with it")
-    if company is not None and not (company.strip() and _encodable(company)):
+    if company is not None and not (company.strip() and encodable(company)):
         raise ConfigError("--company: give the company's name as text")
     boards = []
     for url in urls:
@@ -50,25 +53,40 @@ def add(file: Path, urls: list[str], company: str | None) -> Added:
         if board is None:
             raise ConfigError(f"{url}: not a job board URL jobscan knows; nothing was added")
         boards.append(board)
-    data = fetch.read_boards_file(file) if file.exists() else {"companies": []}
-    listed = {board.id for e in data["companies"] if (board := fetch.entry_board(e)) is not None}
-    added, already = [], []
-    for url, board in zip(urls, boards, strict=True):
-        if board.id in listed:
-            already.append(board)
-            continue
-        listed.add(board.id)
-        added.append(board)
-        data["companies"].append({"company": company, "board_url": url} if company else {"board_url": url})
-    if added:
-        _replace(file, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    with _writer_lock(file):  # two adds at once would each write their own read of the file, losing one
+        data = fetch.read_boards_file(file) if file.exists() else {"companies": []}
+        listed = {board.id for e in data["companies"] if (board := fetch.entry_board(e)) is not None}
+        added, already = [], []
+        for url, board in zip(urls, boards, strict=True):
+            if board.id in listed:
+                already.append(board)
+                continue
+            listed.add(board.id)
+            added.append(board)
+            data["companies"].append({"company": company, "board_url": url} if company else {"board_url": url})
+        if added:
+            _replace(file, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     return Added(added=tuple(added), listed_already=tuple(already))
+
+
+@contextmanager
+def _writer_lock(file: Path):
+    """Held only while one `add` reads and replaces the file; a run reads it without the lock (each replacement is
+    one rename)."""
+    lock = file.parent / f".{file.name}.lock"
+    try:
+        handle = lock.open("w")
+    except OSError as e:
+        raise ConfigError(f"could not lock {file} for writing ({type(e).__name__})") from None
+    with handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
 
 
 def _replace(file: Path, text: str) -> None:
     """A text that can't be encoded (a lone surrogate the file escaped) is refused before anything is written; a
     temporary file that can't be removed after a failure is named."""
-    if not _encodable(text):
+    if not encodable(text):
         raise ConfigError(f"{file} holds text that can't be written back (a lone surrogate); fix it by hand")
     try:
         fd, temp = tempfile.mkstemp(dir=file.parent, prefix=".boards-", suffix=".tmp")
@@ -86,10 +104,3 @@ def _replace(file: Path, text: str) -> None:
             left = f"; delete {temp}"
         raise ConfigError(f"could not write {file} ({type(e).__name__}); it is unchanged{left}") from None
 
-
-def _encodable(text: str) -> bool:
-    try:
-        text.encode()
-    except UnicodeEncodeError:
-        return False
-    return True

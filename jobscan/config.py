@@ -117,6 +117,20 @@ def load_config(home: Path, environ: Mapping[str, str] | None = None) -> Config:
     return Config(home=home, boards_file=boards_file, model=model_config, api_key=api_key)
 
 
+def key_only_in_environment(home: Path, config: Config) -> bool:
+    """Whether a scheduled run, which launchd starts with no shell environment, would find no key although this one
+    has it. A key file present but unusable is a ConfigError: the scheduled run would stop on it."""
+    if config.api_key is None:
+        return False
+    try:
+        load_config(home, environ={})
+    except ConfigError:
+        if (home / KEY_FILE).exists():
+            raise
+        return True
+    return False
+
+
 def usable_key(key: str) -> bool:
     """A key that can go in an HTTP header as it is."""
     return bool(key) and key.isascii() and key.isprintable() and " " not in key

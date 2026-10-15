@@ -1,16 +1,18 @@
 """The scriptable set-up commands, through the CLI in a temporary home with no terminal: `tags`, `check`,
 `boards`, `preview`, and `init` and `email` by flags."""
 import contextlib
+import fcntl
 import io
 import json
 import os
 import smtplib
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from jobscan import cli, init, store, tag
+from jobscan import boards, cli, init, store, tag
 from jobscan.config import load_config, load_email, load_profile
 from jobscan.records import Board, Company, Posting
 from tests.fakes import patch_smtp
@@ -37,10 +39,10 @@ class CliHome(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def cli(self, *argv, stdin=""):
-        out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
-                mock.patch("sys.stdin", io.StringIO(stdin)):
+    def cli(self, *argv, stdin="", terminal=False):
+        out, err, typed = io.StringIO(), io.StringIO(), io.StringIO(stdin)
+        typed.isatty = lambda: terminal
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), mock.patch("sys.stdin", typed):
             code = cli.main(list(argv))
         return code, out.getvalue(), err.getvalue()
 
@@ -236,6 +238,15 @@ class InitFlagsTest(CliHome):
             self.assertFalse(self.home.exists(), extra)
             self.assertFalse((self.home.parent / "escape.toml").exists())
 
+    def test_an_empty_flag_is_a_flag_given_and_refused(self):
+        for flags in [("--name", ""),
+                      ("--name", "ae", "--title", "PM", "--location", "London", "--eligible-where", "")]:
+            with mock.patch("builtins.input") as typed:
+                code, _, _ = self.cli("init", *flags, terminal=True)
+            typed.assert_not_called()
+            self.assertEqual(code, 2, flags)
+            self.assertFalse(self.home.exists())
+
     def test_missing_flags_are_named(self):
         code, _, err = self.cli("init", "--name", "ae", "--key-stdin", stdin="sk-or-v1-abc\n")
         self.assertEqual(code, 2)
@@ -295,6 +306,7 @@ class EmailFlagsTest(CliHome):
             (("--to", "me@fastmail.com", "--host", "a b", "--port", "465", "--password-stdin"), "server name"),
             (("--to", "you@gmail.com",), "add --password-stdin"),
             (("--to", "you@gmail.com", "--off"), "--off takes no other flags"),
+            (("--to", "you@gmail.com", "--from", "", "--password-stdin"), "--from: not an email address"),
         ]
         for flags, message in cases:
             code, _, err = self.email(*flags)
@@ -400,6 +412,18 @@ class BoardsTest(CliHome):
             code, _, err = self.cli("boards", "add", GREENHOUSE)
         self.assertEqual(code, 2)
         self.assertRegex(err, r"could not write .*boards.json \(PermissionError\); it is unchanged; delete .*\.boards-")
+
+    def test_an_add_waits_for_another_to_finish_writing(self):
+        with (self.home / ".boards.json.lock").open("w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)  # another `boards add` mid-write
+            done = threading.Event()
+            writer = threading.Thread(target=lambda: (boards.add(self.file, [GREENHOUSE], None), done.set()))
+            writer.start()
+            self.assertFalse(done.wait(0.3))
+            self.file.write_text(json.dumps({"companies": [{"board_url": ASHBY}]}))  # what the other wrote
+        writer.join(5)
+        self.assertEqual(json.loads(self.file.read_text())["companies"],
+                         [{"board_url": ASHBY}, {"board_url": GREENHOUSE}])
 
     def test_no_file_yet_says_where_add_writes(self):
         code, out, _ = self.cli("boards")

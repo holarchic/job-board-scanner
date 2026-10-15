@@ -15,6 +15,7 @@ from pathlib import Path
 
 from jobscan import ashby, gem, greenhouse, oracle, personio, rippling, smartrecruiters, teamtailor, workable, workday
 from jobscan.config import ConfigError
+from jobscan.payload import encodable
 from jobscan.records import Board, BoardError, Company, Places, Posting
 
 ADAPTERS = {ashby.ATS: ashby, greenhouse.ATS: greenhouse, workable.ATS: workable, gem.ATS: gem,
@@ -94,7 +95,7 @@ def read_boards_file(path: Path) -> dict:
         raise ConfigError(f"{path}: `companies` must be a list of objects")
     for n, entry in enumerate(entries):
         for text in (entry.get("company"), entry.get("board_url")):
-            if isinstance(text, str) and not _encodable(text):  # a lone surrogate can't be stored
+            if isinstance(text, str) and not encodable(text):  # a lone surrogate can't be stored
                 raise ConfigError(f"{path}: entry {n} is not valid Unicode")
     return data
 
@@ -116,13 +117,6 @@ def board_for(company: str, url: str) -> Board | None:
             return found
     return None
 
-
-def _encodable(text: str) -> bool:
-    try:
-        text.encode()
-    except UnicodeEncodeError:
-        return False
-    return True
 
 
 def same_job(key: str) -> str:
