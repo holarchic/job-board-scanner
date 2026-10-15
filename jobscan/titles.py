@@ -1,16 +1,14 @@
 """`jobscan titles`: the model proposes other titles the profile's jobs are posted under (variants) and titles its
 word match lets through that are other jobs (near-misses); each is counted against the stored postings in the
 profile's places, so the user judges a suggestion by its effect. Nothing is written."""
-import http.client
 import json
 import sqlite3
-import urllib.error
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from jobscan import store, tag
 from jobscan.config import ModelConfig, Profile
 from jobscan.payload import encodable, one_line
-from jobscan.prefilter import Verdict, excluded, in_places, term_matches, verdict
+from jobscan.prefilter import Verdict, in_places, term_matches, verdict
 
 MOST = 15  # suggestions per list
 LONGEST = 80  # characters in one suggested title
@@ -58,12 +56,8 @@ def suggest(profile: Profile, model: ModelConfig, api_key: str | None) -> Sugges
                          where=profile.eligible_where, most=MOST)
     try:
         reply = tag.call(model, api_key, text, SCHEMA, "titles")
-    except urllib.error.HTTPError as e:
-        e.close()
-        raise TitlesError(f"HTTP {e.code}", http_status=e.code) from None
-    # The class only, never the text: request errors can echo headers, and the key is one.
-    except (OSError, http.client.HTTPException, ValueError) as e:
-        raise TitlesError(type(e).__name__) from None
+    except tag.CallFailed as e:  # an HTTP refusal isn't billed; another failure may have been
+        raise TitlesError(e.reason, e.http_status, usage=None if e.http_status else e.usage) from None
     try:
         data = json.loads(reply.content) if reply.content is not None else None
     except (ValueError, RecursionError):
@@ -83,6 +77,7 @@ def suggest(profile: Profile, model: ModelConfig, api_key: str | None) -> Sugges
 def count(conn: sqlite3.Connection, profile: Profile, reads: set[str], suggested: Suggested) -> Counted:
     """`reads`: the boards the next run reads; postings elsewhere don't count."""
     adds, leaves_out = dict.fromkeys(suggested.variants, 0), dict.fromkeys(suggested.near_misses, 0)
+    widened = {v: replace(profile, titles=(*profile.titles, v)) for v in suggested.variants}
     for brief in store.open_brief(conn):
         if brief.board not in reads or not in_places(profile, brief.location):
             continue
@@ -90,13 +85,9 @@ def count(conn: sqlite3.Connection, profile: Profile, reads: set[str], suggested
             case Verdict.MATCH:
                 for near in suggested.near_misses:
                     leaves_out[near] += term_matches(near, brief.title)
-            case Verdict.OTHER:
-                # In its places, no title of the profile's matches it: a variant matching it makes it a match
-                # unless an excluded title hits it, exactly as `verdict` with the variant added would say.
-                hits = [v for v in suggested.variants if term_matches(v, brief.title)]
-                if hits and not excluded(profile, brief.title):
-                    for variant in hits:
-                        adds[variant] += 1
+            case Verdict.OTHER:  # only a variant matching the title can change it; the filter decides the rest
+                for variant in (v for v in suggested.variants if term_matches(v, brief.title)):
+                    adds[variant] += verdict(widened[variant], brief.title, brief.location) is Verdict.MATCH
     return Counted(adds=adds, leaves_out=leaves_out)
 
 
@@ -104,12 +95,12 @@ def _listed(values: tuple[str, ...]) -> str:
     return "; ".join(v.strip() for v in values) or "(none)"
 
 
-def _clean(raw: list, taken: set[str]) -> tuple[str, ...]:
+def _clean(raw: list[str], taken: set[str]) -> tuple[str, ...]:
     """Printable one-line titles, at most LONGEST characters and MOST of them, none twice (case-folded) and none
     the profile has."""
     kept, seen = [], set(taken)
     for item in raw:
-        title = one_line(item) if isinstance(item, str) and encodable(item) else ""
+        title = one_line(item) if encodable(item) else ""
         if title and len(title) <= LONGEST and title.casefold() not in seen:
             seen.add(title.casefold())
             kept.append(title)

@@ -245,15 +245,15 @@ class TagPostingTest(unittest.TestCase):
 
     def test_dropped_connection_then_success_marks_billing_unknown(self):
         calls = iter(["drop", "ok"])
-        real_call = tag.call
+        real_open = tag._OPENER.open
 
-        def flaky(*args):
+        def flaky(*args, **kwargs):  # the connection drops inside the request, as `call` meets it
             if next(calls) == "drop":
                 raise ConnectionResetError
-            return real_call(*args)
+            return real_open(*args, **kwargs)
 
         self.server.routes["/chat/completions"] = (200, lambda payload: model_reply(json.loads(reply()), cost=0.002))
-        with mock.patch.object(tag, "call", flaky):
+        with mock.patch.object(tag._OPENER, "open", flaky):
             attempt = tag.tag_posting(POSTING, DEFS, self.model, None)
         self.assertIsInstance(attempt, tag.TagSuccess)
         self.assertEqual((attempt.usage.cost, attempt.usage.cost_reported), (0.002, False))

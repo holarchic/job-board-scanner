@@ -1,4 +1,4 @@
-"""Text for the read-only set-up commands (`tags`, `check`, `preview`, `boards`): typed values in, lines out. The
+"""Text for the set-up commands (`tags`, `check`, `preview`, `boards`, `titles`): typed values in, lines out. The
 commands' handlers in `cli` gather the values and print what these return."""
 from pathlib import Path
 

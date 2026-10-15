@@ -103,7 +103,8 @@ class TitlesTest(CliHome):
         code, out, err = self.cli("titles")
         self.assertEqual((code, out), (1, ""))
         self.assertIn("no title suggestions: HTTP 500", err)
-        for reply in [{"variants": "Sales Executive"}, {"variants": [7], "near_misses": []},
+        for reply in [{"variants": "Sales Executive", "near_misses": []}, {"variants": [7], "near_misses": []},
+                      {"variants": []},
                       {"variants": [], "near_misses": [], "note": "x"}]:
             self.answer(reply, cost=0.0002)
             code, _, err = self.cli("titles")
@@ -119,6 +120,7 @@ class TitlesTest(CliHome):
         self.assertIn("Model call: cost not reported.", out)
 
     def test_at_most_fifteen_of_each(self):
-        self.answer({"variants": [f"Title {i}" for i in range(30)], "near_misses": []})
+        self.answer({"variants": [f"Title {i}" for i in range(30)], "near_misses": [f"Other {i}" for i in range(30)]})
         out = self.cli("titles")[1]
         self.assertEqual(sum(1 for line in out.splitlines() if line.startswith("  Title ")), titles.MOST)
+        self.assertEqual(sum(1 for line in out.splitlines() if line.startswith("  Other ")), titles.MOST)

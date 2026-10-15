@@ -92,6 +92,15 @@ class Reply:
     usage: Usage
 
 
+class CallFailed(Exception):
+    """The request got no reply: `reason` is the HTTP status or the exception's class, never its text (request
+    errors can echo headers, and the key is one). `usage` says whether it may have been billed."""
+
+    def __init__(self, reason: str, http_status: int | None, usage: "Usage"):
+        super().__init__(reason)
+        self.reason, self.http_status, self.usage = reason, http_status, usage
+
+
 class ReplyError(Exception):
     """The model answered, but not with a valid tag object."""
 
@@ -244,14 +253,8 @@ def _try_once(posting: Posting, defs: list[TagDef], model: ModelConfig, api_key:
     """One request; the outcome's usage covers this try only."""
     try:
         reply = call(model, api_key, prompt(posting, defs), schema(defs), "tags")
-    except urllib.error.HTTPError as e:
-        e.close()
-        return TagFailure(error=f"HTTP {e.code}", http_status=e.code, usage=Usage())
-    # Exception classes only, never their text: request errors can echo headers, and the key is one.
-    except (OSError, http.client.HTTPException, ValueError) as e:
-        # Unless the connection was refused, the request may have been sent and billed.
-        unknown = Usage() if isinstance(e, ConnectionRefusedError) else Usage(cost_reported=False)
-        return TagFailure(error=type(e).__name__, http_status=None, usage=unknown)
+    except CallFailed as e:
+        return TagFailure(error=e.reason, http_status=e.http_status, usage=e.usage)
     try:
         if reply.content is None:
             raise ReplyError("no message content")
@@ -274,7 +277,8 @@ _OPENER = urllib.request.build_opener(_NoRedirect)
 def call(model: ModelConfig, api_key: str | None, text: str, response_schema: dict, name: str) -> Reply:
     """One chat-completions request answering with JSON in `response_schema` (strict, called `name`): every model
     call goes through here, so each refuses redirects and pins the provider. Usage is read before anything is
-    validated, so a rejected reply still counts."""
+    validated, so a rejected reply still counts. CallFailed when there is no reply; a reply without readable
+    content (`content` None) is the caller's to refuse, with its usage."""
     body = {"model": model.slug, "temperature": 0, "usage": {"include": True},
             "messages": [{"role": "user", "content": text}],
             "response_format": {"type": "json_schema",
@@ -285,13 +289,21 @@ def call(model: ModelConfig, api_key: str | None, text: str, response_schema: di
     headers = {"Content-Type": "application/json", **({"Authorization": f"Bearer {api_key}"} if api_key else {})}
     request = urllib.request.Request(f"{model.base_url}/chat/completions", data=json.dumps(body).encode(),
                                      headers=headers)
-    with _OPENER.open(request, timeout=TIMEOUT) as response:
-        try:
-            reply = json.loads(response.read())
-        # The request was accepted (and may be billed), so a cut-off or unreadable body is an unknown cost,
-        # not an unbilled failure. RecursionError: deeply nested JSON on Python < 3.14.
-        except (OSError, http.client.HTTPException, ValueError, RecursionError):
-            reply = None
+    try:
+        with _OPENER.open(request, timeout=TIMEOUT) as response:
+            try:
+                reply = json.loads(response.read())
+            # The request was accepted (and may be billed), so a cut-off or unreadable body is an unknown cost,
+            # not an unbilled failure. RecursionError: deeply nested JSON on Python < 3.14.
+            except (OSError, http.client.HTTPException, ValueError, RecursionError):
+                reply = None
+    except urllib.error.HTTPError as e:
+        e.close()
+        raise CallFailed(f"HTTP {e.code}", e.code, Usage()) from None
+    except (OSError, http.client.HTTPException, ValueError) as e:
+        # Unless the connection was refused, the request may have been sent and billed.
+        unknown = Usage() if isinstance(e, ConnectionRefusedError) else Usage(cost_reported=False)
+        raise CallFailed(type(e).__name__, None, unknown) from None
     if not isinstance(reply, dict):  # answered, possibly billed, but nothing readable: billing unknown
         return Reply(content=None, usage=Usage(cost_reported=False))
     usage = reply.get("usage") if isinstance(reply.get("usage"), dict) else {}

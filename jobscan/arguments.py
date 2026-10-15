@@ -181,9 +181,10 @@ def _titles(commands) -> None:
         "titles match as words that are other jobs (near-misses). Each is counted against the postings the last "
         "run stored in your places: how many a variant would add, how many of your current matches a near-miss "
         "would leave out. Counts are each suggestion's own effect; `preview` after editing shows them together. "
-        "Before any run there is nothing to count, so only the suggestions show. Nothing is written: copy the ones "
-        "you keep into titles or exclude_titles in your profile, then `jobscan check` and `jobscan preview`. One "
-        "model call, under a cent; exit 1 if it fails or a run holds the database.",
+        "Before any run there is nothing to count, so only the suggestions show. Your profile is never changed: "
+        "copy the ones you keep into titles or exclude_titles, then `jobscan check` and `jobscan preview`. One "
+        "model call, under a cent; exit 1 if it fails or a run holds the database. The first time new code opens "
+        "the database it backs it up first, as a run would.",
         ["jobscan titles", "jobscan titles && $EDITOR ~/.jobscan/profiles/*.toml && jobscan preview"])
 
 
