@@ -170,7 +170,7 @@ EMAIL_FLAGS = ("to", "sender", "host", "port", "password_stdin")
 
 def _email(home: Path, args: argparse.Namespace) -> int:
     """Saves the settings only once a test email is accepted; `--off` works however broken the saved file is."""
-    flagged = any(getattr(args, flag) not in (None, False) for flag in EMAIL_FLAGS)  # "" is a flag given
+    flagged = any(_given(getattr(args, flag)) for flag in EMAIL_FLAGS)
     try:
         if args.off:
             if flagged:
@@ -203,6 +203,12 @@ def _email(home: Path, args: argparse.Namespace) -> int:
 INIT_FLAGS = ("name", "title", "exclude_title", "location", "eligible_where", "tag", "key_stdin")
 
 
+def _given(value) -> bool:
+    """A flag on the command line: an empty string or a port 0 is given; an unset flag is None, an unset switch
+    False, an unset list empty."""
+    return value is not None and value is not False and value != []
+
+
 def _email_settings(args: argparse.Namespace) -> EmailConfig:
     if not args.password_stdin:
         raise ConfigError("the app password comes from stdin: add --password-stdin")
@@ -211,7 +217,7 @@ def _email_settings(args: argparse.Namespace) -> EmailConfig:
 
 def _init(home: Path, args: argparse.Namespace) -> int:
     try:
-        if any(getattr(args, flag) not in (None, False, []) for flag in INIT_FLAGS):  # "" is a flag given
+        if any(_given(getattr(args, flag)) for flag in INIT_FLAGS):
             setup = init.init_from(home, _init_answers(args))
         elif not sys.stdin.isatty():
             raise ConfigError("no terminal to ask in: give the flags instead (see `jobscan init --help`)")
@@ -402,6 +408,9 @@ class _run_lock:
         except BlockingIOError:
             self.file.close()
             raise RunLocked from None
+        except OSError as e:  # a filesystem without locks (ENOLCK)
+            self.file.close()
+            raise ConfigError(f"{self.path}: can't be locked ({type(e).__name__})") from None
         return self
 
     def __exit__(self, *exc):

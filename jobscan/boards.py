@@ -79,7 +79,10 @@ def _writer_lock(file: Path):
     except OSError as e:
         raise ConfigError(f"could not lock {file} for writing ({type(e).__name__})") from None
     with handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        except OSError as e:  # a filesystem without locks (ENOLCK)
+            raise ConfigError(f"could not lock {file} for writing ({type(e).__name__})") from None
         yield
 
 

@@ -13,7 +13,16 @@ import re
 from dataclasses import dataclass
 from urllib.parse import quote, unquote
 
-from jobscan.payload import board_slug, detail_text, html_to_text, http_url, named_company, one_line, text_field
+from jobscan.payload import (
+    board_slug,
+    detail_text,
+    encodable,
+    html_to_text,
+    http_url,
+    named_company,
+    one_line,
+    text_field,
+)
 from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "workday"
@@ -194,7 +203,8 @@ def _usable(text) -> bool:
 def _value(parameter: str, value) -> _Value:
     value_id = value.get("id") if isinstance(value, dict) else None
     descriptor = value.get("descriptor") if isinstance(value, dict) else None
-    name = one_line(descriptor) if isinstance(descriptor, str) else ""  # Airbus: 'Istres (AD - Base 125\xa0) \xa0'
+    # Airbus: 'Istres (AD - Base 125\xa0) \xa0'. A lone surrogate is malformed, not a character to drop.
+    name = one_line(descriptor) if isinstance(descriptor, str) and encodable(descriptor) else ""
     if not _usable(value_id) or not name:
         raise BoardError(f"filter {parameter}: a value without a usable `id` or `descriptor`")
     return _Value(parameter=parameter, id=value_id, name=name)

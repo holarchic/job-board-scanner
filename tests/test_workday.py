@@ -190,6 +190,7 @@ class ReadTest(unittest.TestCase):
         with self.assertRaisesRegex(BoardError, "locationCountry"):
             self.read(answer([{"facetParameter": "locationCountry", "values": "UK"}]))
         for value in [{"id": "1", "descriptor": "\xa0\u200b"}, {"id": "1", "descriptor": " "},
+                      {"id": "1", "descriptor": "Lon\ud800don"},
                       {"id": "", "descriptor": "London"}, {"id": "1\n2", "descriptor": "London"}]:
             with self.assertRaisesRegex(BoardError, "usable", msg=value):
                 self.read(answer([{"facetParameter": "locations", "values": [value]}]))

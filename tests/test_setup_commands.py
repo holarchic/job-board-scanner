@@ -307,6 +307,9 @@ class EmailFlagsTest(CliHome):
             (("--to", "you@gmail.com",), "add --password-stdin"),
             (("--to", "you@gmail.com", "--off"), "--off takes no other flags"),
             (("--to", "you@gmail.com", "--from", "", "--password-stdin"), "--from: not an email address"),
+            (("--off", "--port", "0"), "--off takes no other flags"),
+            (("--to", "me@fastmail.com", "--host", "smtp.fastmail.com", "--port", "0", "--password-stdin"),
+             "port number"),
         ]
         for flags, message in cases:
             code, _, err = self.email(*flags)
@@ -324,6 +327,13 @@ class EmailFlagsTest(CliHome):
         self.assertEqual(code, 1)
         self.assertIn("nothing was saved", err)
         self.assertFalse((self.home / "email.toml").exists())
+
+    def test_a_port_0_alone_is_a_flag_and_asks_nothing(self):
+        with mock.patch("builtins.input") as typed:
+            code, _, err = self.cli("email", "--port", "0", terminal=True)
+        typed.assert_not_called()
+        self.assertEqual(code, 2)
+        self.assertIn("add --password-stdin", err)
 
     def test_no_flags_and_no_terminal_asks_nothing(self):
         with mock.patch("builtins.input") as typed:
@@ -425,6 +435,12 @@ class BoardsTest(CliHome):
         self.assertEqual(json.loads(self.file.read_text())["companies"],
                          [{"board_url": ASHBY}, {"board_url": GREENHOUSE}])
 
+    def test_a_filesystem_without_locks_is_a_config_error(self):
+        with mock.patch("jobscan.boards.fcntl.flock", side_effect=OSError(77, "No locks available")):
+            code, _, err = self.cli("boards", "add", GREENHOUSE)
+        self.assertEqual(code, 2)
+        self.assertIn("could not lock", err)
+
     def test_no_file_yet_says_where_add_writes(self):
         code, out, _ = self.cli("boards")
         self.assertEqual(code, 0)
@@ -500,6 +516,13 @@ class PreviewTest(CliHome):
         opened.assert_not_called()
         self.assertEqual((code, out), (1, ""))
         self.assertIn("a run is using the database", err)
+
+    def test_a_filesystem_without_locks_is_exit_2(self):
+        self.seed()
+        with mock.patch("jobscan.cli.fcntl.flock", side_effect=OSError(77, "No locks available")):
+            code, _, err = self.cli("preview")
+        self.assertEqual(code, 2)
+        self.assertIn("can't be locked", err)
 
     def test_no_profile_is_exit_2(self):
         (self.home / "profiles" / "ae.toml").unlink()
