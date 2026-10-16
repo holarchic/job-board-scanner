@@ -135,12 +135,12 @@ def unrepresentable(profile: Profile) -> str | None:
               *(c.default or "" for c in profile.custom_tags))
     if any(len(v.splitlines()) > 1 or "\n" in v or "\r" in v for v in single):
         return "a one-line answer in it holds a line break"
+    if any("\r" in c.definition for c in profile.custom_tags):  # posted back, it would become a plain line break
+        return "a custom tag's definition holds a carriage return"
     form = form_from_profile(profile, None)
     checked = to_profile(form)
     if checked.profile is None:
         return "; ".join(checked.errors.values())
-    if _posted_size(form) > LARGEST_POST // 2:  # room for the email settings, ticks and the browser's encoding
-        return f"it is too large for one page ({_posted_size(form):,} bytes)"
     in_order = sorted(profile.tags, key=_tag_order)
     if replace(checked.profile, tags=tuple(in_order)) != replace(profile, tags=tuple(in_order)):
         return "a value in it holds a line break, which the page would split in two"
@@ -195,6 +195,9 @@ def to_profile(form: Form) -> Checked:
     for name, text in [("titles", form.titles), ("exclude_titles", form.exclude_titles)]:
         if len(text) > TEXT_LIMIT:  # with the ticked suggestions
             errors[name] = f"Too long: over {TEXT_LIMIT:,} characters."
+    if _posted_size(form) > LARGEST_POST // 2:  # one rule for saving and for offering a profile: the page can always
+        # reopen what it saved, with room left for the email settings, ticks and the browser's encoding
+        errors.setdefault("", f"Too large for one page ({_posted_size(form):,} bytes): edit the file instead.")
     if errors:
         return Checked(None, errors)
     try:

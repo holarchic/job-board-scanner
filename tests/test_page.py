@@ -73,7 +73,18 @@ class ReadTest(unittest.TestCase):
         defined = replace(profile.custom_tags[0], definition="x" * 19_000)
         big = replace(profile, custom_tags=tuple(replace(defined, name=f"t{i}", definition=f"{i}" + defined.definition)
                                                  for i in range(10)))  # each a different question
-        self.assertIn("too large for one page", page.unrepresentable(big))
+        self.assertIn("Too large for one page", page.unrepresentable(big))
+        self.assertIn("Too large for one page", page.to_profile(page.form_from_profile(big, None)).errors[""])
+        carriage = replace(profile.custom_tags[0], definition="One\r\nTwo")
+        self.assertIn("carriage return", page.unrepresentable(replace(profile, custom_tags=(carriage,))))
+
+    def test_whatever_the_page_saves_it_can_reopen(self):
+        rows = {f"custom-{i}-{part}": [f"t{i}" if part == "name" else f"{i} " + "x" * 19_000]
+                for i in range(7) for part in ("name", "definition")}
+        checked = page.to_profile(page.read({**FIELDS, **rows}))
+        self.assertIsNone(checked.profile)  # refused before saving, not after
+        small = page.to_profile(page.read(FIELDS)).profile
+        self.assertIsNone(page.unrepresentable(small))
 
     def test_an_unknown_tag_posted_is_refused(self):
         self.assertIn("unknown tags", page.to_profile(page.read({**FIELDS, "tag": ["founder"]})).errors[""])
