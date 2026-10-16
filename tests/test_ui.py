@@ -1,24 +1,67 @@
-"""`jobscan ui` served for real on 127.0.0.1 (port 0) in a thread, driven over HTTP as a browser would: the security
-checks, then each button on a fresh home and on an existing install."""
+"""`jobscan ui` served for real on 127.0.0.1 (port 0) in a thread, driven over HTTP as a browser would: each page's
+own fields read back from its HTML (ticked boxes, text, textareas) and posted with the button pressed. The security
+checks, then the steps of a new install and the summary of an existing one."""
 import http.client
 import os
+import re
 import socket
 import stat
 import tempfile
 import threading
 import time
 import unittest
+from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
 from urllib.parse import urlencode
 
-from jobscan import init, lock, page, ui
+from jobscan import init, lock, page, tag, ui
 from jobscan.config import ModelConfig, load_config, load_email, load_profile
 from tests.fakes import FakeServer, model_reply, patch_smtp
 
-FIELDS = {"name": "ae", "titles": "Account Executive", "locations": "London", "eligible_where": "the UK",
-          "tag": "founding"}
-REPLY = {"variants": ["Sales Executive"], "near_misses": ["Account Manager"]}
+WORDS = "Account executive jobs with founding teams in London, happy to be remote."
+DESCRIBED = {
+    "titles": ["Account Executive"], "other_titles": ["Sales Executive"], "leave_out": [],
+    "near_misses": ["Account Executive Assistant"], "places": ["London", "Remote"], "other_places": ["UK"],
+    "eligible_where": "the UK", "tags": ["founding", "location_eligible"],
+    "custom_tags": [{"name": "salary_stated", "question": "Does the posting state a salary range?",
+                     "answers": ["yes", "no", "unknown"]}]}
+SUGGESTED = {"variants": ["Sales Executive"], "near_misses": ["Account Manager"]}
+
+
+def answers(payload):
+    reply = DESCRIBED if payload["response_format"]["json_schema"]["name"] == "description" else SUGGESTED
+    return model_reply(reply, cost=0.002)
+
+
+class Fields(HTMLParser):
+    """What a browser would post from a page: inputs with their values (a checkbox only when ticked; a password box
+    empty), and textareas with their text."""
+
+    def __init__(self, text: str):
+        super().__init__(convert_charrefs=True)
+        self.fields: dict[str, list[str]] = {}
+        self.area: str | None = None
+        self.feed(text)
+
+    def handle_starttag(self, name, attrs):
+        a = dict(attrs)
+        if name == "input" and "name" in a:
+            if a.get("type") == "checkbox" and "checked" not in a:
+                return
+            value = "" if a.get("type") == "password" else a.get("value", "on" if a.get("type") == "checkbox" else "")
+            self.fields.setdefault(a["name"], []).append(value)
+        elif name == "textarea":
+            self.area = a["name"]
+            self.fields.setdefault(self.area, []).append("")
+
+    def handle_data(self, data):
+        if self.area:
+            self.fields[self.area][-1] += data
+
+    def handle_endtag(self, name):
+        if name == "textarea":
+            self.area = None
 
 
 class UiTest(unittest.TestCase):
@@ -28,7 +71,7 @@ class UiTest(unittest.TestCase):
         self.home = Path(tmp.name) / "home"
         self.model = FakeServer()
         self.addCleanup(self.model.close)
-        self.model.routes["/chat/completions"] = (200, lambda payload: model_reply(REPLY, cost=0.002))
+        self.model.routes["/chat/completions"] = (200, answers)
         fake = ModelConfig(base_url=self.model.url, slug="test/model", provider=None, quantization=None)
         for patcher in [mock.patch.object(init, "default_model", return_value=fake),
                         mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": ""}), *patch_smtp(calls := [])]:
@@ -53,27 +96,51 @@ class UiTest(unittest.TestCase):
         finally:
             connection.close()
 
-    def post(self, action, fields=None, token=None, headers=None, **extra):
-        data = urlencode({"token": self.token if token is None else token, "action": action, **(fields or FIELDS),
-                          **extra}, doseq=True)
-        status, _, text = self.request("POST", body=data, headers={
+    def open(self) -> str:
+        return self.request("GET", f"/?token={self.token}")[2]
+
+    def post(self, fields, headers=None):
+        status, _, text = self.request("POST", body=urlencode(fields, doseq=True), headers={
             "Content-Type": "application/x-www-form-urlencoded", "Origin": f"http://127.0.0.1:{self.port}",
             **(headers or {})})
         return status, text
 
-    def install(self, key="sk-or-v1-old", model_url=None):
+    def press(self, action, ticked=None, unticked=(), **typed):
+        """Submits the last page as a browser would, with `typed` fields replaced, `ticked` boxes (name → values)
+        added and `unticked` ones (name, value) cleared."""
+        fields = Fields(self.pages[-1]).fields
+        for name, values in (ticked or {}).items():
+            fields[name] = [*fields.get(name, []), *values]
+        for name, value in unticked:
+            fields[name] = [v for v in fields.get(name, []) if v != value]
+        fields |= {name: [value] for name, value in typed.items()}
+        return self.post({**fields, "action": action})[1]
+
+    def step(self) -> str:
+        return re.search(r'name="step" value="(\w+)"', self.pages[-1]).group(1)
+
+    def described(self) -> int:
+        return sum(1 for _, path, body in self.model.requests if path == "/chat/completions"
+                   and body["response_format"]["json_schema"]["name"] == "description")
+
+    def install(self, key="sk-or-v1-old", model_url=None, profile=None):
         model = f'[model]\nbase_url = "{model_url}"\nslug = "x"\n' if model_url else init.CONFIG
         (self.home / "profiles").mkdir(parents=True)
         (self.home / "config.toml").write_text(model)
-        (self.home / "profiles" / "ae.toml").write_text(
-            'titles = ["AE"]  # mine\nlocations = ["London"]\neligible_where = "the UK"\ntags = ["founding"]\n')
+        (self.home / "profiles" / "ae.toml").write_text(profile or (
+            'titles = ["AE"]  # mine\nlocations = ["London"]\neligible_where = "the UK"\ntags = ["founding"]\n'))
         if key:
             init.save_key(self.home, key)
 
     def tearDown(self):
         for text in self.pages:  # no page ever carries a typed secret back
-            for secret in ("sk-or-v1-new", "sk-or-v1-old", "sk-or-v1-fresh", "abcd efgh", "abcdefgh"):
+            for secret in ("sk-or-v1-new", "sk-or-v1-old", "sk-or-v1-fresh", "sk-or-v1-stale", "abcd efgh",
+                           "abcdefgh"):
                 self.assertNotIn(secret, text)
+
+
+def checked(text: str, name: str) -> list[str]:
+    return Fields(text).fields.get(name, [])
 
 
 class SecurityTest(UiTest):
@@ -95,19 +162,24 @@ class SecurityTest(UiTest):
                          200)
 
     def test_posts_need_the_token_and_the_pages_own_origin(self):
-        self.assertEqual(self.post("suggest", token="wrong")[0], 403)
+        self.open()
+        fields = {**Fields(self.pages[-1]).fields, "action": "next", "key": "sk-or-v1-fresh"}
+        self.assertEqual(self.post({**fields, "token": "wrong"})[0], 403)
         for origin in ["https://evil.example", "null", f"http://127.0.0.1:{self.port + 1}"]:
-            self.assertEqual(self.post("save", headers={"Origin": origin}, key="sk-or-v1-fresh")[0], 403, origin)
-        self.assertFalse(self.home.exists())  # nothing saved by a refused post
-        status, _, _ = self.request("POST", body="x" * (page.LARGEST_POST + 1), headers={
-            "Content-Type": "application/x-www-form-urlencoded"})
+            self.assertEqual(self.post(fields, headers={"Origin": origin})[0], 403, origin)
+        self.assertEqual(self.server.site.drafts.key, "")  # nothing held from a refused post
+        status, _, _ = self.request("POST", body="x", headers={  # refused by its stated length, before reading it
+            "Content-Type": "application/x-www-form-urlencoded", "Content-Length": str(page.LARGEST_POST + 1)})
         self.assertEqual(status, 413)
 
     def test_odd_tokens_origins_and_actions_are_refused(self):
         self.assertEqual(self.request("GET", "/?token=%C3%A9")[0], 403)
-        self.assertEqual(self.post("save", headers={"Origin": f"127.0.0.1:{self.port}"}, key="sk-or-v1-fresh")[0], 403)
-        _, text = self.post("delete-everything", key="sk-or-v1-fresh")
-        self.assertIn("Press one of the buttons.", text)
+        self.open()
+        fields = Fields(self.pages[-1]).fields
+        self.assertEqual(self.post({**fields, "action": "next"}, headers={"Origin": f"127.0.0.1:{self.port}"})[0], 403)
+        self.open()
+        self.assertIn("Press one of the buttons.", self.press("delete-everything"))
+        self.assertIn("Press one of the buttons.", self.press("goto:titles"))  # Edit is the summary's
         self.assertFalse(self.home.exists())
 
     def test_malformed_requests_get_an_answer_with_the_headers(self):
@@ -123,11 +195,6 @@ class SecurityTest(UiTest):
             "Content-Type": "application/x-www-form-urlencoded", "Origin": f"http://127.0.0.1:{self.port}"})
         self.assertEqual(status, 400)
 
-    def test_a_huge_custom_index_is_answered(self):
-        index = "9" * 5000
-        status, _ = self.post("preview", **{f"custom-{index}-name": "late", f"custom-{index}-definition": "L."})
-        self.assertEqual(status, 200)
-
     def test_an_idle_connection_doesnt_hold_the_server(self):
         self.assertEqual(ui._Handler.timeout, ui.READ_TIMEOUT)  # every connection gets it; shortened below
         with mock.patch.object(ui._Handler, "timeout", 1):
@@ -137,121 +204,236 @@ class SecurityTest(UiTest):
             self.assertEqual(self.request("GET", f"/?token={self.token}")[0], 200)
             self.assertLess(time.monotonic() - started, 5)
 
+    def test_a_stale_page_changes_nothing_and_holds_no_secret(self):
+        first = self.open()
+        self.press("next", key="sk-or-v1-fresh")
+        self.press("back")  # the key step again, a newer page of it
+        stale = {**Fields(first).fields, "key": "sk-or-v1-stale", "action": "next"}
+        _, text = self.post(stale)
+        self.assertIn("That page was out of date", text)
+        self.assertEqual((self.server.site.drafts.key, self.server.site.step), ("sk-or-v1-fresh", "key"))
 
-class FreshHomeTest(UiTest):
-    def test_a_whole_set_up_on_the_page(self):
-        status, text = self.post("save", key="sk-or-v1-fresh", email_to="me@gmail.com", password="abcd efgh ijkl mnop")
-        self.assertEqual(status, 200)
+
+class NewInstallTest(UiTest):
+    def to_titles(self, words=WORDS):
+        self.open()
+        self.press("next", key="sk-or-v1-fresh")
+        return self.press("next", description=words)
+
+    def test_a_whole_set_up_from_one_sentence_mostly_ticking(self):
+        text = self.to_titles()
+        self.assertEqual(checked(text, "title"), ["Account Executive"])
+        self.assertIn('value="Sales Executive">', text)  # offered, unticked
+        text = self.press("next", ticked={"title": ["Sales Executive"]}, title_more="AE")
+        self.assertEqual(self.step(), "exclude")
+        self.assertIn('value="Account Executive Assistant">', text)
+        text = self.press("next", ticked={"exclude": ["Account Executive Assistant"]})
+        self.assertEqual((checked(text, "place"), checked(text, "eligible_where")), (["London", "Remote"], ["the UK"]))
+        text = self.press("next", ticked={"place": ["UK"]})
+        self.assertEqual((checked(text, "tag"), checked(text, "add_custom")),
+                         (["founding", "location_eligible"], ["salary_stated"]))
+        self.press("next")
+        text = self.press("next", email_to="me@gmail.com", password="abcd efgh ijkl mnop")
+        self.assertEqual(checked(text, "name"), ["account-executive"])
+        text = self.press("save")
         self.assertIn("Saved your search, the settings and your key.", text)
         self.assertIn("Sent a test email to me@gmail.com", text)
         self.assertIn("The install loads as a run would", text)
-        self.assertEqual(load_profile(self.home).titles, ("Account Executive",))
+        profile = load_profile(self.home)
+        self.assertEqual((profile.name, profile.titles, profile.exclude_titles, profile.locations),
+                         ("account-executive", ("Account Executive", "Sales Executive", "AE"),
+                          ("Account Executive Assistant",), ("London", "Remote", "UK")))
+        self.assertEqual((profile.tags, [c.name for c in profile.custom_tags]),
+                         (("founding", "location_eligible"), ["salary_stated"]))
         key = self.home / "openrouter.key"
         self.assertEqual((key.read_text(), stat.S_IMODE(key.stat().st_mode)), ("sk-or-v1-fresh\n", 0o600))
         self.assertEqual(load_email(self.home).password, "abcdefghijklmnop")
         self.assertEqual(load_config(self.home, environ={}).api_key, "sk-or-v1-fresh")
+        self.assertEqual(self.described(), 1)
 
-    def test_the_typed_key_survives_suggest_and_a_refused_save(self):
-        _, text = self.post("suggest", key="sk-or-v1-fresh")
-        self.assertIn('name="add_title" value="Sales Executive"', text)
+    def test_back_keeps_what_was_typed_and_the_same_words_are_not_read_twice(self):
+        self.to_titles()
+        self.press("back", title_more="SDR")
+        self.assertEqual(self.step(), "describe")
+        text = self.press("next")
+        self.assertEqual(checked(text, "title"), ["Account Executive", "SDR"])
+        self.assertEqual(self.described(), 1)
+        self.press("back")
+        text = self.press("next", description="Product manager jobs in Berlin.")
+        self.assertEqual(self.described(), 2)  # new words, read again: the draft follows them
+        self.assertEqual(checked(text, "title"), ["Account Executive"])
+
+    def test_without_a_description_suggest_works_before_places_and_every_tag_starts_ticked(self):
+        self.open()
+        self.press("next", key="sk-or-v1-fresh")
+        text = self.press("skip")
+        self.assertEqual((self.step(), checked(text, "title")), ("titles", []))
+        self.assertIn("Give at least one title first.", self.press("suggest"))
+        text = self.press("suggest", title_more="Account Executive")
+        self.assertIn('value="Sales Executive">', text)
         self.assertIn("Counts come after the first run.", text)
-        self.assertIn("A key is held", text)
-        _, text = self.post("save", {**FIELDS, "titles": ""})
-        self.assertIn("Give at least one title.", text)
-        self.assertFalse(self.home.exists())
-        _, text = self.post("save", add_title="Sales Executive", add_exclude="Account Manager")
-        self.assertIn("Saved your search", text)
-        profile = load_profile(self.home)
-        self.assertEqual((profile.titles, profile.exclude_titles),
-                         (("Account Executive", "Sales Executive"), ("Account Manager",)))
-        self.assertEqual((self.home / "openrouter.key").read_text(), "sk-or-v1-fresh\n")
+        self.press("next")
+        self.press("next")
+        text = self.press("next", place_more="London", eligible_where="the UK")
+        self.assertEqual(checked(text, "tag"), list(tag.builtin_names()))
+        self.press("next")
+        self.press("next")
+        self.assertIn("Saved your search", self.press("save"))
+        self.assertEqual(load_profile(self.home).titles, ("Account Executive",))
+        self.assertEqual(self.described(), 0)
 
-    def test_no_key_no_install(self):
-        _, text = self.post("save")
-        self.assertIn("Your OpenRouter key is needed.", text)
-        _, text = self.post("suggest")
-        self.assertIn("type your OpenRouter key first", text)
+    def test_a_failed_description_offers_to_go_on_without(self):
+        self.model.routes["/chat/completions"] = (500, {"error": "down"})
+        text = self.to_titles()
+        self.assertEqual(self.step(), "describe")
+        self.assertIn("The model couldn&#x27;t read it", text)
+        self.assertIn('value="skip"', text)
+        self.assertEqual(self.press("skip") and self.step(), "titles")
+
+    def test_each_step_keeps_a_wrong_value_but_never_waits_on_later_steps(self):
+        self.open()
+        self.assertIn("Your OpenRouter key is needed", self.press("next"))
+        self.assertIn("isn&#x27;t an OpenRouter key", self.press("next", key="sk or-v1"))
+        self.assertIn("Your OpenRouter key is needed", self.press("next"))  # a refused key is never held
+        self.press("next", key="sk-or-v1-fresh")
+        self.press("skip")
+        self.assertIn("Give at least one title.", self.press("next"))
+        self.press("next", title_more="Account Executive")  # places, tags and email still empty: not asked yet
+        self.press("next")
+        self.assertIn("Say where you can work from.", self.press("next", place_more="London"))
+        self.press("next", eligible_where="the UK")
+        unticked = [("tag", name) for name in tag.builtin_names()]
+        self.assertIn("Tick at least one tag", self.press("next", unticked=unticked))
+        text = self.press("next", **{"custom-0-name": "founding", "custom-0-definition": "Founding?"})
+        self.assertIn("use built-in names", text)
+        text = self.press("next", unticked=unticked, **{
+            "custom-0-name": "pay", "custom-0-definition": "Is pay stated?",
+            "custom-1-name": "salary", "custom-1-definition": "Is pay stated?"})
+        self.assertIn("asks the same question", text)
+        self.press("next", **{"custom-1-name": ""})
+        self.assertEqual(self.step(), "email")
+        self.assertIn("Your app password is needed.", self.press("next", email_to="me@gmail.com"))
+        self.assertIn("The port is a number", self.press("next", email_port="9" * 5000, password="abcd efgh"))
+        self.assertIn("Too long", self.press("next", email_port="", password="p" * 30_000))
+        self.press("next", email_to="")
+        self.assertEqual(self.step(), "summary")
+        self.assertFalse(self.home.exists())
+
+    def test_a_too_long_key_is_never_held(self):
+        self.open()
+        self.assertIn("Too long", self.press("next", key="k" * 30_000))
+        self.assertIn("Your OpenRouter key is needed", self.press("next"))
         self.assertFalse(self.home.exists())
 
     def test_a_refused_test_email_saves_the_rest(self):
+        self.to_titles()
+        for _ in range(4):
+            self.press("next")
+        self.press("next", email_to="me@gmail.com", password="abcd efgh")
         with mock.patch("jobscan.mail.send_test", side_effect=init.mail.MailError("535 bad credentials")):
-            _, text = self.post("save", key="sk-or-v1-fresh", email_to="me@gmail.com", password="abcd efgh")
+            text = self.press("save")
         self.assertIn("Saved your search, the settings and your key.", text)
         self.assertIn("The test email wasn&#x27;t sent (535 bad credentials); email settings not saved.", text)
         self.assertIsNone(load_email(self.home))
 
     def test_preview_before_any_run(self):
-        self.assertIn("No postings yet", self.post("preview")[1])
-
-    def test_a_ticked_suggestion_stays_through_preview_and_a_refused_save(self):
-        _, text = self.post("preview", add_title="Sales Executive")
-        self.assertIn("Account Executive\nSales Executive</textarea>", text)
-        _, text = self.post("save", {**FIELDS, "titles": "Account Executive\nSales Executive", "eligible_where": ""})
-        self.assertIn("Account Executive\nSales Executive</textarea>", text)
+        self.to_titles()
+        for _ in range(5):
+            self.press("next")
+        self.assertIn("No postings yet", self.press("preview"))
 
 
 class ExistingInstallTest(UiTest):
-    def test_the_page_shows_the_saved_search(self):
-        self.install()
-        _, _, text = self.request("GET", f"/?token={self.token}")
-        self.assertIn(">AE</textarea>", text)
-        self.assertIn("A key is held", text)
+    def edit(self, step, **typed):
+        """From the summary: Edit `step`, change what's typed, Done."""
+        self.press(f"goto:{step}")
+        return self.press("next", **typed)
 
-    def test_saving_keeps_the_previous_profile_and_the_key(self):
+    def test_it_opens_at_the_summary_with_an_edit_per_step(self):
         self.install()
-        _, text = self.post("save")
+        text = self.open()
+        self.assertEqual(self.step(), "summary")
+        self.assertIn("<td>AE</td>", text)
+        for step in page.EXISTING_STEPS[:-1]:
+            self.assertIn(f'value="goto:{step}"', text)
+        self.assertNotIn('value="goto:describe"', text)
+
+    def test_every_step_done_unchanged_saves_the_same_profile(self):
+        self.install(profile='titles = ["AE", "ae", "AE"]\nlocations = ["London"]\neligible_where = "the UK"\n'
+                             'tags = ["founding"]\n\n[custom_tags.buyer]\ndefinition = "Who buys.\\nSay smb or '
+                             'enterprise."\nvalues = ["smb", "enterprise"]\n')
+        before = load_profile(self.home)
+        self.open()
+        for step in page.EXISTING_STEPS[:-1]:
+            self.press(f"goto:{step}")
+            self.press("next")
+            self.assertEqual(self.step(), "summary", step)
+        text = self.press("save")
         self.assertIn("previous file is kept as .toml.prev", text)
-        self.assertIn("# mine", (self.home / "profiles" / "ae.toml.prev").read_text())
-        self.assertEqual(load_profile(self.home).titles, ("Account Executive",))
+        after = load_profile(self.home)
+        self.assertEqual(after, before)
+        self.assertEqual([d.hash for d in tag.definitions(after.tags, after.eligible_where, after.custom_tags)],
+                         [d.hash for d in tag.definitions(before.tags, before.eligible_where, before.custom_tags)])
         self.assertEqual((self.home / "openrouter.key").read_text(), "sk-or-v1-old\n")
 
-    def test_a_replacement_key_survives_suggest_and_never_reverts(self):
+    def test_a_replacement_key_is_saved_and_never_reverts(self):
         self.install(model_url=self.model.url)
-        self.post("suggest", key="sk-or-v1-new")
-        self.post("save")
+        self.open()
+        self.edit("key", key="sk-or-v1-new")
+        self.press("save")
         self.assertEqual((self.home / "openrouter.key").read_text(), "sk-or-v1-new\n")
-        self.post("save")
+        self.press("save")
         self.assertEqual((self.home / "openrouter.key").read_text(), "sk-or-v1-new\n")
 
     def test_a_local_model_install_needs_no_key(self):
         self.install(key=None, model_url=self.model.url)
-        _, text = self.post("suggest")
-        self.assertIn('name="add_title" value="Sales Executive"', text)
-        _, text = self.post("save")
+        self.open()
+        self.press("goto:titles")
+        self.assertIn('value="Sales Executive">', self.press("suggest"))
+        self.press("next")
+        text = self.press("save")
         self.assertIn("The install loads as a run would", text)
         self.assertFalse((self.home / "openrouter.key").exists())
 
     def test_email_unchanged_sends_nothing_and_off_removes_it(self):
         self.install()
-        self.post("save", email_to="me@gmail.com", password="abcd efgh")
+        self.open()
+        self.edit("email", email_to="me@gmail.com", password="abcd efgh")
+        self.press("save")
         sends = len(self.smtp)
-        _, text = self.post("save", email_to="me@gmail.com")  # the saved password, nothing changed
+        self.edit("email")  # the saved password, nothing changed
+        text = self.press("save")
         self.assertEqual(len(self.smtp), sends)
         self.assertNotIn("Sent a test email", text)
-        _, text = self.post("save", email_to="me@gmail.com", email_off="on")
-        self.assertIn("Email turned off.", text)
+        self.edit("email", email_off="on")
+        self.assertIn("Email turned off.", self.press("save"))
         self.assertIsNone(load_email(self.home))
 
     def test_a_failed_key_save_says_what_was_saved(self):
         self.install()
+        self.open()
+        self.edit("key", key="sk-or-v1-new")
         with mock.patch.object(init, "save_key", side_effect=init.ConfigError("disk full")):
-            _, text = self.post("save", key="sk-or-v1-new")
+            text = self.press("save")
         self.assertIn("Saved your search", text)
         self.assertIn("Your new key wasn&#x27;t saved: disk full.", text)
-        self.assertEqual(load_profile(self.home).titles, ("Account Executive",))
 
     def test_a_failed_email_removal_is_said_not_crashed(self):
         self.install()
-        self.post("save", email_to="me@gmail.com", password="abcd efgh")
+        self.open()
+        self.edit("email", email_to="me@gmail.com", password="abcd efgh")
+        self.press("save")
+        self.edit("email", email_off="on")
         with mock.patch.object(init, "remove_email", side_effect=init.ConfigError("read-only")):
-            status, text = self.post("save", email_to="me@gmail.com", email_off="on")
-        self.assertEqual(status, 200)
+            text = self.press("save")
         self.assertIn("Email wasn&#x27;t turned off: read-only.", text)
-        self.assertIn('name="email_off" checked', text)  # the tick is kept to try again
+        self.press("goto:email")
+        self.assertIn('name="email_off" checked', self.pages[-1])  # the tick is kept to try again
 
-    def test_a_form_for_another_search_name_is_refused(self):
+    def test_a_posted_name_for_another_search_is_refused(self):
         self.install()
-        _, text = self.post("save", {**FIELDS, "name": "other"})
+        self.open()
+        text = self.press("save", name="other")
         self.assertIn("this install&#x27;s profile is ae.toml", text)
         self.assertEqual(sorted(p.name for p in (self.home / "profiles").iterdir()), ["ae.toml"])
 
@@ -259,67 +441,50 @@ class ExistingInstallTest(UiTest):
         self.install(key=None)
         (self.home / "config.toml").write_text('[model]\nbase_url = "https://openrouter.ai/api/v1"\nslug = "x"\n'
                                                'provider = "p"\nquantization = "q"\n')
+        self.open()
+        self.edit("key", key="sk-or-v1-new")
+        self.press("goto:titles")
         with mock.patch("jobscan.tag._OPENER.open", side_effect=OSError("offline")) as opened:
-            _, text = self.post("suggest", key="sk-or-v1-new")
+            text = self.press("suggest")
         self.assertIn("No suggestions: OSError", text)  # it got as far as asking, with the typed key
-        request = opened.call_args.args[0]
-        self.assertEqual(request.get_header("Authorization"), "Bearer sk-or-v1-new")
-
-    def test_an_install_named_against_the_rules_says_why(self):
-        self.install()
-        (self.home / "profiles" / "ae.toml").rename(self.home / "profiles" / "my_search.toml")
-        _, _, text = self.request("GET", f"/?token={self.token}")
-        self.assertIn("rename the file", text)
-
-    def test_a_too_long_password_is_said(self):
-        self.install()
-        _, text = self.post("save", email_to="me@gmail.com", password="p" * 30_000)
-        self.assertIn("Too long", text.split('name="password"')[1].split("</fieldset>")[0])
-
-    def test_a_too_long_key_is_never_held(self):
-        _, text = self.post("save", key="k" * 30_000)
-        self.assertIn("Too long", text)
-        _, text = self.post("save")
-        self.assertIn("Your OpenRouter key is needed.", text)
-        self.assertFalse(self.home.exists())
-
-    def test_a_huge_port_is_a_section_error_after_the_search_saved(self):
-        self.install()
-        status, text = self.post("save", email_to="me@gmail.com", email_port="9" * 5000, password="abcd efgh")
-        self.assertEqual(status, 200)
-        self.assertIn("Saved your search", text)
-        self.assertIn("the port is a number", text)
+        self.assertEqual(opened.call_args.args[0].get_header("Authorization"), "Bearer sk-or-v1-new")
 
     def test_broken_email_settings_can_be_turned_off(self):
         self.install()
         (self.home / "email.toml").write_text("not toml [")
-        _, _, text = self.request("GET", f"/?token={self.token}")
-        self.assertIn("your email settings don&#x27;t load", text)
-        self.assertIn('name="email_off"', text)
-        _, text = self.post("save", email_off="on")
-        self.assertIn("Email turned off.", text)
+        self.assertIn("Your email settings don&#x27;t load", self.open())
+        self.press("goto:email")
+        self.assertIn('name="email_off"', self.pages[-1])
+        self.press("next", email_off="on")
+        self.assertIn("Email turned off.", self.press("save"))
         self.assertFalse((self.home / "email.toml").exists())
 
-    def test_a_profile_the_page_would_change_isnt_offered(self):
-        self.install()
+    def test_installs_the_page_cant_edit_say_why(self):
+        for text, reason in [
+                ('titles = ["AE\\nSDR"]\nlocations = ["London"]\neligible_where = "the UK"\ntags = ["founding"]\n',
+                 "would split in two"),
+                ('titles = ["AE"]\nlocations = ["London"]\neligible_where = "the UK"\ntags = []\n' + "".join(
+                    f'\n[custom_tags.t{i}]\ndefinition = "Tag {i}."\n' for i in range(100)),
+                 "more than 99 custom tags")]:
+            with self.subTest(reason):
+                site = ui.Site(self.home, "t")
+                if not self.home.exists():
+                    self.install()
+                (self.home / "profiles" / "ae.toml").write_text(text)
+                self.assertIn(reason, site.show())
+                self.assertNotIn("<button", site.show())
         (self.home / "profiles" / "ae.toml").write_text(
-            'titles = ["AE\\nSDR"]\nlocations = ["London"]\neligible_where = "the UK"\ntags = ["founding"]\n')
-        _, _, text = self.request("GET", f"/?token={self.token}")
-        self.assertIn("would split in two", text)
-
-    def test_too_many_custom_tags_for_the_page(self):
-        self.install()
-        tags = "".join(f'\n[custom_tags.t{i}]\ndefinition = "Tag {i}."\n' for i in range(100))
-        (self.home / "profiles" / "ae.toml").write_text(
-            'titles = ["AE"]\nlocations = ["London"]\neligible_where = "the UK"\ntags = []\n' + tags)
-        _, _, text = self.request("GET", f"/?token={self.token}")
-        self.assertIn("more than 99 custom tags", text)
+            'titles = ["AE"]\nlocations = ["London"]\neligible_where = "the UK"\ntags = ["founding"]\n')
+        (self.home / "profiles" / "ae.toml").rename(self.home / "profiles" / "my_search.toml")
+        self.assertIn("rename the file", ui.Site(self.home, "t").show())
 
     def test_a_run_holding_the_database_is_said(self):
         self.install(model_url=self.model.url)
         (self.home / "jobscan.sqlite").write_bytes(b"")
+        self.open()
+        self.press("goto:titles")
         with lock.run_lock(self.home):
-            _, text = self.post("suggest")
+            text = self.press("suggest")
         self.assertIn("A run is using the database", text)
         self.assertEqual([r for r in self.model.requests if r[1] == "/chat/completions"], [])
 

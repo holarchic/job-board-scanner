@@ -6,13 +6,13 @@ import hmac
 import os
 import secrets
 import webbrowser
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from types import MappingProxyType
 from urllib.parse import parse_qs, urlsplit
 
-from jobscan import init, install, mail, page, preview, tag, titles
+from jobscan import describe, init, install, mail, page, preview, report, tag, titles
 from jobscan.config import (
     EMAIL_FILE,
     KEY_FILE,
@@ -55,73 +55,144 @@ class Done:
 
 
 class Site:
-    """The page's one owner of state: the install, the token and the drafts. Each method answers one request."""
+    """The page's one owner of state: the install, the token, the drafts of secrets, and the step-by-step draft of
+    the search (nothing is written before Save). Each method answers one request. Every page carries the step and a
+    revision; a post from any other page (an old tab, the browser's Back) is shown the current step, unapplied."""
 
     def __init__(self, home: Path, token: str):
         self.home, self.token, self.drafts = home, token, Drafts()
+        self.revision, self.step, self.blocked = 0, "", ""
+        self.form, self.offers = page.Form(), page.Offers()
+        self.read_words = ""  # the description the offers came from: read again only when it changes
 
     def show(self) -> str:
+        self._start()
+        return self._render()
+
+    def post(self, fields: dict[str, list[str]]) -> str:
+        self._start()
+        if self.blocked:
+            return self._render()
+        if (fields.get("step") or [""])[0] != self.step or (fields.get("revision") or [""])[0] != str(self.revision):
+            return self._render(notices=("That page was out of date: this is where you are.",))
+        self.revision += 1
+        self.form, self.offers = page.read_step(self.step, fields, self.form, self.offers)
+        if self.form.key and "key" not in self.form.too_long and usable_key(self.form.key):
+            self.drafts.key = self.form.key
+        if self.form.password and "password" not in self.form.too_long:
+            self.drafts.password = self.form.password
+        action = (fields.get("action") or [""])[0]
+        order = page.steps(self._fresh())
+        if action == "next":
+            return self._next()
+        if action == "back":
+            return self._go(order[max(order.index(self.step) - 1, 0)] if self._fresh() else "summary")
+        if action.startswith("goto:") and action[5:] in order and self.step == "summary":
+            return self._go(action[5:])
+        if action == "skip" and self.step == "describe":
+            return self._skip()
+        if action == "suggest" and self.step == "titles":
+            return self._suggest()
+        if action in ("preview", "save") and self.step == "summary":
+            checked = page.to_profile(self.form)
+            if checked.profile is None:
+                return self._render(errors=checked.errors)
+            return self._preview(checked.profile) if action == "preview" else self._save(checked.profile)
+        return self._render(errors={"": "Press one of the buttons."})
+
+    def _start(self) -> None:
+        """The first request decides where the steps begin: a new install at the key, an existing one at its
+        summary, or a message when its profile can't go through the page unchanged."""
+        if self.step:
+            return
         if self._fresh():
-            return page.render(self._view(page.Form(tags=frozenset(tag.builtin_names()))))
+            self.step = "key"
+            return
+        self.step = "summary"
         try:
             profile = load_profile(self.home)
         except ConfigError as e:
-            return page.render(self._view(page.Form(), errors={"": f"Your install doesn't load: {e}"}))
+            self.blocked = f"Your install doesn't load: {e}"
+            return
         reason = page.unrepresentable(profile)
         if reason:
-            return page.render(self._view(page.Form(), errors={"": f"This page can't edit your profile without "
-                                                                   f"changing it ({reason}): edit it in its file."}))
-        return page.render(self._view(page.form_from_profile(profile, self._prefill_email())))
+            self.blocked = f"This page can't edit your profile without changing it ({reason}): edit it in its file."
+            return
+        self.form = page.form_from_profile(profile, self._prefill_email())
 
-    def post(self, fields: dict[str, list[str]]) -> str:
-        form = page.read(fields)
-        if form.key and "key" not in form.too_long:  # a refused value is never held
-            self.drafts.key = form.key
-        if form.password and "password" not in form.too_long:
-            self.drafts.password = form.password
-        action = (fields.get("action") or [""])[0]
-        if action not in ("save", "preview", "suggest"):
-            return page.render(self._view(page.with_ticked(form), errors={"": "Press one of the buttons."}))
-        checked = page.to_profile(form)
-        form = page.with_ticked(form)  # ticked suggestions stay in the lists whatever happens next
-        if checked.profile is None:
-            return page.render(self._view(form, errors=checked.errors))
-        if action == "suggest":
-            return self._suggest(form, checked.profile)
-        if action == "preview":
-            return self._preview(form, checked.profile)
-        return self._save(form, checked.profile)
+    def _next(self) -> str:
+        errors = page.check_step(self.step, self.form, key_held=self._key_held(), fresh=self._fresh(),
+                                 password=self._password())
+        if errors:
+            return self._render(errors=errors)
+        if self.step == "describe":
+            return self._describe()
+        order = page.steps(self._fresh())
+        return self._go(order[order.index(self.step) + 1] if self._fresh() else "summary")
 
-    def _suggest(self, form: page.Form, profile: Profile) -> str:
+    def _describe(self) -> str:
+        words = self.form.description
+        if not words:
+            return self._skip()
+        if words == self.read_words:  # read already: the draft, and any edits since, stand
+            return self._go("titles")
+        try:
+            config = self._config()
+            described = describe.read(words, config.model, config.api_key)
+        except ConfigError as e:
+            return self._render(errors={"description": f"Not read: {e}."})
+        except describe.DescribeError as e:
+            return self._render(errors={"description": f"The model couldn't read it ({e}): try again, or go on "
+                                                       "without suggestions."})
+        self.read_words = words
+        self.form, self.offers = page.prefilled(self.form, described, f"Filled in from what you said (model call "
+                                                                      f"{report.cost(described.usage)}): untick "
+                                                                      "what's wrong, tick what fits.")
+        return self._go("titles")
+
+    def _skip(self) -> str:
+        if not self.form.tags and not self.form.custom:
+            self.form = replace(self.form, tags=frozenset(tag.builtin_names()))
+        return self._go("titles")
+
+    def _go(self, step: str) -> str:
+        self.step = step
+        if step == "summary" and not self.form.name:
+            self.form = replace(self.form, name=page.default_name(self.form))
+        return self._render()
+
+    def _suggest(self) -> str:
+        profile = page.search(self.form)
+        if profile is None:
+            return self._render(errors={"titles": "Give at least one title first."})
         try:
             outcome = titles.for_home(self._config(), profile)
         except (ConfigError, titles.TitlesError) as e:
-            return page.render(self._view(form, errors={"": f"No suggestions: {e}"}))
+            return self._render(errors={"": f"No suggestions: {e}"})
         except RunLocked:
-            return page.render(self._view(form, errors={"": "A run is using the database; try once it's done."}))
-        return page.render(self._view(form, suggestions=outcome))
+            return self._render(errors={"": "A run is using the database; try once it's done."})
+        self.offers = page.with_suggestions(self.offers, outcome)
+        return self._render()
 
-    def _preview(self, form: page.Form, profile: Profile) -> str:
+    def _preview(self, profile: Profile) -> str:
         if self._fresh():
-            return page.render(self._view(form, previewed=True))
+            return self._render(previewed=True)
         try:
             result = preview.for_home(self._config(), profile)
         except ConfigError as e:
-            return page.render(self._view(form, errors={"": f"No preview: {e}"}))
+            return self._render(errors={"": f"No preview: {e}"})
         except RunLocked:
-            return page.render(self._view(form, errors={"": "A run is using the database; try once it's done."}))
-        return page.render(self._view(form, preview=result, previewed=True))
+            return self._render(errors={"": "A run is using the database; try once it's done."})
+        return self._render(preview=result, previewed=True)
 
-    def _save(self, form: page.Form, profile: Profile) -> str:
+    def _save(self, profile: Profile) -> str:
         """Search (and, on a new install, settings and key), then a new key, then email, then the whole install
         checked as `jobscan check` does: each section reported; drafts cleared only when all of it holds."""
         fresh = self._fresh()
-        if self.drafts.key and not usable_key(self.drafts.key):
-            return page.render(self._view(form, errors={"key": "That isn't an OpenRouter key: paste it again."}))
         try:
             if fresh:
                 if not self.drafts.key:
-                    return page.render(self._view(form, errors={"key": "Your OpenRouter key is needed."}))
+                    return self._render(errors={"key": "Your OpenRouter key is needed."})
                 init.init_from(self.home, init.Answers(
                     name=profile.name, titles=list(profile.titles), exclude_titles=list(profile.exclude_titles),
                     locations=list(profile.locations), eligible_where=profile.eligible_where,
@@ -129,18 +200,18 @@ class Site:
             else:
                 init.save_profile(self.home, profile)
         except ConfigError as e:
-            return page.render(self._view(form, errors={"": f"Nothing was saved: {e}"}))
+            return self._render(errors={"": f"Nothing was saved: {e}"})
         done = [Done(notice="Saved your search, the settings and your key." if fresh
                      else "Saved your search (the previous file is kept as .toml.prev).")]
         if self.drafts.key and not fresh:
             done.append(self._save_key())
-        done.append(self._save_email(form, profile.name))
+        done.append(self._save_email(profile.name))
         done.append(self._checked())
         errors = {"": " ".join(d.error for d in done if d.error)} if any(d.error for d in done) else {}
         if not errors:
             self.drafts = Drafts()
-        return page.render(self._view(form if errors else page.form_from_profile(profile, self._prefill_email()),
-                                      errors=errors, notices=tuple(d.notice for d in done if d.notice)))
+            self.form, self.offers = page.form_from_profile(profile, self._prefill_email()), page.Offers()
+        return self._render(errors=errors, notices=tuple(d.notice for d in done if d.notice))
 
     def _save_key(self) -> Done:
         try:
@@ -149,7 +220,8 @@ class Site:
             return Done(error=f"Your new key wasn't saved: {e}.")
         return Done(notice="Saved your new key.")
 
-    def _save_email(self, form: page.Form, search: str) -> Done:
+    def _save_email(self, search: str) -> Done:
+        form = self.form
         try:
             saved = load_email(self.home)
         except ConfigError as e:
@@ -199,32 +271,47 @@ class Site:
         environ = {**os.environ, "OPENROUTER_API_KEY": self.drafts.key} if self.drafts.key else None
         return load_config(self.home, environ=environ)
 
+    def _password(self) -> str:
+        """The app password typed here, else the saved one: what the email step's settings are checked with."""
+        if self.drafts.password:
+            return self.drafts.password
+        try:
+            saved = self._saved_email()
+        except ConfigError:
+            return ""
+        return saved.password if saved else ""
+
     def _saved_email(self) -> EmailConfig | None:
         return None if self._fresh() else load_email(self.home)
 
     def _prefill_email(self) -> EmailConfig | None:
-        """The saved settings to fill the form with; one that doesn't load fills nothing (`_view` says why)."""
+        """The saved settings to fill the form with; one that doesn't load fills nothing (`_render` says why)."""
         try:
             return self._saved_email()
         except ConfigError:
             return None
 
+    def _key_held(self) -> bool:
+        return bool(self.drafts.key) or (not self._fresh() and (self.home / KEY_FILE).exists())
+
     def _fresh(self) -> bool:
         return not (self.home / "config.toml").exists()
 
-    def _view(self, form: page.Form, errors=None, **parts) -> page.View:
-        fresh = self._fresh()
+    def _render(self, errors=None, **parts) -> str:
+        if self.blocked:
+            return page.blocked(self.blocked)
         errors = dict(errors or {})
         try:
             email = self._saved_email()
         except ConfigError as e:
             email = None
             errors.setdefault("email", f"Your email settings don't load: {e}")
-        key_saved = not fresh and (self.home / KEY_FILE).exists()
-        return page.View(form=form, token=self.token, catalogue=tag.builtins(), fresh=fresh,
-                         key_held=bool(self.drafts.key) or key_saved, password_held=bool(self.drafts.password),
-                         email=email, email_file=not fresh and (self.home / EMAIL_FILE).exists(), errors=errors,
-                         **parts)
+        fresh = self._fresh()
+        return page.render(page.View(
+            form=self.form, offers=self.offers, step=self.step, revision=self.revision, token=self.token,
+            catalogue=tag.builtins(), fresh=fresh, key_held=self._key_held(),
+            password_held=bool(self.drafts.password), email=email,
+            email_file=not fresh and (self.home / EMAIL_FILE).exists(), errors=errors, **parts))
 
 
 class Server(HTTPServer):

@@ -151,6 +151,13 @@ def validate(answers: Answers) -> None:
         raise ConfigError("that isn't an OpenRouter key: empty, or it holds spaces or control characters")
 
 
+def check_values(label: str, values: tuple[str, ...]) -> None:
+    """Each value of one profile field as the loader reads it back: not empty, no surrounding spaces, valid text."""
+    for value in values:
+        if not value.strip() or value != value.strip() or not encodable(value):
+            raise ConfigError(f"{label}: {value!r} is empty, padded with spaces or not valid text")
+
+
 def validate_profile(profile: Profile) -> None:
     """A profile `load_profile` and `tag.definitions` accept, checked before anything is written; the name before
     any path is built from it. Custom tags may stand in for built-in ones."""
@@ -164,9 +171,7 @@ def validate_profile(profile: Profile) -> None:
     for label, values in [("titles", profile.titles), ("excluded titles", profile.exclude_titles),
                           ("locations", profile.locations), ("tags", profile.tags),
                           ("where you can work from", (profile.eligible_where,))]:
-        for value in values:
-            if not value.strip() or value != value.strip() or not encodable(value):
-                raise ConfigError(f"{label}: {value!r} is empty, padded with spaces or not valid text")
+        check_values(label, values)
     unknown = [t for t in profile.tags if t not in tag.builtin_names()]
     if unknown:
         raise ConfigError(f"unknown tags {unknown}; `jobscan tags` lists them")
