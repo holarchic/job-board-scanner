@@ -197,9 +197,12 @@ def _schedule(commands) -> None:
 def _ui(commands) -> None:
     command = _command(
         commands, "ui", "set up or edit the whole search on a local web page",
-        "Serve a page on this machine (127.0.0.1 only) to set up a new install or edit this one: titles, places, "
-        "tags, your own tags, the OpenRouter key and email, with Preview and Suggest titles for the search as it "
-        "stands on the page. It opens in your browser through a link with a one-time token; anyone with that link "
+        "Serve a page on this machine (127.0.0.1 only) to set up a new install one step at a time, or edit this one "
+        "from a summary. A new install asks for the OpenRouter key, then what you're looking for in your own words; "
+        "one model call (reasoning off: seconds, a fraction of a cent) fills titles, titles to leave out, places and "
+        "tags as tick boxes, with suggestions beside them; then email and a summary to save. Suggest titles and "
+        "Preview work on the search as it stands. It opens in your browser through a link with a one-time token; "
+        "anyone with that link "
         "can use the page until it stops. Ctrl-C stops it. Saving rewrites the profile without its comments (the "
         "previous file is kept as .toml.prev). Typed keys and passwords stay in memory until you save; the page "
         "never shows them.",
