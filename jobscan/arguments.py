@@ -183,8 +183,8 @@ def _titles(commands) -> None:
         "would leave out. Counts are each suggestion's own effect; `preview` after editing shows them together. "
         "Before any run there is nothing to count, so only the suggestions show. Your profile is never changed: "
         "copy the ones you keep into titles or exclude_titles, then `jobscan check` and `jobscan preview`. One "
-        "model call, under a cent; exit 1 if it fails or a run holds the database. The first time new code opens "
-        "the database it backs it up first, as a run would.",
+        "model call (about $0.002 with the default model); exit 1 if it fails or a run holds the database. The "
+        "first time new code opens the database it backs it up first, as a run would.",
         ["jobscan titles", "jobscan titles && $EDITOR ~/.jobscan/profiles/*.toml && jobscan preview"])
 
 

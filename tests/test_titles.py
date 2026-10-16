@@ -73,14 +73,17 @@ class TitlesTest(CliHome):
         self.assertEqual(body["response_format"]["json_schema"]["name"], "titles")
         self.assertTrue(body["response_format"]["json_schema"]["strict"])
 
+    def contents(self):
+        return {p: p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
+
     def test_before_any_run_the_suggestions_show_without_counts(self):
-        before = self.files()
+        before = self.contents()
         code, out, _ = self.cli("titles")
         self.assertEqual(code, 0)
         self.assertIn("  Sales Executive\n", out)
         self.assertNotIn("+", out.split("Near-misses")[0])
         self.assertIn("No postings stored yet", out)
-        self.assertEqual(self.files(), before)
+        self.assertEqual(self.contents(), before)  # the profile and everything else untouched, nothing new
 
     def test_a_run_holding_the_database_costs_no_call(self):
         self.seed()
