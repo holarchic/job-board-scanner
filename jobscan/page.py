@@ -159,7 +159,11 @@ def read_step(step: str, fields: Mapping[str, list[str]], form: Form, offers: Of
             long.add(label)
         values = [v for v in current.split("\n") if v and v in ticked]
         values += [t for t in dict.fromkeys(ticked) if t and t not in values]
-        added = [line for line in _lines(one(more, label)) if line.casefold() not in {v.casefold() for v in values}]
+        seen, added = {v.casefold() for v in values}, []
+        for line in _lines(one(more, label)):  # a loop: lines repeated within the box count too
+            if line.casefold() not in seen:
+                seen.add(line.casefold())
+                added.append(line)
         return "\n".join(values + added), tuple(added)
 
     changes: dict = {"key": one("key").strip(), "password": one("password")}

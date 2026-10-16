@@ -27,6 +27,8 @@ class ReadStepTest(unittest.TestCase):
                                         form, offers)
         self.assertEqual(merged.titles, "AE\nae\nAE\nBDR\nCloser")  # SDR unticked; "ae" typed again not added
         self.assertEqual(offers.titles, ("Sales Executive", "BDR", "Closer"))
+        typed, _ = page.read_step("titles", {"title_more": ["AE\nae\nAE"]}, page.Form(), page.Offers())
+        self.assertEqual(typed.titles, "AE")
 
     def test_each_step_merges_only_its_own_fields(self):
         fields = {"title": ["X"], "place": ["Paris"], "eligible_where": [" France "], "tag": ["segment"],
