@@ -1,5 +1,6 @@
 """The set-up page's values, step by step: posted fields merged into the draft, each step checked on its own, the
 whole draft checked into a profile, and pages rendered without leaking secrets or markup."""
+import re
 import unittest
 from dataclasses import replace
 from unittest import mock
@@ -110,6 +111,8 @@ class CheckStepTest(unittest.TestCase):
 
     def test_email_settings_are_checked_without_sending(self):
         self.assertEqual(checks("email", DRAFT), {})  # no address: email stays off
+        self.assertIn("tick the box", checks("email", DRAFT, email_saved=True)["email_to"])
+        self.assertEqual(checks("email", replace(DRAFT, email_off=True), email_saved=True), {})
         mail = replace(DRAFT, email_to="me@gmail.com")
         self.assertIn("app password", checks("email", mail)["password"])
         self.assertEqual(checks("email", mail, password="abcd efgh"), {})
@@ -246,6 +249,17 @@ class RenderTest(unittest.TestCase):
                 mock.patch.object(tag, "builtins", side_effect=AssertionError("read tags.toml")):
             for view in views:
                 page.render(view)
+
+    def test_every_button_is_an_action_the_server_takes_and_enter_moves_on(self):
+        for fresh in (True, False):
+            for step in page.steps(fresh):
+                html = page.render(self.view(step, fresh=fresh))
+                pressed = re.findall(r'<button name="action" value="([^"]+)"', html)
+                self.assertEqual(set(pressed), page.actions(step, fresh), (step, fresh))
+                self.assertEqual(pressed[0], "save" if step == "summary" else "next")  # what Enter presses
+        said = replace(DRAFT, description="AE jobs in London")
+        self.assertIn("replaces the titles, places and tags", page.render(self.view("describe", form=said)))
+        self.assertNotIn("replaces", page.render(self.view("describe", form=page.Form())))
 
     def test_a_preview_before_any_run_says_so(self):
         self.assertIn("No postings yet", page.render(self.view("summary", previewed=True)))

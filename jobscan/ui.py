@@ -77,7 +77,7 @@ class Site:
         if (fields.get("step") or [""])[0] != self.step or (fields.get("revision") or [""])[0] != str(self.revision):
             return self._render(notices=("That page was out of date: this is where you are.",))
         action = (fields.get("action") or [""])[0]
-        if action not in self._actions():  # refused before anything is applied
+        if action not in page.actions(self.step, self._fresh()):  # refused before anything is applied
             return self._render(errors={"": "Press one of the buttons."})
         self.revision += 1
         self.form, self.offers = page.read_step(self.step, fields, self.form, self.offers)
@@ -101,15 +101,6 @@ class Site:
             return self._render(errors=checked.errors)
         return self._preview(checked.profile) if action == "preview" else self._save(checked.profile)
 
-    def _actions(self) -> set[str]:
-        """The buttons the current step's page shows."""
-        if self.step == "summary":
-            return {"save", "preview", *(f"goto:{s}" for s in page.steps(self._fresh()) if s != "summary")}
-        actions = {"next"}
-        if not (self._fresh() and self.step == "key"):
-            actions.add("back")
-        return actions | ({"skip"} if self.step == "describe" else set()) | (
-            {"suggest"} if self.step == "titles" else set())
 
     def _start(self) -> None:
         """The first request decides where the steps begin: a new install at the key, an existing one at its
@@ -133,7 +124,8 @@ class Site:
 
     def _next(self) -> str:
         errors = page.check_step(self.step, self.form, key_held=self._key_held(), fresh=self._fresh(),
-                                 password=self._password())
+                                 password=self._password(),
+                                 email_saved=not self._fresh() and (self.home / EMAIL_FILE).exists())
         if errors:
             return self._render(errors=errors)
         if self.step == "describe":

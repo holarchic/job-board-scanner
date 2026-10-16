@@ -28,6 +28,7 @@ TEXT_LIMIT = 20_000  # characters in one field; a longer one is refused, never c
 LARGEST_POST = 256 * 1024  # bytes the server reads from one post
 STEPS = ("key", "describe", "titles", "exclude", "places", "tags", "email", "summary")
 EXISTING_STEPS = tuple(s for s in STEPS if s != "describe")  # an existing install is edited, not described again
+EDITABLE = tuple(s for s in EXISTING_STEPS if s != "summary")  # the summary's Edit buttons, new install or not
 HEADINGS = MappingProxyType({
     "key": "Your OpenRouter key", "describe": "What are you looking for?", "titles": "Job titles",
     "exclude": "Titles to leave out", "places": "Places", "tags": "Tags", "email": "Email (optional)",
@@ -211,9 +212,19 @@ def _rows(fields: Mapping[str, list[str]], one, offers: Offers) -> tuple[CustomR
     return tuple(rows)
 
 
-def check_step(step: str, form: Form, *, key_held: bool, fresh: bool, password: str) -> dict[str, str]:
+def actions(step: str, fresh: bool) -> frozenset[str]:
+    """The buttons a step's page shows: the server accepts only these."""
+    if step == "summary":
+        return frozenset({"save", "preview", *(f"goto:{s}" for s in EDITABLE)})
+    return frozenset({"next", *(() if fresh and step == "key" else ("back",)),
+                      *(("skip",) if step == "describe" else ()), *(("suggest",) if step == "titles" else ())})
+
+
+def check_step(step: str, form: Form, *, key_held: bool, fresh: bool, password: str,
+               email_saved: bool = False) -> dict[str, str]:
     """The step's own fields by the rules Save applies; other steps' fields never count. `password`: the app password
-    typed or saved, for checking email settings without sending."""
+    typed or saved, for checking email settings without sending; `email_saved`: email.toml exists, so a blank
+    address is refused unless email is turned off."""
     errors = _too_long(form, step)
     match step:
         case "key":
@@ -224,7 +235,7 @@ def check_step(step: str, form: Form, *, key_held: bool, fresh: bool, password: 
         case "titles" | "exclude" | "places" | "tags" | "summary":
             errors = _profile_errors(step, form) | errors
         case "email":
-            errors = _email_errors(form, password) | errors
+            errors = _email_errors(form, password, email_saved) | errors
     return errors
 
 
@@ -300,9 +311,11 @@ def _custom_tags(form: Form) -> tuple[tuple[CustomTag, ...], dict[str, str]]:
     return tuple(custom), errors
 
 
-def _email_errors(form: Form, password: str) -> dict[str, str]:
-    if form.email_off or not form.email_to:
+def _email_errors(form: Form, password: str, email_saved: bool) -> dict[str, str]:
+    if form.email_off:
         return {}
+    if not form.email_to:
+        return {"email_to": "To turn email off, tick the box; else give the address."} if email_saved else {}
     if form.email_port and not (form.email_port.isascii() and form.email_port.isdigit() and len(form.email_port) <= 5):
         return {"email_port": "The port is a number, 465 or 587."}
     if not password:
@@ -425,7 +438,10 @@ def render(view: View) -> str:
         parts.append(f'<p class="error">{_x(view.errors[""])}</p>')
     parts.append(f'<form method="post" action="/"><input type="hidden" name="token" value="{_x(view.token)}">'
                  f'<input type="hidden" name="step" value="{_x(view.step)}">'
-                 f'<input type="hidden" name="revision" value="{view.revision}">')
+                 f'<input type="hidden" name="revision" value="{view.revision}">'
+                 # Enter submits the form's first button: this one, out of sight, so Enter moves on, never Edit.
+                 f'<button name="action" value="{"save" if view.step == "summary" else "next"}" tabindex="-1" '
+                 'aria-hidden="true" style="position:absolute;left:-9999px">Next</button>')
     parts.append(_BODIES[view.step](view))
     parts.append(_buttons(view))
     parts.append("</form>")
@@ -438,17 +454,16 @@ def render(view: View) -> str:
 
 
 def _buttons(view: View) -> str:
-    """Next first, so Enter moves on."""
+    """The step's buttons from `actions` (the summary's Edit buttons sit in its table), in this order."""
+    labels = {"save": "Save", "preview": "Preview matches", "next": "Next" if view.fresh else "Done",
+              "skip": "Go on without suggestions", "back": "Back"}
+    shown = actions(view.step, view.fresh)
+    out = '<p class="buttons">' + " ".join(f'<button name="action" value="{a}">{labels[a]}</button>'
+                                           for a in labels if a in shown) + "</p>"
     if view.step == "summary":
-        return ('<p class="buttons"><button name="action" value="save">Save</button> '
-                '<button name="action" value="preview">Preview matches</button></p>'
-                "<p class=\"hint\">Saving rewrites your profile file; comments you wrote in it by hand aren't kept "
+        out += ("<p class=\"hint\">Saving rewrites your profile file; comments you wrote in it by hand aren't kept "
                 "(the previous file stays beside it as <code>.toml.prev</code>).</p>")
-    label = "Next" if view.fresh else "Done"
-    back = "" if view.fresh and view.step == "key" else ' <button name="action" value="back">Back</button>'
-    skip = ' <button name="action" value="skip">Go on without suggestions</button>' \
-        if view.step == "describe" else ""
-    return f'<p class="buttons"><button name="action" value="next">{label}</button>{skip}{back}</p>'
+    return out
 
 
 def _key_body(view: View) -> str:
@@ -466,7 +481,9 @@ def _describe_body(view: View) -> str:
             f'<p><textarea name="description" rows="6" placeholder="I\'m looking for account executive jobs with '
             f'founding teams in London, and I\'m happy to be remote.">{_x(view.form.description)}</textarea></p>'
             '<p class="hint">To talk instead of typing on a Mac, click in the box and press Fn (🌐) twice. Next '
-            "reads it with your key (well under a cent) and fills in the next steps for you to tick.</p>"
+            "reads it with your key (well under a cent) and fills in the next steps for you to tick"
+            + ("; changing what you said replaces the titles, places and tags chosen since" if view.form.description
+               else "") + ".</p>"
             + _err("description", view.errors))
 
 
@@ -554,13 +571,13 @@ def _summary_body(view: View) -> str:
     custom = [r.name for r in f.custom]
     email = "off" if f.email_off or not f.email_to else f"to {f.email_to}"
     key = "held" if view.key_held else "none"
-    sections = [("key", "OpenRouter key", key), ("titles", "Titles", "; ".join(_lines(f.titles))),
-                ("exclude", "Left out", "; ".join(_lines(f.exclude_titles)) or "none"),
-                ("places", "Places", "; ".join(_lines(f.locations)) + f" (you can work from: {f.eligible_where})"),
-                ("tags", "Tags", ", ".join([*(t.name for t in view.catalogue if t.name in f.tags), *custom]) or "none"),
-                ("email", "Email", email)]
+    shown = {"key": ("OpenRouter key", key), "titles": ("Titles", "; ".join(_lines(f.titles))),
+             "exclude": ("Left out", "; ".join(_lines(f.exclude_titles)) or "none"),
+             "places": ("Places", "; ".join(_lines(f.locations)) + f" (you can work from: {f.eligible_where})"),
+             "tags": ("Tags", ", ".join([*(t.name for t in view.catalogue if t.name in f.tags), *custom]) or "none"),
+             "email": ("Email", email)}
     rows = []
-    for step, label, value in sections:
+    for step, (label, value) in ((s, shown[s]) for s in EDITABLE):
         mistakes = [m for n, m in e.items() if n and _step_of(n) == step]
         rows.append(f"<tr><th>{_x(label)}</th><td>{_x(value)}"
                     + "".join(f'<span class="error">{_x(m)}</span>' for m in mistakes)

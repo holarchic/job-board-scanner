@@ -455,6 +455,14 @@ class ExistingInstallTest(UiTest):
         self.assertIn("Email turned off.", self.press("save"))
         self.assertIsNone(load_email(self.home))
 
+    def test_a_blank_address_needs_the_off_box(self):
+        self.install()
+        self.open()
+        self.edit("email", email_to="me@gmail.com", password="abcd efgh")
+        self.press("save")
+        self.assertIn("To turn email off, tick the box", self.edit("email", email_to=""))
+        self.assertEqual(self.step(), "email")
+
     def test_a_failed_key_save_says_what_was_saved(self):
         self.install()
         self.open()
