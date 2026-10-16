@@ -72,6 +72,7 @@ class TitlesTest(CliHome):
         self.assertIn("Titles they already leave out: Assistant", text)
         self.assertEqual(body["response_format"]["json_schema"]["name"], "titles")
         self.assertTrue(body["response_format"]["json_schema"]["strict"])
+        self.assertEqual(body["reasoning"], {"enabled": False})  # suggestions in seconds, not a minute
 
     def contents(self):
         return {p: p.read_bytes() for p in self.home.rglob("*") if p.is_file()}

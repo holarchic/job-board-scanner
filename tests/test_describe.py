@@ -62,6 +62,7 @@ class DescribeTest(unittest.TestCase):
         for t in tag.builtins():
             self.assertIn(f"- {t.name}: {t.summary}", prompt)
         self.assertEqual(body["response_format"]["json_schema"]["name"], "description")
+        self.assertEqual(body["reasoning"], {"enabled": False})  # a page waits on it: seconds, not a minute
 
     def test_suggestions_are_cleaned(self):
         d = self.read()

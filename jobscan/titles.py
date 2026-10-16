@@ -81,7 +81,7 @@ def suggest(profile: Profile, model: ModelConfig, api_key: str | None) -> Sugges
     text = PROMPT.format(titles=_listed(profile.titles), excluded=_listed(profile.exclude_titles),
                          where=profile.eligible_where, most=MOST)
     try:
-        reply = tag.call(model, api_key, text, _schema(), "titles")
+        reply = tag.call(model, api_key, text, _schema(), "titles", reasoning=False)
     except tag.CallFailed as e:  # an HTTP refusal isn't billed; another failure may have been
         raise TitlesError(e.reason, e.http_status, usage=None if e.http_status else e.usage) from None
     try:

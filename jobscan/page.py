@@ -123,13 +123,14 @@ def form_from_profile(profile: Profile, email: EmailConfig | None) -> Form:
 
 
 def prefilled(form: Form, described: Described, note: str) -> tuple[Form, Offers]:
-    """The draft as the description asked for it (ticked), and what it may have missed (offered unticked)."""
-    custom = tuple(_row(c) for c in described.custom_tags)
+    """The draft as the description asked for it (ticked), and what it may have missed (offered unticked, custom
+    tags among them)."""
     form = replace(form, titles="\n".join(described.titles), exclude_titles="\n".join(described.leave_out),
                    locations="\n".join(described.places), eligible_where=described.eligible_where,
-                   tags=frozenset(described.tags), custom=custom)
+                   tags=frozenset(described.tags), custom=())
     return form, Offers(titles=described.other_titles, excludes=described.near_misses,
-                        places=described.other_places, custom=custom, note=note)
+                        places=described.other_places, custom=tuple(_row(c) for c in described.custom_tags),
+                        note=note)
 
 
 def with_suggestions(offers: Offers, outcome: Outcome) -> Offers:

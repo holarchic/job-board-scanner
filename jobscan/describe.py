@@ -27,16 +27,19 @@ posting. The built-in tags:
 
 Return JSON with:
 - `titles`: the job titles they asked for, as job ads write them ("Account Executive").
-- `other_titles`: up to 15 other titles employers post the same jobs under, which their titles miss as words
-  ("Sales Executive", "AE").
+- `other_titles`: up to 8 other titles employers commonly post the same job under, which their titles miss as
+  words ("Sales Executive", "AE" for Account Executive). The same job only: not a different role.
 - `leave_out`: titles they said to skip.
-- `near_misses`: up to 15 titles their titles match as words that are different jobs, to leave out
-  ("Account Executive Assistant").
+- `near_misses`: up to 6 real titles, common in job ads, that their titles match as words but are different jobs,
+  to leave out ("Account Executive Assistant"); never the same job at another level ("Senior", "Junior").
 - `places`: the places they named or implied, as job ads write locations ("London", "Remote").
-- `other_places`: other ways job ads name those places ("UK", "United Kingdom" for London).
-- `eligible_where`: where they can work from, in a few words ("the UK, working from London"); "" if they didn't say.
+- `other_places`: up to 4 other ways job ads commonly write those same places ("UK", "United Kingdom" for London);
+  never a wider area than they asked for.
+- `eligible_where`: where they can work from, in a few words: what they said, else the country of their places
+  ("the UK" for London); "" if no place names a country.
 - `tags`: the names of the built-in tags that fit what they care about.
-- `custom_tags`: up to 5 tags for things they care about that no built-in covers, each with `name`
+- `custom_tags`: up to 5 tags for things they said they care about that no built-in tag above already asks, each
+  with `name`
   (lower_case_with_underscores), `question` (what to answer about a posting, saying what each answer means) and
   `answers` (2 to 10 short answers, "unknown" among them). [] if none."""
 LISTS = ("titles", "other_titles", "leave_out", "near_misses", "places", "other_places", "tags")
@@ -63,7 +66,8 @@ class DescribeError(Exception):
 @dataclass(frozen=True)
 class Described:
     """Suggestions for each step. The first of each pair is what the person asked for (offered ticked), the second
-    what they may have missed (offered unticked)."""
+    what they may have missed (offered unticked); built-in tags are offered ticked, custom tags unticked (the model
+    proposes some a built-in already asks)."""
     titles: tuple[str, ...]
     other_titles: tuple[str, ...]
     leave_out: tuple[str, ...]
@@ -79,7 +83,8 @@ class Described:
 def read(words: str, model: ModelConfig, api_key: str | None) -> Described:
     catalogue = "\n".join(f"- {t.name}: {t.summary}" for t in tag.builtins())
     try:
-        reply = tag.call(model, api_key, PROMPT.format(words=words, catalogue=catalogue), _schema(), "description")
+        reply = tag.call(model, api_key, PROMPT.format(words=words, catalogue=catalogue), _schema(), "description",
+                         reasoning=False)
     except tag.CallFailed as e:  # an HTTP refusal isn't billed; another failure may have been
         raise DescribeError(e.reason, usage=None if e.http_status else e.usage) from None
     try:

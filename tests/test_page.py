@@ -167,10 +167,10 @@ class SuggestionTest(unittest.TestCase):
                               other_places=("UK",), eligible_where="the UK", tags=("founding",),
                               custom_tags=(salary,), usage=tag.Usage(0.001))
         form, offers = page.prefilled(page.Form(description="words"), described, "note")
-        self.assertEqual((form.titles, form.locations, form.tags, [r.name for r in form.custom], form.description),
-                         ("Account Executive", "London", frozenset({"founding"}), ["salary_stated"], "words"))
-        self.assertEqual((offers.titles, offers.excludes, offers.places, offers.custom),
-                         (("Sales Executive",), ("Account Executive Assistant",), ("UK",), form.custom))
+        self.assertEqual((form.titles, form.locations, form.tags, form.custom, form.description),
+                         ("Account Executive", "London", frozenset({"founding"}), (), "words"))
+        self.assertEqual((offers.titles, offers.excludes, offers.places, [r.name for r in offers.custom]),
+                         (("Sales Executive",), ("Account Executive Assistant",), ("UK",), ["salary_stated"]))
 
     def test_a_new_search_is_named_from_its_first_title(self):
         for titles, name in [("Account Executive\nAE", "account-executive"), ("", "my-search"), ("*", "my-search"),

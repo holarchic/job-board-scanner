@@ -230,9 +230,9 @@ class NewInstallTest(UiTest):
         text = self.press("next", ticked={"exclude": ["Account Executive Assistant"]})
         self.assertEqual((checked(text, "place"), checked(text, "eligible_where")), (["London", "Remote"], ["the UK"]))
         text = self.press("next", ticked={"place": ["UK"]})
-        self.assertEqual((checked(text, "tag"), checked(text, "add_custom")),
-                         (["founding", "location_eligible"], ["salary_stated"]))
-        self.press("next")
+        self.assertEqual((checked(text, "tag"), checked(text, "add_custom")), (["founding", "location_eligible"], []))
+        self.assertIn('name="add_custom" value="salary_stated">', text)  # offered, one click to add
+        self.press("next", ticked={"add_custom": ["salary_stated"]})
         text = self.press("next", email_to="me@gmail.com", password="abcd efgh ijkl mnop")
         self.assertEqual(checked(text, "name"), ["account-executive"])
         text = self.press("save")

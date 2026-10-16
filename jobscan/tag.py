@@ -274,15 +274,19 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
-def call(model: ModelConfig, api_key: str | None, text: str, response_schema: dict, name: str) -> Reply:
+def call(model: ModelConfig, api_key: str | None, text: str, response_schema: dict, name: str,
+         reasoning: bool = True) -> Reply:
     """One chat-completions request answering with JSON in `response_schema` (strict, called `name`): every model
     call goes through here, so each refuses redirects and pins the provider. Usage is read before anything is
     validated, so a rejected reply still counts. CallFailed when there is no reply; a reply without readable
-    content (`content` None) is the caller's to refuse, with its usage."""
+    content (`content` None) is the caller's to refuse, with its usage. `reasoning=False` asks the model not to
+    think first: set-up suggestions come back in seconds instead of a minute (tagging, validated with it, keeps it)."""
     body = {"model": model.slug, "temperature": 0, "usage": {"include": True},
             "messages": [{"role": "user", "content": text}],
             "response_format": {"type": "json_schema",
                                 "json_schema": {"name": name, "strict": True, "schema": response_schema}}}
+    if not reasoning:
+        body["reasoning"] = {"enabled": False}
     if model.provider:
         body["provider"] = {"only": [model.provider], "allow_fallbacks": False, "require_parameters": True,
                             **({"quantizations": [model.quantization]} if model.quantization else {})}
