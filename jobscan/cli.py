@@ -314,7 +314,7 @@ def _preview(home: Path) -> int:
     if result is None:
         print("No postings yet: `jobscan run` fetches them, then `jobscan preview` can count them.")
     else:
-        print("\n".join(report.preview_lines(profile, result)))
+        print("\n".join(report.preview_lines(profile.name, result)))
     return EXIT_OK
 
 

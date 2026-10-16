@@ -93,9 +93,9 @@ def boards_added(file: Path, outcome: Added) -> list[str]:
     return lines
 
 
-def preview_lines(profile: Profile, p: Preview) -> list[str]:
+def preview_lines(search: str, p: Preview) -> list[str]:
     lines = [
-        f"{profile.name}, against the {p.open:,} open postings stored for the boards the next run reads:",
+        f"{search}, against the {p.open:,} open postings stored for the boards the next run reads:",
         f"  matching your titles and locations: {p.matched:,} postings",
         f"  new jobs the next run would tag: {p.new_jobs:,} (about ${p.cost:.2f})",
         f"  already sent to you: {p.sent:,}",
