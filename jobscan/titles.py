@@ -91,13 +91,21 @@ def suggest(profile: Profile, model: ModelConfig, api_key: str | None) -> Sugges
     if not isinstance(data, dict) or set(data) != {"variants", "near_misses"} or not all(
             isinstance(data[k], list) and all(isinstance(item, str) for item in data[k]) for k in data):
         raise TitlesError("the reply isn't the two lists of titles", usage=reply.usage)
-    own = {t.strip().casefold() for t in profile.titles}  # as the filter reads its terms
-    excluded_already = {t.strip().casefold() for t in profile.exclude_titles}
-    variants = tuple(v for v in _clean(data["variants"], own | excluded_already)
-                     if not any(term_matches(title, v) for title in profile.titles))  # matched already
-    near = [n for n in _clean(data["near_misses"], excluded_already | own)
-            if not any(term_matches(n, title) for title in profile.titles)]  # it would exclude the search itself
-    return Suggested(variants=variants, near_misses=tuple(near), usage=reply.usage)
+    variants, near = sift(profile.titles, profile.exclude_titles, data["variants"], data["near_misses"])
+    return Suggested(variants=variants, near_misses=near, usage=reply.usage)
+
+
+def sift(titles: tuple[str, ...], excluded: tuple[str, ...], variants: list[str],
+         near_misses: list[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Suggested variants and near-misses worth offering: cleaned; none the search has; no variant its titles match
+    already; no near-miss that would exclude one of its own titles."""
+    own = {t.strip().casefold() for t in titles}  # as the filter reads its terms
+    excluded_already = {t.strip().casefold() for t in excluded}
+    kept_variants = tuple(v for v in clean(variants, own | excluded_already)
+                          if not any(term_matches(title, v) for title in titles))
+    kept_near = tuple(n for n in clean(near_misses, excluded_already | own)
+                      if not any(term_matches(n, title) for title in titles))
+    return kept_variants, kept_near
 
 
 def count(conn: sqlite3.Connection, profile: Profile, reads: set[str], suggested: Suggested) -> Counted:
@@ -121,9 +129,9 @@ def _listed(values: tuple[str, ...]) -> str:
     return "; ".join(v.strip() for v in values) or "(none)"
 
 
-def _clean(raw: list[str], taken: set[str]) -> tuple[str, ...]:
-    """Printable one-line titles, at most LONGEST characters and MOST of them, none twice (case-folded) and none
-    the profile has."""
+def clean(raw: list[str], taken: set[str] = frozenset()) -> tuple[str, ...]:
+    """Printable one-line titles (or places), at most LONGEST characters and MOST of them, none twice (case-folded)
+    and none in `taken` (case-folded)."""
     kept, seen = [], set(taken)
     for item in raw:
         title = one_line(item) if encodable(item) else ""
