@@ -3,7 +3,6 @@ import argparse
 import logging
 import os
 import sys
-import webbrowser
 from datetime import time
 from pathlib import Path
 from time import monotonic
@@ -13,8 +12,8 @@ from jobscan import (
     boards,
     discover,
     evaluate,
-    fetch,
     init,
+    install,
     mail,
     notify,
     preview,
@@ -28,13 +27,10 @@ from jobscan import (
 )
 from jobscan.config import (
     EMAIL_FILE,
-    KEY_FILE,
-    Config,
     ConfigError,
     EmailConfig,
     Profile,
     jobscan_home,
-    key_only_in_environment,
     load_config,
     load_email,
     load_profile,
@@ -280,35 +276,18 @@ def _discover(home: Path) -> int:
 
 def _check(home: Path) -> int:
     try:
-        config = load_config(home)
-        profile = load_profile(home)
-        tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
-        email = load_email(home)
-        listed, unrecognised = fetch.load_boards(config.boards_file) if config.boards_file else (None, 0)
-        warnings = [f"the key is only in OPENROUTER_API_KEY, which a scheduled run won't see: save it in "
-                    f"{home / KEY_FILE}, readable only by you (chmod 600)"] if key_only_in_environment(home, config) \
-            else []
+        checked = install.check(home)
     except ConfigError as e:
         print(f"jobscan: {e}", file=sys.stderr)
         return EXIT_USAGE
-    print("\n".join(report.install(config, profile, email, None if listed is None else len(listed), unrecognised,
-                                   _key_source(home, config), warnings)))
+    print("\n".join(report.install(checked)))
     return EXIT_OK
-
-
-def _key_source(home: Path, config: Config) -> str:
-    if config.api_key is None:
-        return "none needed"
-    if os.environ.get("OPENROUTER_API_KEY"):
-        return f"OPENROUTER_API_KEY here, {KEY_FILE} for scheduled runs" if (home / KEY_FILE).exists() \
-            else "OPENROUTER_API_KEY"
-    return KEY_FILE
 
 
 def _preview(home: Path) -> int:
     try:
         profile = load_profile(home)
-        result = preview.for_home(home, load_config(home), profile)
+        result = preview.for_home(load_config(home), profile)
     except ConfigError as e:
         print(f"jobscan: {e}", file=sys.stderr)
         return EXIT_USAGE
@@ -329,21 +308,15 @@ def _ui(home: Path, port: int, open_browser: bool) -> int:
         print(f"jobscan: can't serve on port {port} ({type(e).__name__})", file=sys.stderr)
         return EXIT_USAGE
     print(f"jobscan ui: {server.url}\nCtrl-C stops it.")
-    if open_browser:
-        webbrowser.open(server.url)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nStopped.")
-    finally:
-        server.server_close()
+    server.run(open_browser)
+    print("\nStopped.")
     return EXIT_OK
 
 
 def _titles(home: Path) -> int:
     try:
         profile = load_profile(home)
-        outcome = titles.for_home(home, load_config(home), profile)
+        outcome = titles.for_home(load_config(home), profile)
     except ConfigError as e:
         print(f"jobscan: {e}", file=sys.stderr)
         return EXIT_USAGE

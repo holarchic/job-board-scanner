@@ -103,6 +103,13 @@ class SecurityTest(UiTest):
             "Content-Type": "application/x-www-form-urlencoded"})
         self.assertEqual(status, 413)
 
+    def test_odd_tokens_origins_and_actions_are_refused(self):
+        self.assertEqual(self.request("GET", "/?token=%C3%A9")[0], 403)
+        self.assertEqual(self.post("save", headers={"Origin": f"127.0.0.1:{self.port}"}, key="sk-or-v1-fresh")[0], 403)
+        _, text = self.post("delete-everything", key="sk-or-v1-fresh")
+        self.assertIn("Press one of the buttons.", text)
+        self.assertFalse(self.home.exists())
+
     def test_an_idle_connection_doesnt_hold_the_server(self):
         self.assertEqual(ui._Handler.timeout, ui.READ_TIMEOUT)  # every connection gets it; shortened below
         with mock.patch.object(ui._Handler, "timeout", 1):
@@ -158,6 +165,12 @@ class FreshHomeTest(UiTest):
     def test_preview_before_any_run(self):
         self.assertIn("No postings yet", self.post("preview")[1])
 
+    def test_a_ticked_suggestion_stays_through_preview_and_a_refused_save(self):
+        _, text = self.post("preview", add_title="Sales Executive")
+        self.assertIn("Account Executive\nSales Executive</textarea>", text)
+        _, text = self.post("save", {**FIELDS, "titles": "Account Executive\nSales Executive", "eligible_where": ""})
+        self.assertIn("Account Executive\nSales Executive</textarea>", text)
+
 
 class ExistingInstallTest(UiTest):
     def test_the_page_shows_the_saved_search(self):
@@ -200,6 +213,47 @@ class ExistingInstallTest(UiTest):
         _, text = self.post("save", email_to="me@gmail.com", email_off="on")
         self.assertIn("Email turned off.", text)
         self.assertIsNone(load_email(self.home))
+
+    def test_a_failed_key_save_says_what_was_saved(self):
+        self.install()
+        with mock.patch.object(init, "save_key", side_effect=init.ConfigError("disk full")):
+            _, text = self.post("save", key="sk-or-v1-new")
+        self.assertIn("Saved your search", text)
+        self.assertIn("Your new key wasn&#x27;t saved: disk full.", text)
+        self.assertEqual(load_profile(self.home).titles, ("Account Executive",))
+
+    def test_a_failed_email_removal_is_said_not_crashed(self):
+        self.install()
+        self.post("save", email_to="me@gmail.com", password="abcd efgh")
+        with mock.patch.object(init, "remove_email", side_effect=init.ConfigError("read-only")):
+            status, text = self.post("save", email_to="me@gmail.com", email_off="on")
+        self.assertEqual(status, 200)
+        self.assertIn("Email wasn&#x27;t turned off: read-only.", text)
+        self.assertIn('name="email_off" checked', text)  # the tick is kept to try again
+
+    def test_a_form_for_another_search_name_is_refused(self):
+        self.install()
+        _, text = self.post("save", {**FIELDS, "name": "other"})
+        self.assertIn("this install&#x27;s profile is ae.toml", text)
+        self.assertEqual(sorted(p.name for p in (self.home / "profiles").iterdir()), ["ae.toml"])
+
+    def test_a_typed_key_is_used_when_the_saved_one_is_missing(self):
+        self.install(key=None)
+        (self.home / "config.toml").write_text('[model]\nbase_url = "https://openrouter.ai/api/v1"\nslug = "x"\n'
+                                               'provider = "p"\nquantization = "q"\n')
+        with mock.patch("jobscan.tag._OPENER.open", side_effect=OSError("offline")) as opened:
+            _, text = self.post("suggest", key="sk-or-v1-new")
+        self.assertIn("No suggestions: OSError", text)  # it got as far as asking, with the typed key
+        request = opened.call_args.args[0]
+        self.assertEqual(request.get_header("Authorization"), "Bearer sk-or-v1-new")
+
+    def test_too_many_custom_tags_for_the_page(self):
+        self.install()
+        tags = "".join(f'\n[custom_tags.t{i}]\ndefinition = "Tag {i}."\n' for i in range(100))
+        (self.home / "profiles" / "ae.toml").write_text(
+            'titles = ["AE"]\nlocations = ["London"]\neligible_where = "the UK"\ntags = []\n' + tags)
+        _, _, text = self.request("GET", f"/?token={self.token}")
+        self.assertIn("more custom tags than this page shows", text)
 
     def test_a_run_holding_the_database_is_said(self):
         self.install(model_url=self.model.url)

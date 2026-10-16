@@ -11,7 +11,7 @@ about each one, quoting the posting, and writes a markdown digest of what is new
 schedule it. Everything lives under $JOBSCAN_HOME (default ~/.jobscan)."""
 SET_UP = """Set up, in order (a person in a terminal, or an agent by flags):
   1. jobscan init                  the search and the OpenRouter key (openrouter.ai/keys); a person can use
-                                   `jobscan ui` instead, a local page that does steps 1 to 4
+                                   `jobscan ui` instead, a local page that does steps 1, 2 and 4
        printf '%s\\n' "$KEY" | jobscan init --name ae --title 'Account Executive' \\
            --location London --location Remote --eligible-where 'the UK' --key-stdin
   2. jobscan email                 optional: each digest emailed from your own Gmail or iCloud account
@@ -40,6 +40,12 @@ def parser() -> argparse.ArgumentParser:
     for add in (_init, _email, _boards, _check, _run, _preview, _schedule, _ui, _titles, _tags, _discover, _eval):
         add(commands)
     return root
+
+
+def port(text: str) -> int:
+    if not (text.isascii() and text.isdigit() and int(text) <= 65535):
+        raise argparse.ArgumentTypeError("a port number, 0 to 65535")
+    return int(text)
 
 
 def clock(text: str) -> time:
@@ -185,7 +191,7 @@ def _ui(commands) -> None:
         "previous file is kept as .toml.prev). Typed keys and passwords stay in memory until you save; the page "
         "never shows them.",
         ["jobscan ui", "jobscan ui --port 8765 --no-browser"])
-    command.add_argument("--port", type=int, default=0, help="the port to serve on (default: any free one)")
+    command.add_argument("--port", type=port, default=0, help="the port to serve on (default: any free one)")
     command.add_argument("--no-browser", action="store_true", help="print the link without opening a browser")
 
 

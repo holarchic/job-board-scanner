@@ -3,15 +3,15 @@ checked into a profile (`to_profile`), and the page as HTML (`render`, pure). Se
 but never rendered."""
 import html
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from jobscan import init, report, tag
 from jobscan.config import ConfigError, EmailConfig, Profile, custom_tag
 from jobscan.preview import Preview
 from jobscan.titles import Outcome
 
-MOST_CUSTOM = 30  # custom tag rows read from one post
-TEXT_LIMIT = 20_000  # characters kept from one field
+MOST_CUSTOM = 100  # custom tag rows the page shows and reads; a profile with more is edited in its file
+TEXT_LIMIT = 20_000  # characters in one field; a longer one is refused, never cut
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,15 @@ class Form:
     add_excludes: tuple[str, ...] = ()  # suggestions ticked to leave out
     key: str = field(default="", repr=False)  # typed in this post; never rendered
     password: str = field(default="", repr=False)
+    too_long: frozenset[str] = frozenset()  # fields over TEXT_LIMIT, refused by `to_profile`
+    too_many: bool = False  # more custom rows than MOST_CUSTOM
+
+
+@dataclass(frozen=True)
+class Checked:
+    """The profile the form describes, or why not, by field ("" for the whole form)."""
+    profile: Profile | None
+    errors: Mapping[str, str]
 
 
 @dataclass(frozen=True)
@@ -48,6 +57,7 @@ class View:
     """Everything one page shows."""
     form: Form
     token: str
+    catalogue: tuple[tag.BuiltinTag, ...]  # the built-in tags, loaded by the caller: rendering reads nothing
     fresh: bool  # no install yet: the name is asked and the key required
     key_held: bool  # a key is saved, or typed earlier on this page
     password_held: bool
@@ -71,17 +81,22 @@ def form_from_profile(profile: Profile, email: EmailConfig | None) -> Form:
 
 
 def read(fields: Mapping[str, list[str]]) -> Form:
-    """The form as posted; anything missing is empty, anything malformed is kept as text for the checks to refuse."""
+    """The form as posted; anything missing is empty, anything malformed is kept as text for the checks to refuse.
+    A custom row with no name is a removed one."""
+    long = set()
+
     def one(name: str) -> str:
-        values = fields.get(name) or [""]
-        return values[0][:TEXT_LIMIT]
+        value = (fields.get(name) or [""])[0]
+        if len(value) > TEXT_LIMIT:
+            long.add(name)
+        return value
 
     rows = []
     for i in range(MOST_CUSTOM):
         row = CustomRow(name=one(f"custom-{i}-name").strip(), definition=one(f"custom-{i}-definition"),
                         values=one(f"custom-{i}-values"), multi=one(f"custom-{i}-multi") == "on",
                         default=one(f"custom-{i}-default").strip())
-        if row.name or row.definition.strip():
+        if row.name:
             rows.append(row)
     return Form(name=one("name").strip(), titles=one("titles"), exclude_titles=one("exclude_titles"),
                 locations=one("locations"), eligible_where=one("eligible_where").strip(),
@@ -89,14 +104,26 @@ def read(fields: Mapping[str, list[str]]) -> Form:
                 custom=tuple(rows), email_to=one("email_to").strip(), email_from=one("email_from").strip(),
                 email_host=one("email_host").strip(), email_port=one("email_port").strip(),
                 email_off=one("email_off") == "on",
-                add_titles=tuple(v[:TEXT_LIMIT] for v in fields.get("add_title", [])),
-                add_excludes=tuple(v[:TEXT_LIMIT] for v in fields.get("add_exclude", [])),
-                key=one("key").strip(), password=one("password"))
+                add_titles=tuple(fields.get("add_title", [])), add_excludes=tuple(fields.get("add_exclude", [])),
+                key=one("key").strip(), password=one("password"), too_long=frozenset(long),
+                too_many=any(f"custom-{MOST_CUSTOM}-{part}" in fields for part in ("name", "definition")))
 
 
-def to_profile(form: Form) -> tuple[Profile | None, dict[str, str]]:
-    """The profile the form describes, ticked suggestions added, or None with errors by field."""
-    errors: dict[str, str] = {}
+def with_ticked(form: Form) -> Form:
+    """The ticked suggestions written into the title lists, so every later page and save keeps them."""
+    return replace(form, titles="\n".join(_merged(form.titles, form.add_titles)),
+                   exclude_titles="\n".join(_merged(form.exclude_titles, form.add_excludes)), add_titles=(),
+                   add_excludes=())
+
+
+def to_profile(form: Form) -> Checked:
+    """The profile the form describes (ticked suggestions included), or why not."""
+    errors: dict[str, str] = {name.rsplit("-", 1)[0] if name.startswith("custom-") else name:
+                              f"Too long: over {TEXT_LIMIT:,} characters." for name in form.too_long}
+    if form.too_many:
+        errors[""] = f"More than {MOST_CUSTOM - 1} custom tags: edit them in your profile file instead."
+    if not init.PROFILE_NAME.fullmatch(form.name):
+        errors["name"] = "Use lower-case letters, digits and -, starting with a letter or digit."
     custom = []
     for i, row in enumerate(form.custom):
         table = {"definition": row.definition, "multi": row.multi}
@@ -105,11 +132,12 @@ def to_profile(form: Form) -> tuple[Profile | None, dict[str, str]]:
         if row.default:
             table["default"] = row.default
         try:
-            custom.append(custom_tag(row.name, table, f"custom tag {row.name or i + 1}"))
+            custom.append(custom_tag(row.name, table, f"custom tag {row.name}"))
         except ConfigError as e:
             errors[f"custom-{i}"] = str(e)
-    profile = Profile(name=form.name, titles=_merged(form.titles, form.add_titles),
-                      exclude_titles=_merged(form.exclude_titles, form.add_excludes), locations=_lines(form.locations),
+    form = with_ticked(form)
+    profile = Profile(name=form.name, titles=_lines(form.titles),
+                      exclude_titles=_lines(form.exclude_titles), locations=_lines(form.locations),
                       eligible_where=form.eligible_where, tags=tuple(sorted(form.tags, key=tag.builtin_names().index)),
                       custom_tags=tuple(custom))
     for name, values, message in [("titles", profile.titles, "Give at least one title."),
@@ -119,12 +147,12 @@ def to_profile(form: Form) -> tuple[Profile | None, dict[str, str]]:
         if not values:
             errors[name] = message
     if errors:
-        return None, errors
+        return Checked(None, errors)
     try:
         init.validate_profile(profile)
     except ConfigError as e:
-        return None, {"name" if "profile name" in str(e) else "": str(e)}
-    return profile, {}
+        return Checked(None, {"": str(e)})
+    return Checked(profile, {})
 
 
 def _lines(text: str) -> tuple[str, ...]:
@@ -159,7 +187,7 @@ def render(view: View) -> str:
               "As job ads write them: London, UK, Remote."),
         _text("eligible_where", "Where you can work from", form.eligible_where, e, "e.g. the UK, working from London"),
         _suggestions(view.suggestions),
-        _tags(form, e),
+        _tags(form, view.catalogue, e),
         _custom(form, e),
         _key(view, e),
         _email(view, e),
@@ -177,9 +205,9 @@ def render(view: View) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def _tags(form: Form, e: Mapping[str, str]) -> str:
+def _tags(form: Form, catalogue: tuple[tag.BuiltinTag, ...], e: Mapping[str, str]) -> str:
     rows = []
-    for t in tag.builtins():
+    for t in catalogue:
         checked = " checked" if t.name in form.tags else ""
         rows.append(f'<label><input type="checkbox" name="tag" value="{_x(t.name)}"{checked}> <b>{_x(t.name)}</b>: '
                     f"{_x(t.summary)} <i>({_x(report.VALIDATED[t.validated])})</i></label><br>")
@@ -215,7 +243,8 @@ def _email(view: View, e: Mapping[str, str]) -> str:
     f = view.form
     saved = f"Now: digests to {view.email.to} from {view.email.sender}." if view.email else "Now: off."
     held = " An app password is held: leave it empty to keep it." if view.password_held else ""
-    off = ' <label><input type="checkbox" name="email_off"> turn email off</label>' if view.email else ""
+    off = (f' <label><input type="checkbox" name="email_off"{" checked" if f.email_off else ""}> turn email off'
+           "</label>") if view.email else ""
     return ("<fieldset><legend>Email each digest (optional)</legend>"
             f'<p class="hint">{_x(saved)}{_x(held)} Gmail and iCloud need only the address and an app password '
             "(Gmail: myaccount.google.com/apppasswords; iCloud: account.apple.com). A test email is sent before "

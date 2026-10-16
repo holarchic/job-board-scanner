@@ -23,15 +23,29 @@ class ReadTest(unittest.TestCase):
         self.assertEqual([r.name for r in form.custom], ["climate", "buyer"])  # empty rows dropped
         self.assertTrue(form.custom[1].multi)
 
-    def test_missing_fields_are_empty_and_long_ones_cut(self):
+    def test_missing_fields_are_empty_and_too_long_or_too_many_is_refused_not_cut(self):
         form = page.read({"titles": ["x" * 50_000]})
-        self.assertEqual((form.name, len(form.titles), form.custom), ("", page.TEXT_LIMIT, ()))
+        self.assertEqual((form.name, len(form.titles), form.custom, form.too_long), ("", 50_000, (), {"titles"}))
+        self.assertIn("Too long", page.to_profile(form).errors["titles"])
+        many = page.read({**FIELDS, f"custom-{page.MOST_CUSTOM}-name": ["one-too-many"]})
+        self.assertIn(f"More than {page.MOST_CUSTOM - 1} custom tags", page.to_profile(many).errors[""])
+
+    def test_a_custom_row_without_a_name_is_removed(self):
+        form = page.read({**FIELDS, "custom-0-name": [""]})  # its definition is still filled in
+        self.assertEqual([r.name for r in form.custom], ["buyer"])
+        self.assertEqual(page.to_profile(form).errors, {})
+
+    def test_ticked_suggestions_join_the_lists(self):
+        form = page.with_ticked(page.read(FIELDS))
+        self.assertEqual((form.titles, form.exclude_titles, form.add_titles), (
+            "Account Executive\nSales Executive\nAE", "Assistant", ()))
 
 
 class ToProfileTest(unittest.TestCase):
     def test_the_form_becomes_a_profile_with_ticked_suggestions(self):
-        profile, errors = page.to_profile(page.read(FIELDS))
-        self.assertEqual(errors, {})
+        checked = page.to_profile(page.read(FIELDS))
+        profile = checked.profile
+        self.assertEqual(checked.errors, {})
         self.assertEqual(profile.titles, ("Account Executive", "Sales Executive", "AE"))  # a repeat not added twice
         self.assertEqual(profile.exclude_titles, ("Assistant",))
         self.assertEqual(profile.locations, ("London", "UK"))
@@ -40,20 +54,21 @@ class ToProfileTest(unittest.TestCase):
                                                             "test"))
 
     def test_errors_sit_by_their_fields(self):
-        _, errors = page.to_profile(page.read({**FIELDS, "titles": [" \n"], "add_title": [], "eligible_where": [""],
-                                               "custom-0-definition": [""]}))
+        errors = page.to_profile(page.read({**FIELDS, "titles": [" \n"], "add_title": [], "eligible_where": [""],
+                                               "custom-0-definition": [""]})).errors
         self.assertEqual(set(errors), {"titles", "eligible_where", "custom-0"})
-        _, errors = page.to_profile(page.read({**FIELDS, "name": ["../x"]}))
-        self.assertIn("profile name", errors["name"])
-        _, errors = page.to_profile(page.read({**FIELDS, "tag": [], "custom-0-name": [""], "custom-0-definition": [""],
-                                               "custom-1-name": [""], "custom-1-definition": [""]}))
+        errors = page.to_profile(page.read({**FIELDS, "name": ["../x"]})).errors
+        self.assertIn("lower-case letters", errors["name"])
+        errors = page.to_profile(page.read({**FIELDS, "tag": [], "custom-0-name": [""], "custom-0-definition": [""],
+                                               "custom-1-name": [""], "custom-1-definition": [""]})).errors
         self.assertIn("no tags given", errors[""])
 
 
 class RenderTest(unittest.TestCase):
     def view(self, **changes):
         form = page.read({**FIELDS, "titles": ['<script>alert(1)</script>\n"quoted"']})
-        return page.View(**{"form": form, "token": "tok&en", "fresh": True, "key_held": False, "password_held": False,
+        return page.View(**{"form": form, "token": "tok&en", "catalogue": tag.builtins(), "fresh": True,
+                            "key_held": False, "password_held": False,
                             "email": None, **changes})
 
     def test_text_is_escaped_and_secrets_never_shown(self):

@@ -1,10 +1,10 @@
 """`jobscan titles`: the model proposes other titles the profile's jobs are posted under (variants) and titles its
 word match lets through that are other jobs (near-misses); each is counted against the stored postings in the
-profile's places, so the user judges a suggestion by its effect. Nothing is written."""
+profile's places, so the user judges a suggestion by its effect. The profile is never changed; opening the database
+can back it up first, as a run would."""
 import json
 import sqlite3
 from dataclasses import dataclass, replace
-from pathlib import Path
 
 from jobscan import fetch, store, tag
 from jobscan.config import Config, ModelConfig, Profile
@@ -59,15 +59,15 @@ class Outcome:
     counted: Counted | None  # None before any run: no database to count against
 
 
-def for_home(home: Path, config: Config, profile: Profile) -> Outcome:
+def for_home(config: Config, profile: Profile) -> Outcome:
     """Suggestions for `profile` (saved or not), counted against the install's database when it has one. The lock
     is taken and the database opened before the model call, so a run holding it (RunLocked) or a database that won't
     open costs no call."""
     listed = {b.id for b in fetch.load_boards(config.boards_file)[0]} if config.boards_file else set()
-    if not store.exists(home):
+    if not store.exists(config.home):
         return Outcome(suggest(profile, config.model, config.api_key), None)
-    with run_lock(home):
-        conn = store.open_db(home)
+    with run_lock(config.home):
+        conn = store.open_db(config.home)
         try:
             suggested = suggest(profile, config.model, config.api_key)
             return Outcome(suggested, count(conn, profile, store.next_run_boards(conn, listed), suggested))

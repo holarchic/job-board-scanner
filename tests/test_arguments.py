@@ -34,6 +34,12 @@ class HelpTest(unittest.TestCase):
         names = [n.split()[1] for n in subcommands(arguments.parser()) if n.count(" ") == 1]
         self.assertEqual(names[:7], ["init", "email", "boards", "check", "run", "preview", "schedule"])
 
+    def test_a_port_is_a_port(self):
+        self.assertEqual(arguments.port("8765"), 8765)
+        for bad in ["70000", "-1", "x", "\uff18\uff10"]:  # full-width digits
+            with self.assertRaises(argparse.ArgumentTypeError, msg=bad):
+                arguments.port(bad)
+
     def test_no_flag_takes_a_secret(self):
         for invocation, parser in subcommands(arguments.parser()).items():
             for action in parser._actions:

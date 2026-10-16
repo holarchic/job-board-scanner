@@ -1,14 +1,16 @@
 """Text for the set-up commands (`tags`, `check`, `preview`, `boards`, `titles`): typed values in, lines out. The
 commands' handlers in `cli` gather the values and print what these return."""
 from pathlib import Path
+from types import MappingProxyType
 
 from jobscan import fetch, tag
 from jobscan.boards import Added, Entry
-from jobscan.config import Config, EmailConfig, Profile
+from jobscan.config import KEY_FILE, Profile
+from jobscan.install import Install
 from jobscan.preview import Preview, Sample
 from jobscan.titles import Counted, Suggested
 
-VALIDATED = {"yes": "validated", "uk": "validated for the UK only", "no": "not validated"}
+VALIDATED = MappingProxyType({"yes": "validated", "uk": "validated for the UK only", "no": "not validated"})
 WHERE = "<where you can work from>"  # stands in for `eligible_where` before there is a profile
 
 
@@ -43,10 +45,13 @@ def tag_detail(found: tag.Found, profile: Profile | None) -> list[str]:
             "", d.definition]
 
 
-def install(config: Config, profile: Profile, email: EmailConfig | None, listed: int | None, unrecognised: int,
-            key_source: str, warnings: list[str]) -> list[str]:
-    """What `check` loaded, as `run` will use it. `listed`: the boards file's boards (None: no file), beside
-    `unrecognised` entries no adapter knows."""
+KEY_SOURCES = MappingProxyType({"none": "none needed", "environment": "OPENROUTER_API_KEY",
+                                "file": KEY_FILE, "both": f"OPENROUTER_API_KEY here, {KEY_FILE} for scheduled runs"})
+
+
+def install(checked: Install) -> list[str]:
+    """What `check` loaded, as `run` will use it."""
+    config, profile, email = checked.config, checked.profile, checked.email
     profile_path = config.home / "profiles" / f"{profile.name}.toml"
     custom = f"; custom: {', '.join(c.name for c in profile.custom_tags)}" if profile.custom_tags else ""
     lines = [
@@ -57,16 +62,18 @@ def install(config: Config, profile: Profile, email: EmailConfig | None, listed:
         f"  locations: {_items(profile.locations)}",
         f"  where you can work from: {profile.eligible_where}",
         f"  tags: {', '.join(profile.tags) or '(none)'}{custom}",
-        f"Model: {config.model.slug} at {config.model.base_url} (key: {key_source})",
+        f"Model: {config.model.slug} at {config.model.base_url} (key: {KEY_SOURCES[checked.key_source]})",
         f"Email: digests to {email.to} from {email.sender} ({email.host}:{email.port})" if email
         else "Email: off (`jobscan email` sets it up)",
     ]
-    if listed is None:
+    if checked.listed is None:
         lines.append("Boards file: none, so discovered boards only (`jobscan boards add URL` starts one)")
     else:
-        unknown = f", {unrecognised} not recognised" if unrecognised else ""
-        lines.append(f"Boards file: {config.boards_file} ({listed} boards{unknown})")
-    lines += [f"Warning: {w}" for w in warnings]
+        unknown = f", {checked.unrecognised} not recognised" if checked.unrecognised else ""
+        lines.append(f"Boards file: {config.boards_file} ({checked.listed} boards{unknown})")
+    if checked.key_only_in_environment:
+        lines.append(f"Warning: the key is only in OPENROUTER_API_KEY, which a scheduled run won't see: save it in "
+                     f"{config.home / KEY_FILE}, readable only by you (chmod 600)")
     lines.append("OK: `jobscan run` can start.")
     return lines
 

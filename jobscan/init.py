@@ -310,8 +310,15 @@ def save_profile(home: Path, profile: Profile) -> Path:
     except OSError as e:
         raise ConfigError(f"could not check the profile in a temporary directory ({type(e).__name__})") from None
     path = home / "profiles" / f"{profile.name}.toml"
-    if path.exists():
-        _replace(path.with_name(path.name + ".prev"), path.read_bytes(), 0o644)
+    others = [p.name for p in (home / "profiles").glob("*.toml") if p != path]
+    if others:  # one profile per install: a second would stop every run
+        raise ConfigError(f"this install's profile is {others[0]}, not {path.name}")
+    try:
+        previous = path.read_bytes() if path.exists() else None
+    except OSError as e:
+        raise ConfigError(f"could not read {path} ({type(e).__name__})") from None
+    if previous is not None:
+        _replace(path.with_name(path.name + ".prev"), previous, 0o644)
     _replace(path, text.encode(), 0o644)
     return path
 
@@ -327,9 +334,13 @@ def save_key(home: Path, key: str) -> Path:
 
 def default_model() -> ModelConfig:
     """The model a new install gets: `CONFIG` read by the loader `run` uses, never written."""
-    with tempfile.TemporaryDirectory() as scratch:
-        (Path(scratch) / "config.toml").write_text(CONFIG, encoding="utf-8")
-        return load_config(Path(scratch), environ={"OPENROUTER_API_KEY": "placeholder"}).model
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            (Path(scratch) / "config.toml").write_text(CONFIG, encoding="utf-8")
+            return load_config(Path(scratch), environ={"OPENROUTER_API_KEY": "placeholder"}).model
+    except OSError as e:
+        raise ConfigError(f"could not read the default settings in a temporary directory ({type(e).__name__})") \
+            from None
 
 
 def _replace(path: Path, data: bytes, mode: int) -> None:
@@ -338,15 +349,18 @@ def _replace(path: Path, data: bytes, mode: int) -> None:
         fd, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}-", suffix=".tmp")
     except OSError as e:
         raise ConfigError(f"could not write {path} ({type(e).__name__})") from None
+    replaced = False
     try:
-        os.fchmod(fd, mode)
-        with os.fdopen(fd, "wb") as f:
+        with os.fdopen(fd, "wb") as f:  # owns the descriptor from here, closing it whatever happens
+            os.fchmod(f.fileno(), mode)
             f.write(data)
         os.replace(temp, path)
+        replaced = True
     except OSError as e:
-        left = _remove([Path(temp)])
-        raise ConfigError(f"could not write {path} ({type(e).__name__}); it is unchanged"
-                          + (f"; delete {temp}" if left else "")) from None
+        raise ConfigError(f"could not write {path} ({type(e).__name__}); it is unchanged") from None
+    finally:
+        if not replaced and _remove([Path(temp)]):  # Ctrl-C included
+            raise ConfigError(f"could not write {path}; delete {temp}")
 
 
 def remove_email(home: Path) -> bool:

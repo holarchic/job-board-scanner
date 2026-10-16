@@ -230,12 +230,6 @@ def load_profile(home: Path) -> Profile:
     )
 
 
-def custom_tag(name: str, table: dict, source: str) -> CustomTag:
-    """A custom tag from its TOML table's values (as the set-up page collects them), by the profile's own rules;
-    `source` names where it came from in errors."""
-    return _custom_tag(name, table, source)
-
-
 def profile_toml(profile: Profile) -> str:
     """The profile file `load_profile` reads back as `profile`: the one writer, beside the one reader."""
     lines = [f"titles = {toml_list(profile.titles)}", f"exclude_titles = {toml_list(profile.exclude_titles)}",
@@ -266,10 +260,12 @@ def _custom_tags(data: dict, path: Path) -> tuple[CustomTag, ...]:
     tables = data.get("custom_tags", {})
     if not isinstance(tables, dict):
         raise ConfigError(f"{path}: `custom_tags` must be a table of tables")
-    return tuple(_custom_tag(name, table, path) for name, table in tables.items())
+    return tuple(custom_tag(name, table, path) for name, table in tables.items())
 
 
-def _custom_tag(name: str, table, path: Path | str) -> CustomTag:
+def custom_tag(name: str, table, path: Path | str) -> CustomTag:
+    """A custom tag from its TOML table, by the profile's rules: the loader's and the set-up page's; `path` names
+    where it came from in errors."""
     where = f"{path}: custom tag `{name}`"
     if not CUSTOM_TAG_NAME.fullmatch(name):
         raise ConfigError(f"{path}: custom tag name {name!r} must be lower-case letters, digits and _, "
