@@ -1,9 +1,11 @@
 """The help text keeps up with the flags: an agent sets an install up from `--help` alone."""
 import argparse
 import re
+import tempfile
 import unittest
+from pathlib import Path
 
-from jobscan import arguments
+from jobscan import arguments, config, prefilter
 
 
 def subcommands(parser: argparse.ArgumentParser, prefix: str = "jobscan") -> dict[str, argparse.ArgumentParser]:
@@ -33,6 +35,20 @@ class HelpTest(unittest.TestCase):
         self.assertEqual(steps, ["init", "email", "boards", "check", "run", "preview", "schedule"])
         names = [n.split()[1] for n in subcommands(arguments.parser()) if n.count(" ") == 1]
         self.assertEqual(names[:7], ["init", "email", "boards", "check", "run", "preview", "schedule"])
+
+    def test_the_example_profile_loads_and_matches_as_the_help_says(self):
+        guide = arguments.SET_UP.split("The profile is", 1)[1].split("\nTags label", 1)[0].splitlines()[1:]
+        toml = [line[2:35].rstrip() if line[35:37] == "  " else line[2:] for line in guide
+                if not line.startswith(" " * 10)]
+        with tempfile.TemporaryDirectory() as home:
+            (Path(home) / "profiles").mkdir()
+            (Path(home) / "profiles" / "pm.toml").write_text("\n".join(toml))
+            profile = config.load_profile(Path(home))
+        self.assertEqual([c.name for c in profile.custom_tags], ["work_policy"])
+        self.assertEqual(prefilter.verdict(profile, "Senior Product Manager", "London"), prefilter.Verdict.MATCH)
+        self.assertEqual(prefilter.verdict(profile, "Product Marketing Manager", "London"), prefilter.Verdict.OTHER)
+        self.assertEqual(prefilter.verdict(profile, "Associate Product Manager", "Remote, US"),
+                         prefilter.Verdict.EXCLUDED)
 
     def test_a_port_is_a_port(self):
         self.assertEqual(arguments.port("8765"), 8765)

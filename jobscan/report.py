@@ -24,6 +24,8 @@ def tag_list(catalogue: tuple[tag.BuiltinTag, ...], profile: Profile | None) -> 
     if profile and profile.custom_tags:
         lines.append("Your custom tags (every one is asked; none is validated):")
         lines += [f"  * {c.name:<{width}}  {c.definition.splitlines()[0]}" for c in profile.custom_tags]
+    else:
+        lines.append("Your own tags go in the profile as [custom_tags.NAME]: `jobscan --help` shows how.")
     lines.append("`jobscan tags NAME` shows a tag's full definition, as the model reads it.")
     return lines
 

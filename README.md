@@ -146,7 +146,7 @@ definition = "The company sells to businesses, not consumers."
 
 `locations` is checked against the posting's location field only. `eligible_where` is what `location_eligible` asks the model about.
 
-Your own tags run on every matching posting. Say what each answer means; `jobscan/tags.toml` has examples. `values` defaults to yes, no, unknown; `multi = true` answers a list; `default` is the answer when the posting is silent.
+Your own tags run on every matching posting. They needn't be listed in `tags`. Say what each answer means; `jobscan tags NAME` shows a built-in one's definition as an example. `values` defaults to yes, no, unknown; `multi = true` answers a list; `default` is the answer when the posting is silent.
 
 To add companies discovery misses, or your Workable boards, run `jobscan boards add <url>`. It writes `~/.jobscan/boards.json`, which every run reads. To keep the file elsewhere, put `boards_file` above `[model]` in `config.toml`:
 

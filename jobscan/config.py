@@ -83,6 +83,8 @@ def load_config(home: Path, environ: Mapping[str, str] | None = None) -> Config:
     """`environ` stands in for the process environment: `schedule` checks the config as launchd will run it."""
     environ = os.environ if environ is None else environ
     path = home / "config.toml"
+    if not path.exists():
+        raise ConfigError(f"{home}: no install here; `jobscan init` (or `jobscan ui`) sets one up")
     data = _read_toml(path)
     model = data.get("model")
     if not isinstance(model, dict):
@@ -214,7 +216,8 @@ def load_profile(home: Path) -> Profile:
     """The skeleton serves exactly one profile per install."""
     files = sorted((home / "profiles").glob("*.toml"))
     if len(files) != 1:
-        raise ConfigError(f"{home / 'profiles'}: expected exactly one profile, found {len(files)}")
+        hint = "; `jobscan init` (or `jobscan ui`) writes one" if not files else ""
+        raise ConfigError(f"{home / 'profiles'}: expected exactly one profile, found {len(files)}{hint}")
     path = files[0]
     data = _read_toml(path)
     custom = _custom_tags(data, path)

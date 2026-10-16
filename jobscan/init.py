@@ -50,11 +50,12 @@ CUSTOM_TAGS_EXAMPLE = """
 """
 NEXT_STEPS = """
 Next:
+  jobscan check                  the install loads as a run would (again after editing the profile).
   jobscan run                    the first run finds the job boards, then reads them all and tags every
                                  matching posting, so it can take over an hour. Later runs tag only new ones.
   jobscan schedule --at 08:00    then a run every day, with a notification when there's something new.
 
-Change your search, or add your own tags, in {profile}"""
+Change your search, or add your own tags, in {profile} (`jobscan --help` shows how)"""
 # Titles a plain match would let through for a common search; offered as the starting exclusion list.
 NEAR_MISSES = MappingProxyType({
     "product manager": ("Product Marketing", "Project Manager", "Program Manager", "Programme Manager"),
