@@ -10,7 +10,8 @@ boards file), keeps the postings whose titles and locations match your search, h
 about each one, quoting the posting, and writes a markdown digest of what is new: emailed if you like, daily if you
 schedule it. Everything lives under $JOBSCAN_HOME (default ~/.jobscan)."""
 SET_UP = """Set up, in order (a person in a terminal, or an agent by flags):
-  1. jobscan init                  the search and the OpenRouter key (openrouter.ai/keys)
+  1. jobscan init                  the search and the OpenRouter key (openrouter.ai/keys); a person can use
+                                   `jobscan ui` instead, a local page that does steps 1 to 4
        printf '%s\\n' "$KEY" | jobscan init --name ae --title 'Account Executive' \\
            --location London --location Remote --eligible-where 'the UK' --key-stdin
   2. jobscan email                 optional: each digest emailed from your own Gmail or iCloud account

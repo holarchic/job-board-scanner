@@ -86,12 +86,14 @@ The repo is job-board-scanner; the command it installs is still `jobscan`.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"
 uv tool install git+https://github.com/holarchic/job-board-scanner   # fetches Python 3.11+ if needed
-jobscan init                   # asks for your search, your key and, optionally, an email account
+jobscan ui                     # a page in your browser for your search, your key and email (or: jobscan init)
 jobscan run                    # prints the path of your first digest
 jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line for `crontab -e`
 ```
 
 `run` prints the search name, the count of new postings and the digest's path, in `~/.jobscan/digests/<search>/`.
+
+**In a browser.** `jobscan ui` opens a page on your own machine where you fill in your search, tick the tags you want, add your own, paste your OpenRouter key and, if you like, set up email. Suggest titles proposes other titles your jobs go by; after a first run, Preview shows what your search matches. Save writes everything and checks it loads. The page runs only on 127.0.0.1, behind a one-time link, and never shows your key or password back to you.
 
 **With an agent.** Every step also works without a terminal, so a coding agent can set it up for you: point it at this repo and have it read `jobscan --help`, which lists the steps in order with examples. `init` and `email` take flags instead of asking, the key and the app password are read from stdin, and `jobscan check` confirms the install loads. After the first run, `jobscan titles` suggests titles to add or leave out and `jobscan preview` shows what your titles match among the stored postings, so you can tune them without another run.
 
@@ -99,6 +101,7 @@ jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line f
 
 | Command | Does |
 |---|---|
+| `jobscan ui` | A local page to set up or edit everything: search, tags, key, email, with Preview and Suggest titles |
 | `jobscan init` | Asks for your search, your OpenRouter key and, optionally, an email account; writes `~/.jobscan`. With flags (`--name`, `--title`, `--location`, `--eligible-where`, `--key-stdin`…) it asks nothing |
 | `jobscan check` | Loads the install as a run would and shows what it holds, or the first problem |
 | `jobscan preview` | What your search matches among the postings the last run stored: new jobs, the cost to tag them, samples |
