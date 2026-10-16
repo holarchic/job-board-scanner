@@ -5,7 +5,6 @@ Nothing is written until every answer is in and the install it makes loads; a fa
 remove whatever this invocation created and names anything it couldn't. Email settings are saved only after a test
 email is accepted."""
 import getpass
-import json
 import os
 import re
 import tempfile
@@ -18,7 +17,10 @@ from jobscan.config import (
     EMAIL_FILE,
     KEY_FILE,
     ConfigError,
+    CustomTag,
     EmailConfig,
+    ModelConfig,
+    Profile,
     is_host,
     is_mailbox,
     is_password,
@@ -26,6 +28,8 @@ from jobscan.config import (
     load_config,
     load_email,
     load_profile,
+    profile_toml,
+    toml_string,
     usable_key,
 )
 from jobscan.payload import encodable
@@ -104,6 +108,13 @@ class Answers:
     eligible_where: str
     tags: list[str]
     key: str = field(repr=False)  # always written to the key file: a scheduled run has no shell environment
+    custom_tags: tuple[CustomTag, ...] = ()
+
+    @property
+    def profile(self) -> Profile:
+        return Profile(name=self.name, titles=tuple(self.titles), exclude_titles=tuple(self.exclude_titles),
+                       locations=tuple(self.locations), eligible_where=self.eligible_where, tags=tuple(self.tags),
+                       custom_tags=self.custom_tags)
 
 
 def init(home: Path) -> Setup:
@@ -132,25 +143,37 @@ def init_from(home: Path, answers: Answers) -> Setup:
 
 
 def validate(answers: Answers) -> None:
-    """What the questions accept, for answers that didn't come through them. The name is checked before any path is
-    built from it."""
-    if not PROFILE_NAME.fullmatch(answers.name):
-        raise ConfigError(f"profile name {answers.name!r}: use lower-case letters, digits and -, starting with a "
+    """What the questions accept, for answers that didn't come through them: the profile, then the key a new install
+    needs (its default model is OpenRouter's)."""
+    validate_profile(answers.profile)
+    if not usable_key(answers.key):
+        raise ConfigError("that isn't an OpenRouter key: empty, or it holds spaces or control characters")
+
+
+def validate_profile(profile: Profile) -> None:
+    """A profile `load_profile` and `tag.definitions` accept, checked before anything is written; the name before
+    any path is built from it. Custom tags may stand in for built-in ones."""
+    if not PROFILE_NAME.fullmatch(profile.name):
+        raise ConfigError(f"profile name {profile.name!r}: use lower-case letters, digits and -, starting with a "
                           "letter or digit")
-    for label, values in [("titles", answers.titles), ("locations", answers.locations), ("tags", answers.tags)]:
+    for label, values in [("titles", profile.titles), ("locations", profile.locations),
+                          ("tags", profile.tags + tuple(c.name for c in profile.custom_tags))]:
         if not values:
             raise ConfigError(f"no {label} given")
-    for label, values in [("titles", answers.titles), ("excluded titles", answers.exclude_titles),
-                          ("locations", answers.locations), ("tags", answers.tags),
-                          ("where you can work from", [answers.eligible_where])]:
+    for label, values in [("titles", profile.titles), ("excluded titles", profile.exclude_titles),
+                          ("locations", profile.locations), ("tags", profile.tags),
+                          ("where you can work from", (profile.eligible_where,))]:
         for value in values:
             if not value.strip() or value != value.strip() or not encodable(value):
                 raise ConfigError(f"{label}: {value!r} is empty, padded with spaces or not valid text")
-    unknown = [t for t in answers.tags if t not in tag.builtin_names()]
+    unknown = [t for t in profile.tags if t not in tag.builtin_names()]
     if unknown:
         raise ConfigError(f"unknown tags {unknown}; `jobscan tags` lists them")
-    if not usable_key(answers.key):
-        raise ConfigError("that isn't an OpenRouter key: empty, or it holds spaces or control characters")
+    names = [*profile.tags, *(c.name for c in profile.custom_tags)]
+    twice = sorted({n for n in names if names.count(n) > 1})
+    if twice:
+        raise ConfigError(f"tags: {', '.join(twice)} given twice")
+    tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
 
 
 def _refuse_existing(home: Path) -> None:
@@ -239,11 +262,11 @@ def email_config(to: str, sender: str | None, host: str | None, port: int | None
 def email_text(email: EmailConfig) -> str:
     return "\n".join([
         "# Each digest is emailed from your account. This file holds your app password: keep it readable only by you.",
-        f"to = {_string(email.to)}",
-        f"from = {_string(email.sender)}",
-        f"host = {_string(email.host)}",
+        f"to = {toml_string(email.to)}",
+        f"from = {toml_string(email.sender)}",
+        f"host = {toml_string(email.host)}",
         f"port = {email.port}",
-        f"password = {_string(email.password)}",
+        f"password = {toml_string(email.password)}",
         "",
     ])
 
@@ -272,6 +295,60 @@ def save_email(home: Path, text: str) -> Path:
     return path
 
 
+def save_profile(home: Path, profile: Profile) -> Path:
+    """Replaces an install's profile with `profile`, checked first as `init` checks one (validated, written to a
+    scratch home and read back). The previous file is kept as `<name>.toml.prev`, which no run reads; each file is
+    replaced in one rename, so a run reads the old profile or the new."""
+    validate_profile(profile)
+    text = profile_toml(profile) + "\n"
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            (Path(scratch) / "profiles").mkdir()
+            (Path(scratch) / "profiles" / f"{profile.name}.toml").write_text(text, encoding="utf-8")
+            if load_profile(Path(scratch)) != profile:
+                raise ConfigError("the profile didn't read back as written")
+    except OSError as e:
+        raise ConfigError(f"could not check the profile in a temporary directory ({type(e).__name__})") from None
+    path = home / "profiles" / f"{profile.name}.toml"
+    if path.exists():
+        _replace(path.with_name(path.name + ".prev"), path.read_bytes(), 0o644)
+    _replace(path, text.encode(), 0o644)
+    return path
+
+
+def save_key(home: Path, key: str) -> Path:
+    """Replaces the key file (readable only by you) in one rename."""
+    if not usable_key(key):
+        raise ConfigError("that isn't an OpenRouter key: empty, or it holds spaces or control characters")
+    path = home / KEY_FILE
+    _replace(path, (key + "\n").encode(), 0o600)
+    return path
+
+
+def default_model() -> ModelConfig:
+    """The model a new install gets: `CONFIG` read by the loader `run` uses, never written."""
+    with tempfile.TemporaryDirectory() as scratch:
+        (Path(scratch) / "config.toml").write_text(CONFIG, encoding="utf-8")
+        return load_config(Path(scratch), environ={"OPENROUTER_API_KEY": "placeholder"}).model
+
+
+def _replace(path: Path, data: bytes, mode: int) -> None:
+    """`data` at `path` in one rename, the temporary file made with `mode` from the start; nothing left behind."""
+    try:
+        fd, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}-", suffix=".tmp")
+    except OSError as e:
+        raise ConfigError(f"could not write {path} ({type(e).__name__})") from None
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(temp, path)
+    except OSError as e:
+        left = _remove([Path(temp)])
+        raise ConfigError(f"could not write {path} ({type(e).__name__}); it is unchanged"
+                          + (f"; delete {temp}" if left else "")) from None
+
+
 def remove_email(home: Path) -> bool:
     """False when no email was set up. Never reads the file, so a broken one can be removed too."""
     path = home / EMAIL_FILE
@@ -285,24 +362,9 @@ def remove_email(home: Path) -> bool:
 
 
 def profile_text(answers: Answers) -> str:
-    return "\n".join([
-        f"titles = {_list(answers.titles)}",
-        f"exclude_titles = {_list(answers.exclude_titles)}",
-        f"locations = {_list(answers.locations)}",
-        f"eligible_where = {_string(answers.eligible_where)}",
-        f"tags = {_list(answers.tags)}",
-        CUSTOM_TAGS_EXAMPLE,
-    ])
-
-
-def _string(value: str) -> str:
-    """A TOML basic string. JSON escapes quotes, backslashes and C0 controls the way TOML does; non-ASCII stays
-    literal (a JSON surrogate-pair escape isn't valid TOML); DEL is the one control JSON leaves raw."""
-    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
-
-
-def _list(values: list[str]) -> str:
-    return "[" + ", ".join(_string(v) for v in values) + "]"
+    """The profile, with a commented custom-tag example when it has none of its own."""
+    text = profile_toml(answers.profile)
+    return text if answers.custom_tags else text + "\n" + CUSTOM_TAGS_EXAMPLE
 
 
 def _ask() -> Answers:
@@ -409,14 +471,8 @@ def _check(answers: Answers, home: Path, files: dict[Path, File]) -> None:
         load_config(root, environ={})
         load_email(root)
         profile = load_profile(root)
-    expected = {"titles": answers.titles, "exclude_titles": answers.exclude_titles, "locations": answers.locations,
-                "eligible_where": answers.eligible_where, "tags": answers.tags}
-    read_back = {"titles": list(profile.titles), "exclude_titles": list(profile.exclude_titles),
-                 "locations": list(profile.locations), "eligible_where": profile.eligible_where,
-                 "tags": list(profile.tags)}
-    if read_back != expected:
+    if profile != answers.profile:
         raise ConfigError("the profile didn't read back as written")
-    tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
 
 
 def _write(home: Path, files: dict[Path, File]) -> None:

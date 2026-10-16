@@ -1,5 +1,6 @@
 """Config and profile loading: TOML under $JOBSCAN_HOME parsed into typed records, or ConfigError."""
 import email.policy
+import json
 import os
 import re
 import tomllib
@@ -229,6 +230,38 @@ def load_profile(home: Path) -> Profile:
     )
 
 
+def custom_tag(name: str, table: dict, source: str) -> CustomTag:
+    """A custom tag from its TOML table's values (as the set-up page collects them), by the profile's own rules;
+    `source` names where it came from in errors."""
+    return _custom_tag(name, table, source)
+
+
+def profile_toml(profile: Profile) -> str:
+    """The profile file `load_profile` reads back as `profile`: the one writer, beside the one reader."""
+    lines = [f"titles = {toml_list(profile.titles)}", f"exclude_titles = {toml_list(profile.exclude_titles)}",
+             f"locations = {toml_list(profile.locations)}", f"eligible_where = {toml_string(profile.eligible_where)}",
+             f"tags = {toml_list(profile.tags)}"]
+    for c in profile.custom_tags:
+        lines += ["", f"[custom_tags.{c.name}]", f"definition = {toml_string(c.definition)}"]
+        if c.values != CUSTOM_TAG_VALUES:
+            lines.append(f"values = {toml_list(c.values)}")
+        if c.multi:
+            lines.append("multi = true")
+        if c.default is not None:
+            lines.append(f"default = {toml_string(c.default)}")
+    return "\n".join(lines)
+
+
+def toml_string(value: str) -> str:
+    """A TOML basic string. JSON escapes quotes, backslashes and C0 controls the way TOML does; non-ASCII stays
+    literal (a JSON surrogate-pair escape isn't valid TOML); DEL is the one control JSON leaves raw."""
+    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
+
+
+def toml_list(values) -> str:
+    return "[" + ", ".join(toml_string(v) for v in values) + "]"
+
+
 def _custom_tags(data: dict, path: Path) -> tuple[CustomTag, ...]:
     tables = data.get("custom_tags", {})
     if not isinstance(tables, dict):
@@ -236,7 +269,7 @@ def _custom_tags(data: dict, path: Path) -> tuple[CustomTag, ...]:
     return tuple(_custom_tag(name, table, path) for name, table in tables.items())
 
 
-def _custom_tag(name: str, table, path: Path) -> CustomTag:
+def _custom_tag(name: str, table, path: Path | str) -> CustomTag:
     where = f"{path}: custom tag `{name}`"
     if not CUSTOM_TAG_NAME.fullmatch(name):
         raise ConfigError(f"{path}: custom tag name {name!r} must be lower-case letters, digits and _, "
