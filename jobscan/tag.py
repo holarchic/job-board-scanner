@@ -111,7 +111,8 @@ def builtin_names() -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class BuiltinTag:
-    """A built-in tag as people choosing tags see it; the model never sees `summary`."""
+    """A built-in tag as people choosing tags see it; the tagging model never sees `summary` (the set-up page's
+    description call does, to pick tags)."""
     name: str
     summary: str
     validated: str  # "yes", "no", or "uk": validated only when `eligible_where` names the UK

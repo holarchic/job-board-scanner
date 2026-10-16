@@ -64,6 +64,7 @@ class Site:
         self.revision, self.step, self.blocked = 0, "", ""
         self.form, self.offers = page.Form(), page.Offers()
         self.read_words = ""  # the description the offers came from: read again only when it changes
+        self.named = False  # a new search's name is suggested once, when the summary is first reached
 
     def show(self) -> str:
         self._start()
@@ -75,30 +76,40 @@ class Site:
             return self._render()
         if (fields.get("step") or [""])[0] != self.step or (fields.get("revision") or [""])[0] != str(self.revision):
             return self._render(notices=("That page was out of date: this is where you are.",))
+        action = (fields.get("action") or [""])[0]
+        if action not in self._actions():  # refused before anything is applied
+            return self._render(errors={"": "Press one of the buttons."})
         self.revision += 1
         self.form, self.offers = page.read_step(self.step, fields, self.form, self.offers)
         if self.form.key and "key" not in self.form.too_long and usable_key(self.form.key):
             self.drafts.key = self.form.key
         if self.form.password and "password" not in self.form.too_long:
             self.drafts.password = self.form.password
-        action = (fields.get("action") or [""])[0]
         order = page.steps(self._fresh())
         if action == "next":
             return self._next()
         if action == "back":
-            return self._go(order[max(order.index(self.step) - 1, 0)] if self._fresh() else "summary")
-        if action.startswith("goto:") and action[5:] in order and self.step == "summary":
+            return self._go(order[order.index(self.step) - 1] if self._fresh() else "summary")
+        if action.startswith("goto:"):
             return self._go(action[5:])
-        if action == "skip" and self.step == "describe":
+        if action == "skip":
             return self._skip()
-        if action == "suggest" and self.step == "titles":
+        if action == "suggest":
             return self._suggest()
-        if action in ("preview", "save") and self.step == "summary":
-            checked = page.to_profile(self.form)
-            if checked.profile is None:
-                return self._render(errors=checked.errors)
-            return self._preview(checked.profile) if action == "preview" else self._save(checked.profile)
-        return self._render(errors={"": "Press one of the buttons."})
+        checked = page.to_profile(self.form)
+        if checked.profile is None:
+            return self._render(errors=checked.errors)
+        return self._preview(checked.profile) if action == "preview" else self._save(checked.profile)
+
+    def _actions(self) -> set[str]:
+        """The buttons the current step's page shows."""
+        if self.step == "summary":
+            return {"save", "preview", *(f"goto:{s}" for s in page.steps(self._fresh()) if s != "summary")}
+        actions = {"next"}
+        if not (self._fresh() and self.step == "key"):
+            actions.add("back")
+        return actions | ({"skip"} if self.step == "describe" else set()) | (
+            {"suggest"} if self.step == "titles" else set())
 
     def _start(self) -> None:
         """The first request decides where the steps begin: a new install at the key, an existing one at its
@@ -145,9 +156,7 @@ class Site:
             return self._render(errors={"description": f"The model couldn't read it ({e}): try again, or go on "
                                                        "without suggestions."})
         self.read_words = words
-        self.form, self.offers = page.prefilled(self.form, described, f"Filled in from what you said (model call "
-                                                                      f"{report.cost(described.usage)}): untick "
-                                                                      "what's wrong, tick what fits.")
+        self.form, self.offers = _prefilled(self.form, described)
         return self._go("titles")
 
     def _skip(self) -> str:
@@ -157,8 +166,10 @@ class Site:
 
     def _go(self, step: str) -> str:
         self.step = step
-        if step == "summary" and not self.form.name:
-            self.form = replace(self.form, name=page.default_name(self.form))
+        if step == "summary" and not self.named:
+            self.named = True
+            if not self.form.name:
+                self.form = replace(self.form, name=page.default_name(self.form))
         return self._render()
 
     def _suggest(self) -> str:
@@ -312,6 +323,18 @@ class Site:
             catalogue=tag.builtins(), fresh=fresh, key_held=self._key_held(),
             password_held=bool(self.drafts.password), email=email,
             email_file=not fresh and (self.home / EMAIL_FILE).exists(), errors=errors, **parts))
+
+
+def _prefilled(form: page.Form, described: describe.Described) -> tuple[page.Form, page.Offers]:
+    """The draft as the description asked for it (ticked), and what it may have missed (offered unticked, custom
+    tags among them: the model proposes some a built-in already asks)."""
+    form = replace(form, titles="\n".join(described.titles), exclude_titles="\n".join(described.leave_out),
+                   locations="\n".join(described.places), eligible_where=described.eligible_where,
+                   tags=frozenset(described.tags), custom=())
+    return form, page.Offers(titles=described.other_titles, excludes=described.near_misses,
+                             places=described.other_places, custom=tuple(page.row(c) for c in described.custom_tags),
+                             note=f"Filled in from what you said (model call {report.cost(described.usage)}): "
+                                  "untick what's wrong, tick what fits.")
 
 
 class Server(HTTPServer):

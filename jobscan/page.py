@@ -19,7 +19,6 @@ from jobscan.config import (
     custom_tag,
     usable_key,
 )
-from jobscan.describe import Described
 from jobscan.preview import Preview
 from jobscan.titles import Outcome
 
@@ -117,20 +116,9 @@ def steps(fresh: bool) -> tuple[str, ...]:
 def form_from_profile(profile: Profile, email: EmailConfig | None) -> Form:
     return Form(name=profile.name, titles="\n".join(profile.titles), exclude_titles="\n".join(profile.exclude_titles),
                 locations="\n".join(profile.locations), eligible_where=profile.eligible_where,
-                tags=frozenset(profile.tags), custom=tuple(_row(c) for c in profile.custom_tags),
+                tags=frozenset(profile.tags), custom=tuple(row(c) for c in profile.custom_tags),
                 email_to=email.to if email else "", email_from=email.sender if email else "",
                 email_host=email.host if email else "", email_port=str(email.port) if email else "")
-
-
-def prefilled(form: Form, described: Described, note: str) -> tuple[Form, Offers]:
-    """The draft as the description asked for it (ticked), and what it may have missed (offered unticked, custom
-    tags among them)."""
-    form = replace(form, titles="\n".join(described.titles), exclude_titles="\n".join(described.leave_out),
-                   locations="\n".join(described.places), eligible_where=described.eligible_where,
-                   tags=frozenset(described.tags), custom=())
-    return form, Offers(titles=described.other_titles, excludes=described.near_misses,
-                        places=described.other_places, custom=tuple(_row(c) for c in described.custom_tags),
-                        note=note)
 
 
 def with_suggestions(offers: Offers, outcome: Outcome) -> Offers:
@@ -204,13 +192,13 @@ def read_step(step: str, fields: Mapping[str, list[str]], form: Form, offers: Of
 
 
 def _rows(fields: Mapping[str, list[str]], one, offers: Offers) -> tuple[CustomRow, ...]:
-    """The ticked offered tags, then the custom rows as posted (a row with no name is removed, and nothing in it is
-    checked); a name given twice stays for the check to refuse."""
+    """The custom rows as posted (a row with no name is removed, and nothing in it is checked), then each ticked
+    offered tag no row is named like, as a row of its own from then on; a name typed twice stays for the check to
+    refuse."""
     # Sorted as numbers without converting them (a 5,000-digit index would overflow int()); "1" and "01" kept apart.
     indexes = sorted({m.group(1) for name in fields if (m := re.fullmatch(r"custom-(\d+)-\w+", name))},
                      key=lambda i: (len(i.lstrip("0")), i.lstrip("0"), i))
-    ticked = set(fields.get("add_custom", []))
-    rows: list[CustomRow] = [r for r in offers.custom if r.name in ticked]
+    rows: list[CustomRow] = []
     for i in indexes:
         if not (fields.get(f"custom-{i}-name") or [""])[0].strip():
             continue
@@ -218,6 +206,8 @@ def _rows(fields: Mapping[str, list[str]], one, offers: Offers) -> tuple[CustomR
         rows.append(CustomRow(name=one(f"custom-{i}-name", at).strip(), definition=one(f"custom-{i}-definition", at),
                               values=one(f"custom-{i}-values", at), multi=(fields.get(f"custom-{i}-multi") or [""])[0]
                               == "on", default=one(f"custom-{i}-default", at).strip()))
+    ticked = set(fields.get("add_custom", []))
+    rows += [r for r in offers.custom if r.name in ticked and r.name not in {row.name for row in rows}]
     return tuple(rows)
 
 
@@ -395,7 +385,8 @@ def _step_of(name: str) -> str:
     return next((s for s, names in STEP_FIELDS.items() if name in names), "summary")
 
 
-def _row(c: CustomTag) -> CustomRow:
+def row(c: CustomTag) -> CustomRow:
+    """A custom tag as the page's editable row."""
     return CustomRow(name=c.name, definition=c.definition,
                      values="" if c.values == CUSTOM_TAG_VALUES else "\n".join(c.values), multi=c.multi,
                      default=c.default or "")
@@ -510,27 +501,24 @@ def _tags_body(view: View) -> str:
         rows.append(f'<label><input type="checkbox" name="tag" value="{_x(t.name)}"{checked}> <b>{_x(t.name)}</b>: '
                     f"{_x(t.summary)} <i>({_x(report.VALIDATED[t.validated])})</i></label><br>")
     named = {r.name for r in form.custom}
-    suggested = ("<fieldset><legend>Tags of your own, from your description</legend>" + "".join(
-        f'<label><input type="checkbox" name="add_custom" value="{_x(r.name)}"'
-        f'{" checked" if r.name in named else ""}> <b>{_x(r.name)}</b>: {_x(r.definition)} '
-        f"<i>({_x(', '.join(_lines(r.values)) or 'yes, no, unknown')})</i></label><br>"
-        for r in view.offers.custom) + "</fieldset>") if view.offers.custom else ""
-    own = tuple(r for r in form.custom if r not in view.offers.custom)  # an offered tag is its tick box
+    offered = [r for r in view.offers.custom if r.name not in named]  # once ticked, a tag is an editable row
+    suggested = ("<fieldset><legend>Suggested tags of your own: tick to add</legend>" + "".join(
+        f'<label><input type="checkbox" name="add_custom" value="{_x(r.name)}"> <b>{_x(r.name)}</b>: '
+        f"{_x(r.definition)} <i>({_x(', '.join(_lines(r.values)) or 'yes, no, unknown')})</i></label><br>"
+        for r in offered) + "</fieldset>") if offered else ""
     return ("<p>The model answers each ticked tag for every matching posting, quoting it.</p>"
             + "<fieldset><legend>Built-in tags</legend>" + "".join(rows) + "</fieldset>" + _err("tags", e)
-            + suggested + _custom(own, e, start=len(form.custom) - len(own)))
+            + suggested + _custom(form, e))
 
 
-def _custom(own: tuple[CustomRow, ...], e: Mapping[str, str], start: int) -> str:
-    """The editable rows; `start` is how many ticked offers come first in the draft, so a row's error (indexed by
-    its place among all custom tags) shows beside it."""
-    rows = [*own, CustomRow()]
+def _custom(form: Form, e: Mapping[str, str]) -> str:
+    rows = [*form.custom, CustomRow()]
     out = ["<fieldset><legend>Your own tags</legend><p class=\"hint\">Say what each answer means. Leave the name "
            "empty to remove one; fill the empty row to add one.</p>"]
     for i, row in enumerate(rows):
         multi = " checked" if row.multi else ""
         out.append(
-            f'<div class="custom">{_err(f"custom-{start + i}", e)}'
+            f'<div class="custom">{_err(f"custom-{i}", e)}'
             f'<label>Name <input name="custom-{i}-name" value="{_x(row.name)}"></label> '
             f'<label>Default <input name="custom-{i}-default" value="{_x(row.default)}"></label> '
             f'<label><input type="checkbox" name="custom-{i}-multi"{multi}> several answers</label><br>'
@@ -569,7 +557,7 @@ def _summary_body(view: View) -> str:
     sections = [("key", "OpenRouter key", key), ("titles", "Titles", "; ".join(_lines(f.titles))),
                 ("exclude", "Left out", "; ".join(_lines(f.exclude_titles)) or "none"),
                 ("places", "Places", "; ".join(_lines(f.locations)) + f" (you can work from: {f.eligible_where})"),
-                ("tags", "Tags", ", ".join([*sorted(f.tags, key=_tag_order), *custom]) or "none"),
+                ("tags", "Tags", ", ".join([*(t.name for t in view.catalogue if t.name in f.tags), *custom]) or "none"),
                 ("email", "Email", email)]
     rows = []
     for step, label, value in sections:

@@ -16,7 +16,8 @@ from unittest import mock
 from urllib.parse import urlencode
 
 from jobscan import init, lock, page, tag, ui
-from jobscan.config import ModelConfig, load_config, load_email, load_profile
+from jobscan.config import ModelConfig, custom_tag, load_config, load_email, load_profile
+from jobscan.describe import Described
 from tests.fakes import FakeServer, model_reply, patch_smtp
 
 WORDS = "Account executive jobs with founding teams in London, happy to be remote."
@@ -143,6 +144,21 @@ def checked(text: str, name: str) -> list[str]:
     return Fields(text).fields.get(name, [])
 
 
+class PrefillTest(unittest.TestCase):
+    def test_a_description_ticks_what_was_asked_and_offers_the_rest(self):
+        salary = custom_tag("salary_stated", {"definition": "Salary stated?"}, "test")
+        described = Described(titles=("Account Executive",), other_titles=("Sales Executive",), leave_out=(),
+                              near_misses=("Account Executive Assistant",), places=("London",),
+                              other_places=("UK",), eligible_where="the UK", tags=("founding",),
+                              custom_tags=(salary,), usage=tag.Usage(0.001))
+        form, offers = ui._prefilled(page.Form(description="words"), described)
+        self.assertEqual((form.titles, form.locations, form.tags, form.custom, form.description),
+                         ("Account Executive", "London", frozenset({"founding"}), (), "words"))
+        self.assertEqual((offers.titles, offers.excludes, offers.places, [r.name for r in offers.custom]),
+                         (("Sales Executive",), ("Account Executive Assistant",), ("UK",), ["salary_stated"]))
+        self.assertIn("$0.0010", offers.note)
+
+
 class SecurityTest(UiTest):
     def test_the_page_needs_the_token_and_carries_the_headers(self):
         status, headers, text = self.request("GET", f"/?token={self.token}")
@@ -178,8 +194,10 @@ class SecurityTest(UiTest):
         fields = Fields(self.pages[-1]).fields
         self.assertEqual(self.post({**fields, "action": "next"}, headers={"Origin": f"127.0.0.1:{self.port}"})[0], 403)
         self.open()
-        self.assertIn("Press one of the buttons.", self.press("delete-everything"))
-        self.assertIn("Press one of the buttons.", self.press("goto:titles"))  # Edit is the summary's
+        self.assertIn("Press one of the buttons.", self.press("delete-everything", key="sk-or-v1-fresh"))
+        self.assertIn("Press one of the buttons.", self.press("goto:titles", key="sk-or-v1-fresh"))  # the summary's
+        self.assertIn("Press one of the buttons.", self.press("back", key="sk-or-v1-fresh"))  # nothing before
+        self.assertEqual((self.server.site.drafts.key, self.server.site.revision), ("", 0))  # nothing applied
         self.assertFalse(self.home.exists())
 
     def test_malformed_requests_get_an_answer_with_the_headers(self):
@@ -317,6 +335,34 @@ class NewInstallTest(UiTest):
         self.assertIn("Too long", self.press("next", email_port="", password="p" * 30_000))
         self.press("next", email_to="")
         self.assertEqual(self.step(), "summary")
+        self.assertFalse(self.home.exists())
+
+    def test_a_suggested_tag_ticked_then_edited_stays_one_tag(self):
+        self.to_titles()
+        for _ in range(3):
+            self.press("next")
+        self.press("next", ticked={"add_custom": ["salary_stated"]})
+        self.press("back")
+        text = self.press("next", **{"custom-0-definition": "Is a pay range stated?"})  # now a row of its own
+        self.assertEqual(self.step(), "email")
+        self.press("back")
+        self.assertNotIn('name="add_custom"', self.pages[-1])
+        self.press("next")
+        self.assertEqual(self.step(), "email", text)
+        self.assertEqual([(r.name, r.definition) for r in self.server.site.form.custom],
+                         [("salary_stated", "Is a pay range stated?")])
+
+    def test_the_name_is_suggested_once(self):
+        self.to_titles()
+        for _ in range(5):
+            self.press("next")
+        self.assertEqual(checked(self.pages[-1], "name"), ["account-executive"])
+        self.press("goto:titles", name="")
+        for _ in range(5):
+            text = self.press("next")
+        self.assertEqual((self.step(), checked(text, "name")), ("summary", [""]))
+        self.assertIn("lower-case letters", self.press("save"))
+        self.assertIn("Press one of the buttons.", self.press("next"))  # nothing after the summary
         self.assertFalse(self.home.exists())
 
     def test_a_too_long_key_is_never_held(self):

@@ -2,10 +2,10 @@
 whole draft checked into a profile, and pages rendered without leaking secrets or markup."""
 import unittest
 from dataclasses import replace
+from unittest import mock
 
 from jobscan import page, tag
 from jobscan.config import EmailConfig, custom_tag
-from jobscan.describe import Described
 from jobscan.titles import Counted, Outcome, Suggested
 
 DRAFT = page.Form(name="ae", titles="Account Executive\nSales Executive", locations="London\nUK",
@@ -39,6 +39,15 @@ class ReadStepTest(unittest.TestCase):
         merged, _ = page.read_step("tags", fields, DRAFT, page.Offers())
         self.assertEqual((merged.tags, merged.custom), (frozenset({"segment"}), ()))
 
+    def test_a_ticked_offer_becomes_a_row_unless_a_row_has_its_name(self):
+        offers = page.Offers(custom=(page.CustomRow(name="salary_stated", definition="Salary stated?"),))
+        form, _ = page.read_step("tags", {"add_custom": ["salary_stated"]}, DRAFT, offers)
+        self.assertEqual(form.custom, offers.custom)
+        edited = {"add_custom": ["salary_stated"], "custom-0-name": ["salary_stated"],
+                  "custom-0-definition": ["Is a pay range stated?"]}
+        form, _ = page.read_step("tags", edited, DRAFT, offers)
+        self.assertEqual([r.definition for r in form.custom], ["Is a pay range stated?"])
+
     def test_custom_rows_as_posted_after_ticked_offers(self):
         offered = page.CustomRow(name="salary_stated", definition="Salary stated?")
         fields = {"add_custom": ["salary_stated"], "custom-01-name": ["other"], "custom-01-definition": ["Other."],
@@ -46,8 +55,8 @@ class ReadStepTest(unittest.TestCase):
                   f"custom-{'9' * 5000}-name": ["late"], f"custom-{'9' * 5000}-definition": ["L."],
                   "custom-3-name": [" "], "custom-3-definition": ["x" * 50_000]}  # no name: removed, not checked
         form, _ = page.read_step("tags", fields, DRAFT, page.Offers(custom=(offered,)))
-        self.assertEqual([r.name for r in form.custom], ["salary_stated", "other", "buyer", "late"])  # "01" by "1"
-        self.assertEqual(form.custom[2].definition, "Line one\nLine two\nthree")
+        self.assertEqual([r.name for r in form.custom], ["other", "buyer", "late", "salary_stated"])  # "01" by "1"
+        self.assertEqual(form.custom[1].definition, "Line one\nLine two\nthree")
         self.assertEqual(form.too_long, frozenset())
 
     def test_too_long_or_too_many_is_noted_not_cut(self):
@@ -160,18 +169,6 @@ class ToProfileTest(unittest.TestCase):
 
 
 class SuggestionTest(unittest.TestCase):
-    def test_a_description_ticks_what_was_asked_and_offers_the_rest(self):
-        salary = custom_tag("salary_stated", {"definition": "Salary stated?"}, "test")
-        described = Described(titles=("Account Executive",), other_titles=("Sales Executive",), leave_out=(),
-                              near_misses=("Account Executive Assistant",), places=("London",),
-                              other_places=("UK",), eligible_where="the UK", tags=("founding",),
-                              custom_tags=(salary,), usage=tag.Usage(0.001))
-        form, offers = page.prefilled(page.Form(description="words"), described, "note")
-        self.assertEqual((form.titles, form.locations, form.tags, form.custom, form.description),
-                         ("Account Executive", "London", frozenset({"founding"}), (), "words"))
-        self.assertEqual((offers.titles, offers.excludes, offers.places, [r.name for r in offers.custom]),
-                         (("Sales Executive",), ("Account Executive Assistant",), ("UK",), ["salary_stated"]))
-
     def test_a_new_search_is_named_from_its_first_title(self):
         for titles, name in [("Account Executive\nAE", "account-executive"), ("", "my-search"), ("*", "my-search"),
                              ("Ünïcode Lead", "n-code-lead")]:
@@ -206,16 +203,19 @@ class RenderTest(unittest.TestCase):
         self.assertIn("From your words.", html)
 
     def test_every_built_in_tag_is_a_tick_box_and_offered_custom_tags_too(self):
-        offered = page.CustomRow(name="salary_stated", definition="Salary stated?")
-        html = page.render(self.view("tags", form=replace(DRAFT, custom=(offered, *DRAFT.custom)),
-                                     offers=page.Offers(custom=(offered,)), errors={"custom-1": "Bad climate."}))
+        offered = (page.CustomRow(name="salary_stated", definition="Salary stated?"),
+                   page.CustomRow(name="visa", definition="Visa offered?"))
+        edited = replace(offered[0], definition="Is a pay range stated?")
+        html = page.render(self.view("tags", form=replace(DRAFT, custom=(*DRAFT.custom, edited)),
+                                     offers=page.Offers(custom=offered), errors={"custom-1": "Bad buyer."}))
         for t in tag.builtins():
             self.assertIn(f'name="tag" value="{t.name}"', html)
         self.assertIn('value="founding" checked', html)
         self.assertNotIn('value="segment" checked', html)
-        self.assertIn('name="add_custom" value="salary_stated" checked>', html)
-        self.assertNotIn('name="custom-0-name" value="salary_stated"', html)  # an offered tag is its tick box
-        self.assertIn('Bad climate.</span><label>Name <input name="custom-0-name" value="climate"', html)
+        self.assertIn('name="add_custom" value="visa">', html)
+        self.assertNotIn('name="add_custom" value="salary_stated"', html)  # a row has its name: no longer offered
+        self.assertIn('name="custom-2-name" value="salary_stated"', html)  # but editable
+        self.assertIn('Bad buyer.</span><label>Name <input name="custom-1-name" value="buyer"', html)
 
     def test_errors_and_held_secrets_are_said(self):
         email = EmailConfig(to="me@gmail.com", sender="me@gmail.com", host="smtp.gmail.com", port=465, password="p")
@@ -239,6 +239,13 @@ class RenderTest(unittest.TestCase):
         self.assertIn('Give at least one title.</span></td><td><button name="action" value="goto:titles">', summary)
         self.assertNotIn('name="name"', summary)  # an existing search's name is fixed
         self.assertIn('name="name" value="ae"', page.render(self.view("summary")))
+
+    def test_rendering_reads_nothing(self):
+        views = [self.view(step) for step in page.STEPS]
+        with mock.patch.object(tag, "builtin_names", side_effect=AssertionError("read tags.toml")), \
+                mock.patch.object(tag, "builtins", side_effect=AssertionError("read tags.toml")):
+            for view in views:
+                page.render(view)
 
     def test_a_preview_before_any_run_says_so(self):
         self.assertIn("No postings yet", page.render(self.view("summary", previewed=True)))
