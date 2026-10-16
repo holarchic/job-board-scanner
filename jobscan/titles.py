@@ -4,9 +4,11 @@ profile's places, so the user judges a suggestion by its effect. Nothing is writ
 import json
 import sqlite3
 from dataclasses import dataclass, replace
+from pathlib import Path
 
-from jobscan import store, tag
-from jobscan.config import ModelConfig, Profile
+from jobscan import fetch, store, tag
+from jobscan.config import Config, ModelConfig, Profile
+from jobscan.lock import run_lock
 from jobscan.payload import encodable, one_line
 from jobscan.prefilter import Verdict, in_places, term_matches, verdict
 
@@ -49,6 +51,28 @@ class Counted:
     """Per suggestion, its own effect on the stored postings in the profile's places."""
     adds: dict[str, int]  # variant → postings it would make matches (exclusions still apply)
     leaves_out: dict[str, int]  # near-miss → current matches excluding it would drop
+
+
+@dataclass(frozen=True)
+class Outcome:
+    suggested: Suggested
+    counted: Counted | None  # None before any run: no database to count against
+
+
+def for_home(home: Path, config: Config, profile: Profile) -> Outcome:
+    """Suggestions for `profile` (saved or not), counted against the install's database when it has one. The lock
+    is taken and the database opened before the model call, so a run holding it (RunLocked) or a database that won't
+    open costs no call."""
+    listed = {b.id for b in fetch.load_boards(config.boards_file)[0]} if config.boards_file else set()
+    if not store.exists(home):
+        return Outcome(suggest(profile, config.model, config.api_key), None)
+    with run_lock(home):
+        conn = store.open_db(home)
+        try:
+            suggested = suggest(profile, config.model, config.api_key)
+            return Outcome(suggested, count(conn, profile, store.next_run_boards(conn, listed), suggested))
+        finally:
+            conn.close()
 
 
 def suggest(profile: Profile, model: ModelConfig, api_key: str | None) -> Suggested:

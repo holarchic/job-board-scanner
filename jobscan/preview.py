@@ -2,9 +2,11 @@
 job, none already sent. A snapshot of what the last run stored; the next run reads every board again first."""
 import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 
 from jobscan import fetch, scan, store
-from jobscan.config import Profile
+from jobscan.config import Config, Profile
+from jobscan.lock import run_lock
 from jobscan.prefilter import Verdict, verdict
 from jobscan.records import Board
 
@@ -31,6 +33,20 @@ class Preview:
     @property
     def cost(self) -> float:
         return self.new_jobs * COST_PER_POSTING
+
+
+def for_home(home: Path, config: Config, profile: Profile) -> Preview | None:
+    """`profile` (saved or not) against the install's database, under the run lock; None before any run (no
+    database, and none created). RunLocked while a run holds it."""
+    listed = {b.id: b for b in fetch.load_boards(config.boards_file)[0]} if config.boards_file else {}
+    if not store.exists(home):
+        return None
+    with run_lock(home):
+        conn = store.open_db(home)
+        try:
+            return preview(conn, profile, listed)
+        finally:
+            conn.close()
 
 
 def preview(conn: sqlite3.Connection, profile: Profile, listed: dict[str, Board], examples: int = 10) -> Preview:

@@ -303,45 +303,25 @@ def _key_source(home: Path, config: Config) -> str:
 
 def _preview(home: Path) -> int:
     try:
-        config = load_config(home)
         profile = load_profile(home)
-        listed = {b.id: b for b in fetch.load_boards(config.boards_file)[0]} if config.boards_file else {}
-        if not store.exists(home):
-            print("No postings yet: `jobscan run` fetches them, then `jobscan preview` can count them.")
-            return EXIT_OK
-        with run_lock(home):
-            conn = store.open_db(home)
-            try:
-                result = preview.preview(conn, profile, listed)
-            finally:
-                conn.close()
+        result = preview.for_home(home, load_config(home), profile)
     except ConfigError as e:
         print(f"jobscan: {e}", file=sys.stderr)
         return EXIT_USAGE
     except RunLocked:
         print("jobscan: a run is using the database; preview once it has finished", file=sys.stderr)
         return EXIT_INCOMPLETE
-    print("\n".join(report.preview_lines(profile, result)))
+    if result is None:
+        print("No postings yet: `jobscan run` fetches them, then `jobscan preview` can count them.")
+    else:
+        print("\n".join(report.preview_lines(profile, result)))
     return EXIT_OK
 
 
 def _titles(home: Path) -> int:
-    """With a database, the lock is taken and the database opened before the model call: a run holding it, or a
-    database that won't open, costs no call."""
     try:
-        config = load_config(home)
         profile = load_profile(home)
-        listed = {b.id for b in fetch.load_boards(config.boards_file)[0]} if config.boards_file else set()
-        if store.exists(home):
-            with run_lock(home):
-                conn = store.open_db(home)
-                try:
-                    suggested = titles.suggest(profile, config.model, config.api_key)
-                    counted = titles.count(conn, profile, store.next_run_boards(conn, listed), suggested)
-                finally:
-                    conn.close()
-        else:
-            suggested, counted = titles.suggest(profile, config.model, config.api_key), None
+        outcome = titles.for_home(home, load_config(home), profile)
     except ConfigError as e:
         print(f"jobscan: {e}", file=sys.stderr)
         return EXIT_USAGE
@@ -352,7 +332,8 @@ def _titles(home: Path) -> int:
         spent = f"; {report.cost(e.usage)}" if e.usage else ""
         print(f"jobscan: no title suggestions: {e}{spent}", file=sys.stderr)
         return EXIT_INCOMPLETE
-    print("\n".join(report.titles_lines(home / "profiles" / f"{profile.name}.toml", suggested, counted)))
+    print("\n".join(report.titles_lines(home / "profiles" / f"{profile.name}.toml", outcome.suggested,
+                                       outcome.counted)))
     return EXIT_OK
 
 
