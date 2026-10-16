@@ -40,6 +40,14 @@ class ReadTest(unittest.TestCase):
         moved = page.read({**FIELDS, "custom-0-name": [""], "custom-1-definition": ["x" * 50_000]})
         self.assertEqual(set(page.to_profile(moved).errors), {"custom-0"})  # buyer is now the first row shown
 
+    def test_a_browsers_crlf_is_stored_as_lf(self):
+        form = page.read({**FIELDS, "custom-0-definition": ["Line one\r\nLine two\rthree"]})
+        self.assertEqual(form.custom[0].definition, "Line one\nLine two\nthree")
+
+    def test_a_huge_row_index_is_just_a_row(self):
+        form = page.read({**FIELDS, f"custom-{'9' * 5000}-name": ["late"], f"custom-{'9' * 5000}-definition": ["L."]})
+        self.assertEqual([r.name for r in form.custom], ["climate", "buyer", "late"])
+
     def test_custom_rows_keep_their_posted_names(self):
         form = page.read({**FIELDS, "custom-01-name": ["other"], "custom-01-definition": ["Other."]})
         self.assertEqual([r.name for r in form.custom], ["climate", "other", "buyer"])
@@ -58,6 +66,14 @@ class ReadTest(unittest.TestCase):
             self.assertIsNotNone(page.unrepresentable(changed), changed)
         buyer = replace(profile.custom_tags[1], values=("small\nmedium", "large"))
         self.assertIsNotNone(page.unrepresentable(replace(profile, custom_tags=(buyer,))))
+
+    def test_a_profile_too_long_or_too_large_for_the_page_is_not_offered(self):
+        profile = page.to_profile(page.read(FIELDS)).profile
+        self.assertIn("Too long", page.unrepresentable(replace(profile, locations=("x" * 20_001,))))
+        defined = replace(profile.custom_tags[0], definition="x" * 19_000)
+        big = replace(profile, custom_tags=tuple(replace(defined, name=f"t{i}", definition=f"{i}" + defined.definition)
+                                                 for i in range(10)))  # each a different question
+        self.assertIn("too large for one page", page.unrepresentable(big))
 
     def test_an_unknown_tag_posted_is_refused(self):
         self.assertIn("unknown tags", page.to_profile(page.read({**FIELDS, "tag": ["founder"]})).errors[""])

@@ -29,7 +29,6 @@ from jobscan.lock import RunLocked
 
 READ_TIMEOUT = 10  # seconds a connection may sit silent while sending its request: a browser's idle spare socket
 # can't stall the one-at-a-time server
-LARGEST_POST = 256 * 1024
 HEADERS = MappingProxyType({
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; "
                                "frame-ancestors 'none'",
@@ -274,7 +273,7 @@ class _Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", ""))
         except ValueError:
             return self._answer(411, "<p>Refused: no length.</p>")
-        if not 0 <= length <= LARGEST_POST:
+        if not 0 <= length <= page.LARGEST_POST:
             return self._answer(413, "<p>Refused: too large.</p>")
         try:
             fields = parse_qs(self.rfile.read(length).decode(), keep_blank_values=True, errors="strict")

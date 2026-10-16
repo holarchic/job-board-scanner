@@ -5,6 +5,7 @@ import html
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from urllib.parse import quote_plus
 
 from jobscan import init, report, tag
 from jobscan.config import CUSTOM_TAG_VALUES, ConfigError, EmailConfig, Profile, custom_tag
@@ -14,6 +15,7 @@ from jobscan.titles import Outcome
 MOST_TAGS = 99  # custom tags the page edits, plus one blank row to add another; a profile with more is edited in
 # its file
 TEXT_LIMIT = 20_000  # characters in one field; a longer one is refused, never cut
+LARGEST_POST = 256 * 1024  # bytes the server reads from one post
 
 
 @dataclass(frozen=True)
@@ -89,14 +91,16 @@ def read(fields: Mapping[str, list[str]]) -> Form:
     long = set()
 
     def one(name: str, label: str | None = None) -> str:
-        """The field's value; one over TEXT_LIMIT is noted under `label` (the field shown beside its error)."""
-        value = (fields.get(name) or [""])[0]
+        """The field's value, line endings as stored (a browser posts a textarea's as CRLF); one over TEXT_LIMIT is
+        noted under `label` (the field shown beside its error)."""
+        value = (fields.get(name) or [""])[0].replace("\r\n", "\n").replace("\r", "\n")
         if len(value) > TEXT_LIMIT:
             long.add(label or name)
         return value
 
+    # Sorted as numbers without converting them (a 5,000-digit index would overflow int()); "1" and "01" kept apart.
     indexes = sorted({m.group(1) for name in fields if (m := re.fullmatch(r"custom-(\d+)-\w+", name))},
-                     key=lambda i: (int(i), i))
+                     key=lambda i: (len(i.lstrip("0")), i.lstrip("0"), i))
     rows = []
     for i in indexes:  # as posted, so "1" and "01" stay two rows
         if not (fields.get(f"custom-{i}-name") or [""])[0].strip():
@@ -131,9 +135,12 @@ def unrepresentable(profile: Profile) -> str | None:
               *(c.default or "" for c in profile.custom_tags))
     if any(len(v.splitlines()) > 1 or "\n" in v or "\r" in v for v in single):
         return "a one-line answer in it holds a line break"
-    checked = to_profile(form_from_profile(profile, None))
+    form = form_from_profile(profile, None)
+    checked = to_profile(form)
     if checked.profile is None:
         return "; ".join(checked.errors.values())
+    if _posted_size(form) > LARGEST_POST // 2:  # room for the email settings, ticks and the browser's encoding
+        return f"it is too large for one page ({_posted_size(form):,} bytes)"
     in_order = sorted(profile.tags, key=_tag_order)
     if replace(checked.profile, tags=tuple(in_order)) != replace(profile, tags=tuple(in_order)):
         return "a value in it holds a line break, which the page would split in two"
@@ -148,8 +155,17 @@ def with_ticked(form: Form) -> Form:
 
 
 def to_profile(form: Form) -> Checked:
-    """The profile the form describes (ticked suggestions included), or why not."""
-    errors: dict[str, str] = dict.fromkeys(form.too_long, f"Too long: over {TEXT_LIMIT:,} characters.")
+    """The profile the form describes (ticked suggestions included), or why not. Limits apply to the values, however
+    the form was made."""
+    long = set(form.too_long)
+    for name in ("name", "titles", "exclude_titles", "locations", "eligible_where", "email_to", "email_from",
+                 "email_host", "email_port"):
+        if len(getattr(form, name)) > TEXT_LIMIT:
+            long.add(name)
+    for i, row in enumerate(form.custom):
+        if any(len(v) > TEXT_LIMIT for v in (row.name, row.definition, row.values, row.default)):
+            long.add(f"custom-{i}")
+    errors: dict[str, str] = dict.fromkeys(long, f"Too long: over {TEXT_LIMIT:,} characters.")
     if form.too_many:
         errors[""] = f"More than {MOST_TAGS} custom tags: edit them in your profile file instead."
     if not init.PROFILE_NAME.fullmatch(form.name):
@@ -186,6 +202,13 @@ def to_profile(form: Form) -> Checked:
     except ConfigError as e:
         return Checked(None, {"": str(e)})
     return Checked(profile, {})
+
+
+def _posted_size(form: Form) -> int:
+    """Roughly what a browser posts for this form: every value percent-encoded, line breaks as CRLF."""
+    values = [form.name, form.titles, form.exclude_titles, form.locations, form.eligible_where,
+              *(v for r in form.custom for v in (r.name, r.definition, r.values, r.default))]
+    return sum(len(quote_plus(v.replace("\n", "\r\n"))) + 32 for v in values)
 
 
 def _tag_order(name: str) -> tuple[int, str]:
@@ -288,7 +311,7 @@ def _email(view: View, e: Mapping[str, str]) -> str:
     return ("<fieldset><legend>Email each digest (optional)</legend>"
             f'<p class="hint">{_x(saved)}{_x(held)} Gmail and iCloud need only the address and an app password '
             "(Gmail: myaccount.google.com/apppasswords; iCloud: account.apple.com). A test email is sent before "
-            f"anything is saved.</p>{_err('email', e)}"
+            f"the email settings are saved.</p>{_err('email', e)}"
             + _text("email_to", "Send digests to", f.email_to, e)
             + _text("email_from", "From (empty: the same address)", f.email_from, e)
             + _text("email_host", "Mail server (empty: Gmail or iCloud's)", f.email_host, e)

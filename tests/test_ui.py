@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 from urllib.parse import urlencode
 
-from jobscan import init, lock, ui
+from jobscan import init, lock, page, ui
 from jobscan.config import ModelConfig, load_config, load_email, load_profile
 from tests.fakes import FakeServer, model_reply, patch_smtp
 
@@ -99,7 +99,7 @@ class SecurityTest(UiTest):
         for origin in ["https://evil.example", "null", f"http://127.0.0.1:{self.port + 1}"]:
             self.assertEqual(self.post("save", headers={"Origin": origin}, key="sk-or-v1-fresh")[0], 403, origin)
         self.assertFalse(self.home.exists())  # nothing saved by a refused post
-        status, _, _ = self.request("POST", body="x" * (ui.LARGEST_POST + 1), headers={
+        status, _, _ = self.request("POST", body="x" * (page.LARGEST_POST + 1), headers={
             "Content-Type": "application/x-www-form-urlencoded"})
         self.assertEqual(status, 413)
 
@@ -122,6 +122,11 @@ class SecurityTest(UiTest):
         status, _, _ = self.request("POST", body=b"token=\xff", headers={
             "Content-Type": "application/x-www-form-urlencoded", "Origin": f"http://127.0.0.1:{self.port}"})
         self.assertEqual(status, 400)
+
+    def test_a_huge_custom_index_is_answered(self):
+        index = "9" * 5000
+        status, _ = self.post("preview", **{f"custom-{index}-name": "late", f"custom-{index}-definition": "L."})
+        self.assertEqual(status, 200)
 
     def test_an_idle_connection_doesnt_hold_the_server(self):
         self.assertEqual(ui._Handler.timeout, ui.READ_TIMEOUT)  # every connection gets it; shortened below
