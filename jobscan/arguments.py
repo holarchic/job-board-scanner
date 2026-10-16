@@ -36,7 +36,7 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="jobscan", formatter_class=argparse.RawDescriptionHelpFormatter,
                                    description=DESCRIPTION, epilog=SET_UP)
     commands = root.add_subparsers(dest="command", required=True)
-    for add in (_init, _email, _boards, _check, _run, _preview, _schedule, _titles, _tags, _discover, _eval):
+    for add in (_init, _email, _boards, _check, _run, _preview, _schedule, _ui, _titles, _tags, _discover, _eval):
         add(commands)
     return root
 
@@ -172,6 +172,20 @@ def _schedule(commands) -> None:
     when = command.add_mutually_exclusive_group(required=True)
     when.add_argument("--at", type=clock, metavar="HH:MM", help="daily run time, 24-hour clock")
     when.add_argument("--off", action="store_true", help="remove the scheduled run")
+
+
+def _ui(commands) -> None:
+    command = _command(
+        commands, "ui", "set up or edit the whole search on a local web page",
+        "Serve a page on this machine (127.0.0.1 only) to set up a new install or edit this one: titles, places, "
+        "tags, your own tags, the OpenRouter key and email, with Preview and Suggest titles for the search as it "
+        "stands on the page. It opens in your browser through a link with a one-time token; anyone with that link "
+        "can use the page until it stops. Ctrl-C stops it. Saving rewrites the profile without its comments (the "
+        "previous file is kept as .toml.prev). Typed keys and passwords stay in memory until you save; the page "
+        "never shows them.",
+        ["jobscan ui", "jobscan ui --port 8765 --no-browser"])
+    command.add_argument("--port", type=int, default=0, help="the port to serve on (default: any free one)")
+    command.add_argument("--no-browser", action="store_true", help="print the link without opening a browser")
 
 
 def _titles(commands) -> None:

@@ -3,6 +3,7 @@ import argparse
 import logging
 import os
 import sys
+import webbrowser
 from datetime import time
 from pathlib import Path
 from time import monotonic
@@ -23,6 +24,7 @@ from jobscan import (
     store,
     tag,
     titles,
+    ui,
 )
 from jobscan.config import (
     EMAIL_FILE,
@@ -71,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
         return _preview(home)
     if args.command == "titles":
         return _titles(home)
+    if args.command == "ui":
+        return _ui(home, args.port, not args.no_browser)
     return _run(home, args.notify)
 
 
@@ -315,6 +319,24 @@ def _preview(home: Path) -> int:
         print("No postings yet: `jobscan run` fetches them, then `jobscan preview` can count them.")
     else:
         print("\n".join(report.preview_lines(profile.name, result)))
+    return EXIT_OK
+
+
+def _ui(home: Path, port: int, open_browser: bool) -> int:
+    try:
+        server = ui.Server(home, port)
+    except OSError as e:
+        print(f"jobscan: can't serve on port {port} ({type(e).__name__})", file=sys.stderr)
+        return EXIT_USAGE
+    print(f"jobscan ui: {server.url}\nCtrl-C stops it.")
+    if open_browser:
+        webbrowser.open(server.url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    finally:
+        server.server_close()
     return EXIT_OK
 
 
