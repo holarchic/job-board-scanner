@@ -116,6 +116,9 @@ class SecurityTest(UiTest):
         status, headers, _ = self.request("HEAD", f"/?token={self.token}")  # answered by http.server itself
         self.assertEqual(status, 501)
         self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
+        status, _, _ = self.request("POST", body=b"token=x&titles=Account%FFExecutive", headers={
+            "Content-Type": "application/x-www-form-urlencoded", "Origin": f"http://127.0.0.1:{self.port}"})
+        self.assertEqual(status, 400)
         status, _, _ = self.request("POST", body=b"token=\xff", headers={
             "Content-Type": "application/x-www-form-urlencoded", "Origin": f"http://127.0.0.1:{self.port}"})
         self.assertEqual(status, 400)
@@ -257,6 +260,17 @@ class ExistingInstallTest(UiTest):
         request = opened.call_args.args[0]
         self.assertEqual(request.get_header("Authorization"), "Bearer sk-or-v1-new")
 
+    def test_an_install_named_against_the_rules_says_why(self):
+        self.install()
+        (self.home / "profiles" / "ae.toml").rename(self.home / "profiles" / "my_search.toml")
+        _, _, text = self.request("GET", f"/?token={self.token}")
+        self.assertIn("rename the file", text)
+
+    def test_a_too_long_password_is_said(self):
+        self.install()
+        _, text = self.post("save", email_to="me@gmail.com", password="p" * 30_000)
+        self.assertIn("Too long", text.split('name="password"')[1].split("</fieldset>")[0])
+
     def test_a_too_long_key_is_never_held(self):
         _, text = self.post("save", key="k" * 30_000)
         self.assertIn("Too long", text)
@@ -286,7 +300,7 @@ class ExistingInstallTest(UiTest):
         (self.home / "profiles" / "ae.toml").write_text(
             'titles = ["AE\\nSDR"]\nlocations = ["London"]\neligible_where = "the UK"\ntags = ["founding"]\n')
         _, _, text = self.request("GET", f"/?token={self.token}")
-        self.assertIn("a line break inside a value", text)
+        self.assertIn("would split in two", text)
 
     def test_too_many_custom_tags_for_the_page(self):
         self.install()

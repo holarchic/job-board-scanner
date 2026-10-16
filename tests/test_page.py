@@ -35,6 +35,14 @@ class ReadTest(unittest.TestCase):
         self.assertIn(f"More than {page.MOST_TAGS} custom tags", page.to_profile(many).errors[""])
         long_tick = page.read({**FIELDS, "add_title": ["x" * 50_000]})
         self.assertIn("Too long", page.to_profile(long_tick).errors["titles"])
+        together = page.read({**FIELDS, "titles": ["x" * page.TEXT_LIMIT], "add_title": ["Sales Executive"]})
+        self.assertIn("Too long", page.to_profile(together).errors["titles"])
+        moved = page.read({**FIELDS, "custom-0-name": [""], "custom-1-definition": ["x" * 50_000]})
+        self.assertEqual(set(page.to_profile(moved).errors), {"custom-0"})  # buyer is now the first row shown
+
+    def test_custom_rows_keep_their_posted_names(self):
+        form = page.read({**FIELDS, "custom-01-name": ["other"], "custom-01-definition": ["Other."]})
+        self.assertEqual([r.name for r in form.custom], ["climate", "other", "buyer"])
 
     def test_a_custom_row_without_a_name_is_removed(self):
         form = page.read({**FIELDS, "custom-0-name": [""], "custom-0-definition": ["x" * 50_000]})  # not checked
@@ -43,10 +51,13 @@ class ReadTest(unittest.TestCase):
 
     def test_a_profile_the_form_would_change_is_not_representable(self):
         profile = page.to_profile(page.read(FIELDS)).profile
-        self.assertTrue(page.representable(profile))
-        self.assertFalse(page.representable(replace(profile, titles=("AE\nSDR",))))
+        self.assertIsNone(page.unrepresentable(profile))
+        for changed in [replace(profile, titles=("AE\nSDR",)), replace(profile, titles=("Account\u2028Executive",)),
+                        replace(profile, exclude_titles=("A\x85B",)), replace(profile, eligible_where="the\nUK"),
+                        replace(profile, name="my_search")]:
+            self.assertIsNotNone(page.unrepresentable(changed), changed)
         buyer = replace(profile.custom_tags[1], values=("small\nmedium", "large"))
-        self.assertFalse(page.representable(replace(profile, custom_tags=(buyer,))))
+        self.assertIsNotNone(page.unrepresentable(replace(profile, custom_tags=(buyer,))))
 
     def test_an_unknown_tag_posted_is_refused(self):
         self.assertIn("unknown tags", page.to_profile(page.read({**FIELDS, "tag": ["founder"]})).errors[""])

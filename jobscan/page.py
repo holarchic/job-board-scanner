@@ -88,20 +88,23 @@ def read(fields: Mapping[str, list[str]]) -> Form:
     A custom row with no name is a removed one, and nothing in it is checked."""
     long = set()
 
-    def one(name: str, track: bool = True) -> str:
+    def one(name: str, label: str | None = None) -> str:
+        """The field's value; one over TEXT_LIMIT is noted under `label` (the field shown beside its error)."""
         value = (fields.get(name) or [""])[0]
-        if track and len(value) > TEXT_LIMIT:
-            long.add(name)
+        if len(value) > TEXT_LIMIT:
+            long.add(label or name)
         return value
 
-    indexes = sorted({int(m.group(1)) for name in fields if (m := re.fullmatch(r"custom-(\d{1,6})-\w+", name))})
+    indexes = sorted({m.group(1) for name in fields if (m := re.fullmatch(r"custom-(\d+)-\w+", name))},
+                     key=lambda i: (int(i), i))
     rows = []
-    for i in indexes:
-        if not one(f"custom-{i}-name", track=False).strip():
+    for i in indexes:  # as posted, so "1" and "01" stay two rows
+        if not (fields.get(f"custom-{i}-name") or [""])[0].strip():
             continue
-        rows.append(CustomRow(name=one(f"custom-{i}-name").strip(), definition=one(f"custom-{i}-definition"),
-                              values=one(f"custom-{i}-values"), multi=one(f"custom-{i}-multi") == "on",
-                              default=one(f"custom-{i}-default").strip()))
+        at = f"custom-{len(rows)}"  # the row's place on the page, where its error shows
+        rows.append(CustomRow(name=one(f"custom-{i}-name", at).strip(), definition=one(f"custom-{i}-definition", at),
+                              values=one(f"custom-{i}-values", at), multi=(fields.get(f"custom-{i}-multi") or [""])[0]
+                              == "on", default=one(f"custom-{i}-default", at).strip()))
     added = (*fields.get("add_title", []), *fields.get("add_exclude", []))
     if any(len(a) > TEXT_LIMIT for a in added):
         long.add("titles")
@@ -116,12 +119,25 @@ def read(fields: Mapping[str, list[str]]) -> Form:
                 too_many=len(rows) > MOST_TAGS)
 
 
-def representable(profile: Profile) -> bool:
-    """Whether the form shows this profile without changing it: one value per line, so none may hold a line break;
-    and no more custom tags than the page edits."""
-    values = (*profile.titles, *profile.exclude_titles, *profile.locations,
-              *(v for c in profile.custom_tags for v in c.values))
-    return len(profile.custom_tags) <= MOST_TAGS and not any("\n" in v or "\r" in v for v in values)
+def unrepresentable(profile: Profile) -> str | None:
+    """Why the page can't edit this profile without changing it, or None when it can: the profile goes through the
+    form and back (single-line fields lose line breaks in a browser, and lists split at every line break
+    `str.splitlines` knows) and must come back the same."""
+    if len(profile.custom_tags) > MOST_TAGS:
+        return f"it has more than {MOST_TAGS} custom tags"
+    if not init.PROFILE_NAME.fullmatch(profile.name):
+        return f"its name, {profile.name!r}, isn't lower-case letters, digits and -: rename the file"
+    single = (profile.name, profile.eligible_where, *(c.name for c in profile.custom_tags),
+              *(c.default or "" for c in profile.custom_tags))
+    if any(len(v.splitlines()) > 1 or "\n" in v or "\r" in v for v in single):
+        return "a one-line answer in it holds a line break"
+    checked = to_profile(form_from_profile(profile, None))
+    if checked.profile is None:
+        return "; ".join(checked.errors.values())
+    in_order = sorted(profile.tags, key=_tag_order)
+    if replace(checked.profile, tags=tuple(in_order)) != replace(profile, tags=tuple(in_order)):
+        return "a value in it holds a line break, which the page would split in two"
+    return None
 
 
 def with_ticked(form: Form) -> Form:
@@ -133,8 +149,7 @@ def with_ticked(form: Form) -> Form:
 
 def to_profile(form: Form) -> Checked:
     """The profile the form describes (ticked suggestions included), or why not."""
-    errors: dict[str, str] = {name.rsplit("-", 1)[0] if name.startswith("custom-") else name:
-                              f"Too long: over {TEXT_LIMIT:,} characters." for name in form.too_long}
+    errors: dict[str, str] = dict.fromkeys(form.too_long, f"Too long: over {TEXT_LIMIT:,} characters.")
     if form.too_many:
         errors[""] = f"More than {MOST_TAGS} custom tags: edit them in your profile file instead."
     if not init.PROFILE_NAME.fullmatch(form.name):
@@ -161,6 +176,9 @@ def to_profile(form: Form) -> Checked:
                                    "Say where you can work from.")]:
         if not values:
             errors[name] = message
+    for name, text in [("titles", form.titles), ("exclude_titles", form.exclude_titles)]:
+        if len(text) > TEXT_LIMIT:  # with the ticked suggestions
+            errors[name] = f"Too long: over {TEXT_LIMIT:,} characters."
     if errors:
         return Checked(None, errors)
     try:
@@ -198,7 +216,7 @@ def render(view: View) -> str:
                            "lower-case letters, digits and -, e.g. my-search"))
     else:
         parts.append(f"<p>Search: <b>{_x(form.name)}</b></p><input type=\"hidden\" name=\"name\" "
-                     f'value="{_x(form.name)}">')
+                     f'value="{_x(form.name)}">{_err("name", e)}')
     parts += [
         _area("titles", "Job titles to look for, one per line", form.titles, e,
               "Each matches as whole words anywhere in a posting's title."),
@@ -276,6 +294,7 @@ def _email(view: View, e: Mapping[str, str]) -> str:
             + _text("email_host", "Mail server (empty: Gmail or iCloud's)", f.email_host, e)
             + _text("email_port", "Port (465 or 587)", f.email_port, e)
             + '<label>App password <input type="password" name="password" autocomplete="off"></label>'
+            + _err("password", e)
             + off + "</fieldset>")
 
 

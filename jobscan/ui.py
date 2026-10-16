@@ -68,11 +68,10 @@ class Site:
             profile = load_profile(self.home)
         except ConfigError as e:
             return page.render(self._view(page.Form(), errors={"": f"Your install doesn't load: {e}"}))
-        if not page.representable(profile):
-            return page.render(self._view(page.Form(), errors={"": "Your profile holds what this page can't show "
-                                                                   "without changing it (a line break inside a value, "
-                                                                   f"or more than {page.MOST_TAGS} custom tags): edit "
-                                                                   "it in its file."}))
+        reason = page.unrepresentable(profile)
+        if reason:
+            return page.render(self._view(page.Form(), errors={"": f"This page can't edit your profile without "
+                                                                   f"changing it ({reason}): edit it in its file."}))
         return page.render(self._view(page.form_from_profile(profile, self._prefill_email())))
 
     def post(self, fields: dict[str, list[str]]) -> str:
@@ -278,7 +277,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not 0 <= length <= LARGEST_POST:
             return self._answer(413, "<p>Refused: too large.</p>")
         try:
-            fields = parse_qs(self.rfile.read(length).decode(), keep_blank_values=True)
+            fields = parse_qs(self.rfile.read(length).decode(), keep_blank_values=True, errors="strict")
         except UnicodeDecodeError:
             return self._answer(400, "<p>Refused: not UTF-8.</p>")
         if not _same((fields.get("token") or [""])[0], self.server.site.token):
