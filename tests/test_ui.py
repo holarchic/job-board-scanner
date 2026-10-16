@@ -110,6 +110,16 @@ class SecurityTest(UiTest):
         self.assertIn("Press one of the buttons.", text)
         self.assertFalse(self.home.exists())
 
+    def test_malformed_requests_get_an_answer_with_the_headers(self):
+        status, headers, _ = self.request("GET", "http://[/")
+        self.assertEqual(status, 400)
+        status, headers, _ = self.request("HEAD", f"/?token={self.token}")  # answered by http.server itself
+        self.assertEqual(status, 501)
+        self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
+        status, _, _ = self.request("POST", body=b"token=\xff", headers={
+            "Content-Type": "application/x-www-form-urlencoded", "Origin": f"http://127.0.0.1:{self.port}"})
+        self.assertEqual(status, 400)
+
     def test_an_idle_connection_doesnt_hold_the_server(self):
         self.assertEqual(ui._Handler.timeout, ui.READ_TIMEOUT)  # every connection gets it; shortened below
         with mock.patch.object(ui._Handler, "timeout", 1):
@@ -247,13 +257,44 @@ class ExistingInstallTest(UiTest):
         request = opened.call_args.args[0]
         self.assertEqual(request.get_header("Authorization"), "Bearer sk-or-v1-new")
 
+    def test_a_too_long_key_is_never_held(self):
+        _, text = self.post("save", key="k" * 30_000)
+        self.assertIn("Too long", text)
+        _, text = self.post("save")
+        self.assertIn("Your OpenRouter key is needed.", text)
+        self.assertFalse(self.home.exists())
+
+    def test_a_huge_port_is_a_section_error_after_the_search_saved(self):
+        self.install()
+        status, text = self.post("save", email_to="me@gmail.com", email_port="9" * 5000, password="abcd efgh")
+        self.assertEqual(status, 200)
+        self.assertIn("Saved your search", text)
+        self.assertIn("the port is a number", text)
+
+    def test_broken_email_settings_can_be_turned_off(self):
+        self.install()
+        (self.home / "email.toml").write_text("not toml [")
+        _, _, text = self.request("GET", f"/?token={self.token}")
+        self.assertIn("your email settings don&#x27;t load", text)
+        self.assertIn('name="email_off"', text)
+        _, text = self.post("save", email_off="on")
+        self.assertIn("Email turned off.", text)
+        self.assertFalse((self.home / "email.toml").exists())
+
+    def test_a_profile_the_page_would_change_isnt_offered(self):
+        self.install()
+        (self.home / "profiles" / "ae.toml").write_text(
+            'titles = ["AE\\nSDR"]\nlocations = ["London"]\neligible_where = "the UK"\ntags = ["founding"]\n')
+        _, _, text = self.request("GET", f"/?token={self.token}")
+        self.assertIn("a line break inside a value", text)
+
     def test_too_many_custom_tags_for_the_page(self):
         self.install()
         tags = "".join(f'\n[custom_tags.t{i}]\ndefinition = "Tag {i}."\n' for i in range(100))
         (self.home / "profiles" / "ae.toml").write_text(
             'titles = ["AE"]\nlocations = ["London"]\neligible_where = "the UK"\ntags = []\n' + tags)
         _, _, text = self.request("GET", f"/?token={self.token}")
-        self.assertIn("more custom tags than this page shows", text)
+        self.assertIn("more than 99 custom tags", text)
 
     def test_a_run_holding_the_database_is_said(self):
         self.install(model_url=self.model.url)

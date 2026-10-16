@@ -1,13 +1,14 @@
 """The set-up page's values: posted fields read, checked into a profile, and rendered without leaking secrets or
 markup."""
 import unittest
+from dataclasses import replace
 
 from jobscan import page, tag
 from jobscan.config import EmailConfig, custom_tag
 from jobscan.titles import Counted, Outcome, Suggested
 
 FIELDS = {"name": ["ae"], "titles": ["Account Executive\r\n\r\n  Sales Executive \n"], "exclude_titles": [""],
-          "locations": ["London\nUK"], "eligible_where": ["the UK"], "tag": ["founding", "nope"],
+          "locations": ["London\nUK"], "eligible_where": ["the UK"], "tag": ["founding"],
           "custom-0-name": ["climate"], "custom-0-definition": ["Cuts emissions."],
           "custom-1-name": ["buyer"], "custom-1-definition": ["Who buys."], "custom-1-values": ["smb\nenterprise"],
           "custom-1-multi": ["on"], "custom-3-name": [""], "custom-3-definition": ["  "],
@@ -17,7 +18,7 @@ FIELDS = {"name": ["ae"], "titles": ["Account Executive\r\n\r\n  Sales Executive
 
 class ReadTest(unittest.TestCase):
     def test_posted_fields_become_the_form(self):
-        form = page.read(FIELDS)
+        form = page.read({**FIELDS, "tag": ["founding"]})
         self.assertEqual((form.name, form.eligible_where, form.tags, form.key, form.password),
                          ("ae", "the UK", frozenset({"founding"}), "sk-or-v1-abc", "pass word"))
         self.assertEqual([r.name for r in form.custom], ["climate", "buyer"])  # empty rows dropped
@@ -27,13 +28,28 @@ class ReadTest(unittest.TestCase):
         form = page.read({"titles": ["x" * 50_000]})
         self.assertEqual((form.name, len(form.titles), form.custom, form.too_long), ("", 50_000, (), {"titles"}))
         self.assertIn("Too long", page.to_profile(form).errors["titles"])
-        many = page.read({**FIELDS, f"custom-{page.MOST_CUSTOM}-name": ["one-too-many"]})
-        self.assertIn(f"More than {page.MOST_CUSTOM - 1} custom tags", page.to_profile(many).errors[""])
+        rows = {f"custom-{i}-{part}": [f"t{i}" if part == "name" else f"Tag {i}."]
+                for i in range(page.MOST_TAGS) for part in ("name", "definition")}
+        self.assertEqual(page.to_profile(page.read({**FIELDS, **rows})).errors, {})  # the most the page edits
+        many = page.read({**FIELDS, **rows, "custom-5000-name": ["one-too-many"], "custom-5000-definition": ["x"]})
+        self.assertIn(f"More than {page.MOST_TAGS} custom tags", page.to_profile(many).errors[""])
+        long_tick = page.read({**FIELDS, "add_title": ["x" * 50_000]})
+        self.assertIn("Too long", page.to_profile(long_tick).errors["titles"])
 
     def test_a_custom_row_without_a_name_is_removed(self):
-        form = page.read({**FIELDS, "custom-0-name": [""]})  # its definition is still filled in
+        form = page.read({**FIELDS, "custom-0-name": [""], "custom-0-definition": ["x" * 50_000]})  # not checked
         self.assertEqual([r.name for r in form.custom], ["buyer"])
         self.assertEqual(page.to_profile(form).errors, {})
+
+    def test_a_profile_the_form_would_change_is_not_representable(self):
+        profile = page.to_profile(page.read(FIELDS)).profile
+        self.assertTrue(page.representable(profile))
+        self.assertFalse(page.representable(replace(profile, titles=("AE\nSDR",))))
+        buyer = replace(profile.custom_tags[1], values=("small\nmedium", "large"))
+        self.assertFalse(page.representable(replace(profile, custom_tags=(buyer,))))
+
+    def test_an_unknown_tag_posted_is_refused(self):
+        self.assertIn("unknown tags", page.to_profile(page.read({**FIELDS, "tag": ["founder"]})).errors[""])
 
     def test_ticked_suggestions_join_the_lists(self):
         form = page.with_ticked(page.read(FIELDS))

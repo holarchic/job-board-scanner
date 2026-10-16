@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from jobscan import init, install, mail, page, preview, tag, titles
 from jobscan.config import (
+    EMAIL_FILE,
     KEY_FILE,
     Config,
     ConfigError,
@@ -26,7 +27,8 @@ from jobscan.config import (
 )
 from jobscan.lock import RunLocked
 
-READ_TIMEOUT = 10  # seconds a connection may take to send its request: a browser's idle spare socket can't stall
+READ_TIMEOUT = 10  # seconds a connection may sit silent while sending its request: a browser's idle spare socket
+# can't stall the one-at-a-time server
 LARGEST_POST = 256 * 1024
 HEADERS = MappingProxyType({
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; "
@@ -66,17 +68,18 @@ class Site:
             profile = load_profile(self.home)
         except ConfigError as e:
             return page.render(self._view(page.Form(), errors={"": f"Your install doesn't load: {e}"}))
-        if len(profile.custom_tags) >= page.MOST_CUSTOM:
-            return page.render(self._view(page.Form(), errors={"": f"Your profile has more custom tags than this "
-                                                                   f"page shows ({page.MOST_CUSTOM - 1}): edit it "
-                                                                   "in its file."}))
+        if not page.representable(profile):
+            return page.render(self._view(page.Form(), errors={"": "Your profile holds what this page can't show "
+                                                                   "without changing it (a line break inside a value, "
+                                                                   f"or more than {page.MOST_TAGS} custom tags): edit "
+                                                                   "it in its file."}))
         return page.render(self._view(page.form_from_profile(profile, self._prefill_email())))
 
     def post(self, fields: dict[str, list[str]]) -> str:
         form = page.read(fields)
-        if form.key:
+        if form.key and "key" not in form.too_long:  # a refused value is never held
             self.drafts.key = form.key
-        if form.password:
+        if form.password and "password" not in form.too_long:
             self.drafts.password = form.password
         action = (fields.get("action") or [""])[0]
         if action not in ("save", "preview", "suggest"):
@@ -162,7 +165,8 @@ class Site:
                 return Done(error=f"Email wasn't turned off: {e}.")
         if not form.email_to:
             return Done() if saved is None else Done(error="To turn email off, tick the box; else give the address.")
-        if not ((form.email_port.isascii() and form.email_port.isdigit()) or not form.email_port):
+        if form.email_port and not (form.email_port.isascii() and form.email_port.isdigit()
+                                    and len(form.email_port) <= 5):
             return Done(error="Email not saved: the port is a number, 465 or 587.")
         password = self.drafts.password or (saved.password if saved else "")
         if not password:
@@ -221,7 +225,8 @@ class Site:
         key_saved = not fresh and (self.home / KEY_FILE).exists()
         return page.View(form=form, token=self.token, catalogue=tag.builtins(), fresh=fresh,
                          key_held=bool(self.drafts.key) or key_saved, password_held=bool(self.drafts.password),
-                         email=email, errors=errors, **parts)
+                         email=email, email_file=not fresh and (self.home / EMAIL_FILE).exists(), errors=errors,
+                         **parts)
 
 
 class Server(HTTPServer):
@@ -255,7 +260,7 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._allowed():
             return
-        token = parse_qs(urlsplit(self.path).query).get("token", [""])[0]
+        token = parse_qs(self.target.query).get("token", [""])[0]
         if not _same(token, self.server.site.token):
             return self._answer(403, "<p>Open the link <code>jobscan ui</code> printed.</p>")
         self._answer(200, self.server.site.show())
@@ -272,7 +277,10 @@ class _Handler(BaseHTTPRequestHandler):
             return self._answer(411, "<p>Refused: no length.</p>")
         if not 0 <= length <= LARGEST_POST:
             return self._answer(413, "<p>Refused: too large.</p>")
-        fields = parse_qs(self.rfile.read(length).decode("utf-8", "replace"), keep_blank_values=True)
+        try:
+            fields = parse_qs(self.rfile.read(length).decode(), keep_blank_values=True)
+        except UnicodeDecodeError:
+            return self._answer(400, "<p>Refused: not UTF-8.</p>")
         if not _same((fields.get("token") or [""])[0], self.server.site.token):
             return self._answer(403, "<p>Open the link <code>jobscan ui</code> printed.</p>")
         self._answer(200, self.server.site.post(fields))
@@ -281,17 +289,27 @@ class _Handler(BaseHTTPRequestHandler):
         if self.headers.get("Host") not in self.server.hosts:
             self._answer(403, "<p>Refused: wrong host.</p>")
             return False
-        if urlsplit(self.path).path != "/":
+        try:
+            self.target = urlsplit(self.path)
+        except ValueError:
+            self._answer(400, "<p>Refused: not a page address.</p>")
+            return False
+        if self.target.path != "/":
             self._answer(404, "<p>Not here.</p>")
             return False
         return True
 
+    def end_headers(self):
+        """Every response carries the page's policy headers, http.server's own errors (501 and the like) too."""
+        for name, value in HEADERS.items():
+            self.send_header(name, value)
+        super().end_headers()
+
     def _answer(self, status: int, body: str) -> None:
         data = body.encode()
         self.send_response(status)
-        for name, value in {**HEADERS, "Content-Type": "text/html; charset=utf-8",
-                            "Content-Length": str(len(data))}.items():
-            self.send_header(name, value)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
 

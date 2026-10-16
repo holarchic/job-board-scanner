@@ -344,7 +344,8 @@ def default_model() -> ModelConfig:
 
 
 def _replace(path: Path, data: bytes, mode: int) -> None:
-    """`data` at `path` in one rename, the temporary file made with `mode` from the start; nothing left behind."""
+    """`data` at `path` in one rename; the temporary file (created readable only by you) gets `mode` before any data
+    is written, and is removed on any failure."""
     try:
         fd, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}-", suffix=".tmp")
     except OSError as e:

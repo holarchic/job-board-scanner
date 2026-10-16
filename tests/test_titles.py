@@ -1,5 +1,5 @@
 """`jobscan titles`: one model call, suggestions cleaned, each counted against the stored postings in the profile's
-places, nothing written."""
+places; the profile never changed."""
 import json
 from unittest import mock
 

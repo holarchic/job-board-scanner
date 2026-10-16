@@ -3,6 +3,7 @@ what the set-up page confirms after saving, from one check."""
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from jobscan import fetch, tag
 from jobscan.config import (
@@ -24,7 +25,7 @@ class Install:
     email: EmailConfig | None
     listed: int | None  # boards in the boards file; None: no boards file
     unrecognised: int  # boards-file entries no adapter knows
-    key_source: str  # "none" (no key needed), "environment", "file", or "both"
+    key_source: Literal["none", "environment", "file", "both"]  # "none": no key needed
     key_only_in_environment: bool  # a scheduled run won't find the key
 
 
@@ -41,7 +42,7 @@ def check(home: Path) -> Install:
                    key_only_in_environment=key_only_in_environment(home, config))
 
 
-def _key_source(home: Path, config: Config) -> str:
+def _key_source(home: Path, config: Config) -> Literal["none", "environment", "file", "both"]:
     if config.api_key is None:
         return "none"
     if os.environ.get("OPENROUTER_API_KEY"):

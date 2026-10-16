@@ -26,9 +26,11 @@ Where they can work from: {where}
    "Account Executive": "Account Executive Assistant"; for "Product Manager": "Product Manager Intern").
 
 Return JSON with both lists."""
-SCHEMA = {"type": "object", "additionalProperties": False, "required": ["variants", "near_misses"],
-          "properties": {"variants": {"type": "array", "items": {"type": "string"}},
-                         "near_misses": {"type": "array", "items": {"type": "string"}}}}
+def _schema() -> dict:
+    """Built per request: the request body is JSON, and no caller can change a shared copy."""
+    return {"type": "object", "additionalProperties": False, "required": ["variants", "near_misses"],
+            "properties": {"variants": {"type": "array", "items": {"type": "string"}},
+                           "near_misses": {"type": "array", "items": {"type": "string"}}}}
 
 
 class TitlesError(Exception):
@@ -79,7 +81,7 @@ def suggest(profile: Profile, model: ModelConfig, api_key: str | None) -> Sugges
     text = PROMPT.format(titles=_listed(profile.titles), excluded=_listed(profile.exclude_titles),
                          where=profile.eligible_where, most=MOST)
     try:
-        reply = tag.call(model, api_key, text, SCHEMA, "titles")
+        reply = tag.call(model, api_key, text, _schema(), "titles")
     except tag.CallFailed as e:  # an HTTP refusal isn't billed; another failure may have been
         raise TitlesError(e.reason, e.http_status, usage=None if e.http_status else e.usage) from None
     try:
