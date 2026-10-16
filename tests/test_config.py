@@ -74,6 +74,18 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaises(ConfigError):
             load_config(self.home)
 
+    def test_a_missing_install_says_how_to_make_one_and_an_unreadable_one_says_so(self):
+        for load in (load_config, load_profile):
+            with self.assertRaises(ConfigError, msg=load.__name__) as caught:
+                load(self.home)
+            self.assertIn("jobscan init", str(caught.exception))
+        (self.home / "config.toml").write_text(OPENROUTER)
+        with mock.patch("pathlib.Path.open", side_effect=PermissionError), \
+                mock.patch("pathlib.Path.stat", side_effect=PermissionError):  # a directory it may not search
+            with self.assertRaises(ConfigError) as caught:
+                load_config(self.home)
+        self.assertIn("not readable (PermissionError)", str(caught.exception))
+
     def test_empty_exclusions_allowed(self):
         (self.home / "profiles").mkdir()
         (self.home / "profiles" / "ae.toml").write_text('titles = ["AE"]\nexclude_titles = []\nlocations = ["London"]\n'

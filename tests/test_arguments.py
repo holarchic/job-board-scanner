@@ -2,6 +2,7 @@
 import argparse
 import re
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -37,14 +38,14 @@ class HelpTest(unittest.TestCase):
         self.assertEqual(names[:7], ["init", "email", "boards", "check", "run", "preview", "schedule"])
 
     def test_the_example_profile_loads_and_matches_as_the_help_says(self):
-        guide = arguments.SET_UP.split("The profile is", 1)[1].split("\nTags label", 1)[0].splitlines()[1:]
-        toml = [line[2:35].rstrip() if line[35:37] == "  " else line[2:] for line in guide
-                if not line.startswith(" " * 10)]
+        example = arguments.SET_UP.split("For example:\n", 1)[1].split("\nTags label", 1)[0]
+        self.assertTrue(all(line.startswith("  ") for line in example.splitlines()))
         with tempfile.TemporaryDirectory() as home:
             (Path(home) / "profiles").mkdir()
-            (Path(home) / "profiles" / "pm.toml").write_text("\n".join(toml))
+            (Path(home) / "profiles" / "pm.toml").write_text(textwrap.dedent(example))  # the whole block, as shown
             profile = config.load_profile(Path(home))
-        self.assertEqual([c.name for c in profile.custom_tags], ["work_policy"])
+        self.assertEqual([(c.name, c.values) for c in profile.custom_tags],
+                         [("work_policy", ("remote", "hybrid", "onsite", "unknown"))])
         self.assertEqual(prefilter.verdict(profile, "Senior Product Manager", "London"), prefilter.Verdict.MATCH)
         self.assertEqual(prefilter.verdict(profile, "Product Marketing Manager", "London"), prefilter.Verdict.OTHER)
         self.assertEqual(prefilter.verdict(profile, "Associate Product Manager", "Remote, US"),

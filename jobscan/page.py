@@ -195,9 +195,12 @@ def to_profile(form: Form) -> Checked:
     for name, text in [("titles", form.titles), ("exclude_titles", form.exclude_titles)]:
         if len(text) > TEXT_LIMIT:  # with the ticked suggestions
             errors[name] = f"Too long: over {TEXT_LIMIT:,} characters."
-    if _posted_size(form) > LARGEST_POST // 2:  # one rule for saving and for offering a profile: the page can always
-        # reopen what it saved, with room left for the email settings, ticks and the browser's encoding
-        errors.setdefault("", f"Too large for one page ({_posted_size(form):,} bytes): edit the file instead.")
+    # Measured as the page would show the profile, not as typed (a vertical tab posts smaller than the line break it
+    # becomes): one rule for saving and for offering a profile, so the page can always reopen what it saved, with room
+    # left for the email settings, ticks and the browser's encoding.
+    size = _posted_size(form_from_profile(profile, None))
+    if size > LARGEST_POST // 2:
+        errors.setdefault("", f"Too large for one page ({size:,} bytes): edit the file instead.")
     if errors:
         return Checked(None, errors)
     try:

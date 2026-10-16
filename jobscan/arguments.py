@@ -23,20 +23,20 @@ SET_UP = """Set up, in order (a person in a terminal, or an agent by flags):
   6. jobscan preview               what the profile matches among the stored postings: tune titles without a run
   7. jobscan schedule --at 08:00   macOS: a daily run, with a notification when there's something new
 
-The profile is profiles/NAME.toml: edit it by hand, then `jobscan check`.
-  titles = ["Product Manager"]       whole words, case-folded, anywhere in the title: matches "Senior Product
-                                     Manager", not "Product Marketing Manager"
-  exclude_titles = ["Associate"]     left out even when a title matches
-  locations = ["London", "Remote"]   the same rule over the posting's location text only: "Remote" keeps
-                                     remote jobs anywhere, and location_eligible says which are open to you
-  eligible_where = "the UK"          where you can work from: what location_eligible asks about
-  tags = ["location_eligible"]       built-in tags to ask: `jobscan tags` lists them, `jobscan tags NAME`
-                                     shows one
-  [custom_tags.work_policy]          your own tag: asked of every match, without listing it in `tags`
+The profile is profiles/NAME.toml: edit it by hand, then `jobscan check`. For example:
+  titles = ["Product Manager"]       # whole words, case-folded, anywhere in the title: matches "Senior Product
+                                     # Manager", not "Product Marketing Manager"
+  exclude_titles = ["Associate"]     # left out even when a title matches
+  locations = ["London", "Remote"]   # the same rule over the posting's location text only: "Remote" keeps
+                                     # remote jobs anywhere, and location_eligible says which are open to you
+  eligible_where = "the UK"          # where you can work from: what location_eligible asks about
+  tags = ["location_eligible"]       # built-in tags to ask: `jobscan tags` lists them, `jobscan tags NAME`
+                                     # shows one
+  [custom_tags.work_policy]          # your own tag: asked of every match, without listing it in `tags`
   definition = "Where the job is done: remote, hybrid or onsite, as the posting states it."
   values = ["remote", "hybrid", "onsite", "unknown"]
-                                     values defaults to yes, no, unknown; `multi = true` answers a list;
-                                     `default = "unknown"` (one of values) answers when the posting is silent
+                                     # values defaults to yes, no, unknown; `multi = true` answers a list;
+                                     # `default = "unknown"` (one of values) answers when the posting is silent
 Tags label each posting in the digest; they never filter it. `jobscan titles` suggests titles to add or leave out.
 Secrets never go on the command line: the key comes from stdin or OPENROUTER_API_KEY, the app password from stdin.
 Exit codes: 0 done; 1 finished with something left undone (untagged postings carried over, a digest not written or

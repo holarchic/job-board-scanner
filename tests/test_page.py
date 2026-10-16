@@ -85,6 +85,14 @@ class ReadTest(unittest.TestCase):
         self.assertIsNone(checked.profile)  # refused before saving, not after
         small = page.to_profile(page.read(FIELDS)).profile
         self.assertIsNone(page.unrepresentable(small))
+        # A vertical tab splits a list as a line break does, but posts in half the bytes of the CRLF it becomes.
+        rows = {f"custom-{i}-{part}": [f"t{i}" if part == "name" else f"{i} " + "x" * 19_000]
+                for i in range(4) for part in ("name", "definition")}
+        tabbed = {**FIELDS, **rows, "locations": ["a\v" * 10_000]}
+        self.assertLess(page._posted_size(page.read(tabbed)), page.LARGEST_POST // 2)  # as typed, it would fit
+        self.assertIsNone(page.to_profile(page.read(tabbed)).profile)
+        fits = page.to_profile(page.read({**tabbed, "locations": ["London\v" * 100]})).profile
+        self.assertIsNone(page.unrepresentable(fits))
 
     def test_an_unknown_tag_posted_is_refused(self):
         self.assertIn("unknown tags", page.to_profile(page.read({**FIELDS, "tag": ["founder"]})).errors[""])

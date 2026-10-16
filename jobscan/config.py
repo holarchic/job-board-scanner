@@ -83,9 +83,7 @@ def load_config(home: Path, environ: Mapping[str, str] | None = None) -> Config:
     """`environ` stands in for the process environment: `schedule` checks the config as launchd will run it."""
     environ = os.environ if environ is None else environ
     path = home / "config.toml"
-    if not path.exists():
-        raise ConfigError(f"{home}: no install here; `jobscan init` (or `jobscan ui`) sets one up")
-    data = _read_toml(path)
+    data = _read_toml(path, missing=f"{home}: no install here; `jobscan init` (or `jobscan ui`) sets one up")
     model = data.get("model")
     if not isinstance(model, dict):
         raise ConfigError(f"{path}: missing [model] table")
@@ -216,7 +214,8 @@ def load_profile(home: Path) -> Profile:
     """The skeleton serves exactly one profile per install."""
     files = sorted((home / "profiles").glob("*.toml"))
     if len(files) != 1:
-        hint = "; `jobscan init` (or `jobscan ui`) writes one" if not files else ""
+        hint = ("; a new install: `jobscan init` (or `jobscan ui`); an existing one: write profiles/NAME.toml as "
+                "`jobscan --help` shows") if not files else ""
         raise ConfigError(f"{home / 'profiles'}: expected exactly one profile, found {len(files)}{hint}")
     path = files[0]
     data = _read_toml(path)
@@ -297,12 +296,13 @@ def custom_tag(name: str, table, path: Path | str) -> CustomTag:
     return CustomTag(name=name, definition=definition.strip(), values=tuple(values), multi=multi, default=default)
 
 
-def _read_toml(path: Path) -> dict:
+def _read_toml(path: Path, missing: str | None = None) -> dict:
+    """The file's TOML; `missing` is the error when there's no file."""
     try:
         with path.open("rb") as f:
             return tomllib.load(f)
     except FileNotFoundError:
-        raise ConfigError(f"{path}: not found") from None
+        raise ConfigError(missing or f"{path}: not found") from None
     except (OSError, UnicodeDecodeError) as e:
         raise ConfigError(f"{path}: not readable ({type(e).__name__})") from None
     except tomllib.TOMLDecodeError as e:
