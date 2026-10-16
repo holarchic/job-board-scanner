@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from jobscan import boards, cli, init, store, tag
+from jobscan import boards, cli, init, lock, store, tag
 from jobscan.config import load_config, load_email, load_profile
 from jobscan.records import Board, Company, Posting
 from tests.fakes import patch_smtp
@@ -511,7 +511,7 @@ class PreviewTest(CliHome):
 
     def test_a_run_holding_the_lock_is_exit_1_and_the_database_unopened(self):
         self.seed()
-        with cli._run_lock(self.home), mock.patch.object(store, "open_db", side_effect=AssertionError) as opened:
+        with lock.run_lock(self.home), mock.patch.object(store, "open_db", side_effect=AssertionError) as opened:
             code, out, err = self.cli("preview")
         opened.assert_not_called()
         self.assertEqual((code, out), (1, ""))
@@ -519,7 +519,7 @@ class PreviewTest(CliHome):
 
     def test_a_filesystem_without_locks_is_exit_2(self):
         self.seed()
-        with mock.patch("jobscan.cli.fcntl.flock", side_effect=OSError(77, "No locks available")):
+        with mock.patch("jobscan.lock.fcntl.flock", side_effect=OSError(77, "No locks available")):
             code, _, err = self.cli("preview")
         self.assertEqual(code, 2)
         self.assertIn("can't be locked", err)

@@ -1,6 +1,5 @@
-"""Command-line entry point: parses arguments, owns logging, the run lock and exit codes; dispatches to the modules."""
+"""Command-line entry point: owns logging and exit codes; dispatches each command to the modules."""
 import argparse
-import fcntl
 import logging
 import os
 import sys
@@ -39,13 +38,10 @@ from jobscan.config import (
     load_profile,
 )
 from jobscan.crawl import CrawlError
+from jobscan.lock import RunLocked, run_lock
 
 EXIT_OK, EXIT_INCOMPLETE, EXIT_USAGE = 0, 1, 2
 log = logging.getLogger("jobscan")
-
-
-class RunLocked(Exception):
-    """Another jobscan process holds this $JOBSCAN_HOME."""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -87,7 +83,7 @@ def _run(home: Path, notifying: bool) -> int:
         profile = load_profile(home)
         defs = tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
         _setup_logging(home)
-        with _run_lock(home):
+        with run_lock(home):
             log.info("run_start profile=%s setup_seconds=%.1f", profile.name, monotonic() - entered)
             outcome = scan.scan(config, profile, defs)
     except ConfigError as e:
@@ -259,7 +255,7 @@ def _discover(home: Path) -> int:
     """Needs only a writable home: no model config, key, profile or boards file."""
     try:
         _setup_logging(home)
-        with _run_lock(home):
+        with run_lock(home):
             conn = store.open_db(home)
             try:
                 outcome = discover.discover(conn)
@@ -313,7 +309,7 @@ def _preview(home: Path) -> int:
         if not store.exists(home):
             print("No postings yet: `jobscan run` fetches them, then `jobscan preview` can count them.")
             return EXIT_OK
-        with _run_lock(home):
+        with run_lock(home):
             conn = store.open_db(home)
             try:
                 result = preview.preview(conn, profile, listed)
@@ -337,7 +333,7 @@ def _titles(home: Path) -> int:
         profile = load_profile(home)
         listed = {b.id for b in fetch.load_boards(config.boards_file)[0]} if config.boards_file else set()
         if store.exists(home):
-            with _run_lock(home):
+            with run_lock(home):
                 conn = store.open_db(home)
                 try:
                     suggested = titles.suggest(profile, config.model, config.api_key)
@@ -424,28 +420,3 @@ def _setup_logging(home: Path) -> None:
         handler.setFormatter(formatter)
         log.addHandler(handler)
     log.setLevel(logging.INFO)
-
-
-class _run_lock:
-    """One run per $JOBSCAN_HOME: overlapping runs would double-tag and race delivery."""
-
-    def __init__(self, home: Path):
-        self.path = home / ".lock"
-
-    def __enter__(self):
-        try:
-            self.file = self.path.open("w")
-        except OSError as e:
-            raise ConfigError(f"{self.path}: not writable ({type(e).__name__})") from None
-        try:
-            fcntl.flock(self.file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            self.file.close()
-            raise RunLocked from None
-        except OSError as e:  # a filesystem without locks (ENOLCK)
-            self.file.close()
-            raise ConfigError(f"{self.path}: can't be locked ({type(e).__name__})") from None
-        return self
-
-    def __exit__(self, *exc):
-        self.file.close()

@@ -3,7 +3,7 @@ places, nothing written."""
 import json
 from unittest import mock
 
-from jobscan import cli, store, titles
+from jobscan import lock, store, titles
 from jobscan.records import Board
 from tests.fakes import FakeServer, model_reply
 from tests.test_setup_commands import CliHome, posting
@@ -87,7 +87,7 @@ class TitlesTest(CliHome):
 
     def test_a_run_holding_the_database_costs_no_call(self):
         self.seed()
-        with cli._run_lock(self.home):
+        with lock.run_lock(self.home):
             code, _, err = self.cli("titles")
         self.assertEqual(code, 1)
         self.assertIn("a run is using the database", err)
