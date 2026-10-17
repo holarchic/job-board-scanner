@@ -128,6 +128,7 @@ class View:
     preview: Preview | None = None
     previewed: bool = False  # Preview pressed: None then means no postings yet
     saved: Saved | None = None  # the done page's facts
+    schedule_kept: bool = False  # a launchd plist that isn't one daily time: kept unless a time is ticked
 
 
 def steps(fresh: bool) -> tuple[str, ...]:
@@ -640,7 +641,9 @@ def _schedule_body(view: View) -> str:
             "quiet day sends nothing. Once a day is enough: boards change slowly.</p>"
             f'<p><label><input type="checkbox" name="schedule_on"{ticked}> Run it every day at</label> '
             f'<input type="time" name="schedule_at" value="{_x(f.schedule_at)}">{_err("schedule_at", e)}</p>'
-            f'<p class="hint">{_x(hint)}</p>')
+            + ('<p class="hint">This install has a schedule this page can\'t show (not one daily time): it is '
+               "left as it is unless you tick a time, which replaces it.</p>" if view.schedule_kept else "")
+            + f'<p class="hint">{_x(hint)}</p>')
 
 
 def _done_body(view: View) -> str:
@@ -680,7 +683,8 @@ def _summary_body(view: View) -> str:
     email = "off" if f.email_off or not f.email_to else f"to {f.email_to}"
     key = "held" if view.key_held else "none"
     if view.launchd:
-        when = f"every day at {f.schedule_at}" if f.schedule_on else "not scheduled"
+        when = f"every day at {f.schedule_at}" if f.schedule_on else \
+            "a schedule this page can't show, left as it is" if view.schedule_kept else "not scheduled"
     else:
         when = f"a cron line at {f.schedule_at}, added by you" if f.schedule_on else "not set here"
     shown = {"key": ("OpenRouter key", key), "titles": ("Titles", "; ".join(_lines(f.titles))),

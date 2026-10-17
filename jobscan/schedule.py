@@ -87,7 +87,8 @@ def scheduled_at(home: Path, agents: Path) -> time | None:
     daily plist as `install` writes."""
     try:
         spec = plistlib.loads(job(home, agents).plist.read_bytes())
-    except (OSError, plistlib.InvalidFileException, ExpatError, ValueError, TypeError):
+    # What plistlib raises on files it can't read: a bad XML value or encoding, a truncated binary or XML file.
+    except (OSError, ExpatError, ValueError, TypeError, AttributeError, LookupError, OverflowError):
         return None
     when = spec.get("StartCalendarInterval") if isinstance(spec, dict) else None
     if not (isinstance(when, dict) and set(when) == {"Hour", "Minute"}

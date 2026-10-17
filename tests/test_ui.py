@@ -277,8 +277,8 @@ class NewInstallTest(UiTest):
         self.assertIn("Sent a test email to me@gmail.com", text)
         self.assertIn("The install loads as a run would", text)
         self.assertIn("Runs every day at 08:00.", text)
-        self.assertIn(f"JOBSCAN_HOME={self.home} jobscan run", text)
-        self.assertIn(str(self.home / "digests" / "account-executive"), text)
+        self.assertIn(f"JOBSCAN_HOME={self.home.resolve()} jobscan run", text)  # resolved: from any directory
+        self.assertIn(str(self.home.resolve() / "digests" / "account-executive"), text)
         self.assertEqual(schedule.scheduled_at(self.home, self.launchd.agents), time_of_day(8, 0))
         self.assertTrue(schedule.loaded(self.home, self.launchd))
         self.press("goto:summary")
@@ -674,10 +674,11 @@ class ScheduleTest(UiTest):
         plist = schedule.job(self.home, self.launchd.agents).plist
         plist.parent.mkdir(parents=True)
         for written in [plistlib.dumps({"StartCalendarInterval": {"Weekday": 1, "Hour": 7, "Minute": 0}}),
-                        plistlib.dumps({"StartCalendarInterval": {"Hour": 7, "Minute": 0}})[:120]]:
+                        plistlib.dumps({"StartCalendarInterval": {"Hour": 7, "Minute": 0}})[:120],
+                        b'<?xml version="1.0"?><plist version="1.0"><date>invalid</date></plist>']:
             plist.write_bytes(written)
             site = ui.Site(self.home, "t", self.launchd)
-            self.assertIn("not scheduled", site.show())  # read as unscheduled, never a crash
+            self.assertIn("a schedule this page can&#x27;t show, left as it is", site.show())  # never a crash
             text = site.post({**Fields(site.show()).fields, "token": ["t"], "action": ["save"]})
             self.assertIn("Saved your search", text)
             self.assertEqual(plist.read_bytes(), written)
@@ -744,12 +745,12 @@ class ElsewhereTest(UiTest):
         self.assertIn("a cron line at 08:00, added by you", self.pages[-1])
         text = self.press("save")
         self.assertEqual(self.step(), "done")
-        quoted = shlex.quote(str(self.home))
+        quoted = shlex.quote(str(self.home.resolve()))
         for command in ("run", "ui", "check"):
             self.assertIn(html.escape(f"JOBSCAN_HOME={quoted} jobscan {command}"), text)
         self.assertIn(html.escape(schedule.cron_line(self.home, time_of_day(8, 0))), text)
         self.assertNotIn("by itself", text)
-        self.assertEqual(shlex.split(f"JOBSCAN_HOME={quoted}")[0], f"JOBSCAN_HOME={self.home}")
+        self.assertEqual(shlex.split(f"JOBSCAN_HOME={quoted}")[0], f"JOBSCAN_HOME={self.home.resolve()}")
 
 
 if __name__ == "__main__":

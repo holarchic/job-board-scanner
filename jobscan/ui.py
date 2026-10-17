@@ -257,7 +257,7 @@ class Site:
             if at is None:
                 ours = schedule.scheduled_at(self.home, launchd.agents) is not None or (
                     not schedule.job(self.home, launchd.agents).plist.exists() and schedule.loaded(self.home, launchd))
-                if not ours:  # nothing scheduled, or a plist this page didn't write: left as it is
+                if not ours:  # nothing scheduled, or a plist that isn't one daily time: left as it is
                     return Done()
                 schedule.remove(self.home, launchd.agents, launchd.run)
                 return Done(notice="No longer scheduled.")
@@ -274,7 +274,7 @@ class Site:
 
     def _what_now(self, profile: Profile) -> page.Saved:
         """The facts the page after Save gives, from the draft as saved (before it is read back from disk)."""
-        form, home = self.form, self.home
+        form, home = self.form, self.home.resolve()  # the commands work from any directory
         at = schedule.parse_at(form.schedule_at) if form.schedule_on else None
         prefix = "" if home.resolve() == DEFAULT_HOME.expanduser().resolve() else \
             f"JOBSCAN_HOME={shlex.quote(str(home))} "
@@ -362,6 +362,13 @@ class Site:
         except ConfigError:
             return None
 
+    def _schedule_kept(self) -> bool:
+        """This install has a plist that isn't one daily time (a weekly one, or one that doesn't parse): Save leaves
+        it unless a time is ticked."""
+        launchd = self.launchd
+        return bool(launchd) and schedule.job(self.home, launchd.agents).plist.exists() and \
+            schedule.scheduled_at(self.home, launchd.agents) is None
+
     def _key_held(self) -> bool:
         return bool(self.drafts.key) or (not self._fresh() and (self.home / KEY_FILE).exists())
 
@@ -380,7 +387,8 @@ class Site:
         fresh = self._fresh()
         return page.render(page.View(
             form=self.form, offers=self.offers, step=self.step, revision=self.revision, token=self.token,
-            catalogue=tag.builtins(), fresh=fresh, home=str(self.home), launchd=self.launchd is not None,
+            catalogue=tag.builtins(), fresh=fresh, home=str(self.home.resolve()), launchd=self.launchd is not None,
+            schedule_kept=self._schedule_kept(),
             saved=self.saved if self.step == "done" else None, key_held=self._key_held(),
             password_held=bool(self.drafts.password), email=email,
             email_file=not fresh and (self.home / EMAIL_FILE).exists(), errors=errors, **parts))
