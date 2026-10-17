@@ -75,8 +75,11 @@ CUSTOM_TAG_NAME = re.compile(r"[a-z][a-z0-9_]*")
 CUSTOM_TAG_VALUES = ("yes", "no", "unknown")
 
 
+DEFAULT_HOME = Path("~/.jobscan")
+
+
 def jobscan_home() -> Path:
-    return Path(os.environ.get("JOBSCAN_HOME") or "~/.jobscan").expanduser()
+    return Path(os.environ.get("JOBSCAN_HOME") or DEFAULT_HOME).expanduser()
 
 
 def load_config(home: Path, environ: Mapping[str, str] | None = None) -> Config:

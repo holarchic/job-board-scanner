@@ -1,24 +1,28 @@
 """`jobscan ui` served for real on 127.0.0.1 (port 0) in a thread, driven over HTTP as a browser would: each page's
 own fields read back from its HTML (ticked boxes, text, textareas) and posted with the button pressed. The security
 checks, then the steps of a new install and the summary of an existing one."""
+import html
 import http.client
 import os
 import re
+import shlex
 import socket
 import stat
+import sys
 import tempfile
 import threading
 import time
 import unittest
+from datetime import time as time_of_day
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
 from urllib.parse import urlencode
 
-from jobscan import init, lock, page, tag, ui
+from jobscan import init, lock, page, schedule, tag, ui
 from jobscan.config import ModelConfig, custom_tag, load_config, load_email, load_profile
 from jobscan.describe import Described
-from tests.fakes import FakeServer, model_reply, patch_smtp
+from tests.fakes import FakeServer, StatefulLaunchctl, model_reply, patch_smtp
 
 WORDS = "Account executive jobs with founding teams in London, happy to be remote."
 DESCRIBED = {
@@ -66,10 +70,13 @@ class Fields(HTMLParser):
 
 
 class UiTest(unittest.TestCase):
+    home_name = "home"
+    mac = True  # launchd present; else the page gives a cron line
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.home = Path(tmp.name) / "home"
+        self.home = Path(tmp.name) / self.home_name
         self.model = FakeServer()
         self.addCleanup(self.model.close)
         self.model.routes["/chat/completions"] = (200, answers)
@@ -79,7 +86,8 @@ class UiTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.smtp = calls
-        self.server = ui.Server(self.home, 0)
+        self.launchd = schedule.Launchd(Path(tmp.name) / "LaunchAgents", StatefulLaunchctl()) if self.mac else None
+        self.server = ui.Server(self.home, 0, self.launchd)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
@@ -116,6 +124,11 @@ class UiTest(unittest.TestCase):
             fields[name] = [v for v in fields.get(name, []) if v != value]
         fields |= {name: [value] for name, value in typed.items()}
         return self.post({**fields, "action": action})[1]
+
+    def start(self) -> str:
+        """A new install, past the page saying how it works: the key step."""
+        self.open()
+        return self.press("next")
 
     def step(self) -> str:
         return re.search(r'name="step" value="(\w+)"', self.pages[-1]).group(1)
@@ -223,7 +236,7 @@ class SecurityTest(UiTest):
             self.assertLess(time.monotonic() - started, 5)
 
     def test_a_stale_page_changes_nothing_and_holds_no_secret(self):
-        first = self.open()
+        first = self.start()
         self.press("next", key="sk-or-v1-fresh")
         self.press("back")  # the key step again, a newer page of it
         stale = {**Fields(first).fields, "key": "sk-or-v1-stale", "action": "next"}
@@ -234,7 +247,7 @@ class SecurityTest(UiTest):
 
 class NewInstallTest(UiTest):
     def to_titles(self, words=WORDS):
-        self.open()
+        self.start()
         self.press("next", key="sk-or-v1-fresh")
         return self.press("next", description=words)
 
@@ -252,11 +265,23 @@ class NewInstallTest(UiTest):
         self.assertIn('name="add_custom" value="salary_stated">', text)  # offered, one click to add
         self.press("next", ticked={"add_custom": ["salary_stated"]})
         text = self.press("next", email_to="me@gmail.com", password="abcd efgh ijkl mnop")
+        self.assertEqual((self.step(), checked(text, "schedule_on"), checked(text, "schedule_at")),
+                         ("schedule", ["on"], ["08:00"]))  # a daily run, ticked
+        text = self.press("next")
         self.assertEqual(checked(text, "name"), ["account-executive"])
+        self.assertIn("every day at 08:00", text)
         text = self.press("save")
+        self.assertEqual(self.step(), "done")
         self.assertIn("Saved your search, the settings and your key.", text)
         self.assertIn("Sent a test email to me@gmail.com", text)
         self.assertIn("The install loads as a run would", text)
+        self.assertIn("Runs every day at 08:00.", text)
+        self.assertIn(f"JOBSCAN_HOME={self.home} jobscan run", text)
+        self.assertIn(str(self.home / "digests" / "account-executive"), text)
+        self.assertEqual(schedule.scheduled_at(self.home, self.launchd.agents), time_of_day(8, 0))
+        self.assertTrue(schedule.loaded(self.home, self.launchd))
+        self.press("goto:summary")
+        self.assertEqual(self.step(), "summary")
         profile = load_profile(self.home)
         self.assertEqual((profile.name, profile.titles, profile.exclude_titles, profile.locations),
                          ("account-executive", ("Account Executive", "Sales Executive", "AE"),
@@ -282,7 +307,7 @@ class NewInstallTest(UiTest):
         self.assertEqual(checked(text, "title"), ["Account Executive"])
 
     def test_without_a_description_suggest_works_before_places_and_every_tag_starts_ticked(self):
-        self.open()
+        self.start()
         self.press("next", key="sk-or-v1-fresh")
         text = self.press("skip")
         self.assertEqual((self.step(), checked(text, "title")), ("titles", []))
@@ -296,7 +321,9 @@ class NewInstallTest(UiTest):
         self.assertEqual(checked(text, "tag"), list(tag.builtin_names()))
         self.press("next")
         self.press("next")
+        self.press("next", unticked=[("schedule_on", "on")])
         self.assertIn("Saved your search", self.press("save"))
+        self.assertEqual(self.server.site.launchd.run.calls, ["print"])  # unscheduled: nothing to remove
         self.assertEqual(load_profile(self.home).titles, ("Account Executive",))
         self.assertEqual(self.described(), 0)
 
@@ -309,7 +336,7 @@ class NewInstallTest(UiTest):
         self.assertEqual(self.press("skip") and self.step(), "titles")
 
     def test_each_step_keeps_a_wrong_value_but_never_waits_on_later_steps(self):
-        self.open()
+        self.start()
         self.assertIn("Your OpenRouter key is needed", self.press("next"))
         self.assertIn("isn&#x27;t an OpenRouter key", self.press("next", key="sk or-v1"))
         self.assertIn("Your OpenRouter key is needed", self.press("next"))  # a refused key is never held
@@ -334,7 +361,10 @@ class NewInstallTest(UiTest):
         self.assertIn("The port is a number", self.press("next", email_port="9" * 5000, password="abcd efgh"))
         self.assertIn("Too long", self.press("next", email_port="", password="p" * 30_000))
         self.press("next", email_to="")
+        self.assertIn("Use HH:MM", self.press("next", schedule_at="8"))
+        self.press("next", schedule_at="8:30")
         self.assertEqual(self.step(), "summary")
+        self.assertIn("every day at 8:30", self.pages[-1])
         self.assertFalse(self.home.exists())
 
     def test_a_suggested_tag_ticked_then_edited_stays_one_tag(self):
@@ -354,11 +384,11 @@ class NewInstallTest(UiTest):
 
     def test_the_name_is_suggested_once(self):
         self.to_titles()
-        for _ in range(5):
+        for _ in range(6):
             self.press("next")
         self.assertEqual(checked(self.pages[-1], "name"), ["account-executive"])
         self.press("goto:titles", name="")
-        for _ in range(5):
+        for _ in range(6):
             text = self.press("next")
         self.assertEqual((self.step(), checked(text, "name")), ("summary", [""]))
         self.assertIn("lower-case letters", self.press("save"))
@@ -366,7 +396,7 @@ class NewInstallTest(UiTest):
         self.assertFalse(self.home.exists())
 
     def test_a_too_long_key_is_never_held(self):
-        self.open()
+        self.start()
         self.assertIn("Too long", self.press("next", key="k" * 30_000))
         self.assertIn("Your OpenRouter key is needed", self.press("next"))
         self.assertFalse(self.home.exists())
@@ -376,22 +406,29 @@ class NewInstallTest(UiTest):
         for _ in range(4):
             self.press("next")
         self.press("next", email_to="me@gmail.com", password="abcd efgh")
+        self.press("next")
         with mock.patch("jobscan.mail.send_test", side_effect=init.mail.MailError("535 bad credentials")):
             text = self.press("save")
+        self.assertEqual(self.step(), "summary")
         self.assertIn("Saved your search, the settings and your key.", text)
         self.assertIn("The test email wasn&#x27;t sent (535 bad credentials); email settings not saved.", text)
+        self.assertIn("Not scheduled: fix the above first", text)  # a run would email nobody
         self.assertIsNone(load_email(self.home))
+        self.assertIsNone(schedule.scheduled_at(self.home, self.launchd.agents))
+        self.assertNotIn("bootstrap", self.launchd.run.calls)
 
     def test_preview_before_any_run(self):
         self.to_titles()
-        for _ in range(5):
+        for _ in range(6):
             self.press("next")
         self.assertIn("No postings yet", self.press("preview"))
 
 
 class ExistingInstallTest(UiTest):
     def edit(self, step, **typed):
-        """From the summary: Edit `step`, change what's typed, Done."""
+        """From the summary (or the page after Save): Edit `step`, change what's typed, Done."""
+        if self.step() == "done":
+            self.press("goto:summary")
         self.press(f"goto:{step}")
         return self.press("next", **typed)
 
@@ -428,6 +465,7 @@ class ExistingInstallTest(UiTest):
         self.edit("key", key="sk-or-v1-new")
         self.press("save")
         self.assertEqual((self.home / "openrouter.key").read_text(), "sk-or-v1-new\n")
+        self.press("goto:summary")
         self.press("save")
         self.assertEqual((self.home / "openrouter.key").read_text(), "sk-or-v1-new\n")
 
@@ -521,7 +559,7 @@ class ExistingInstallTest(UiTest):
                     f'\n[custom_tags.t{i}]\ndefinition = "Tag {i}."\n' for i in range(100)),
                  "more than 99 custom tags")]:
             with self.subTest(reason):
-                site = ui.Site(self.home, "t")
+                site = ui.Site(self.home, "t", None)
                 if not self.home.exists():
                     self.install()
                 (self.home / "profiles" / "ae.toml").write_text(text)
@@ -530,7 +568,7 @@ class ExistingInstallTest(UiTest):
         (self.home / "profiles" / "ae.toml").write_text(
             'titles = ["AE"]\nlocations = ["London"]\neligible_where = "the UK"\ntags = ["founding"]\n')
         (self.home / "profiles" / "ae.toml").rename(self.home / "profiles" / "my_search.toml")
-        self.assertIn("rename the file", ui.Site(self.home, "t").show())
+        self.assertIn("rename the file", ui.Site(self.home, "t", None).show())
 
     def test_a_run_holding_the_database_is_said(self):
         self.install(model_url=self.model.url)
@@ -541,6 +579,145 @@ class ExistingInstallTest(UiTest):
             text = self.press("suggest")
         self.assertIn("A run is using the database", text)
         self.assertEqual([r for r in self.model.requests if r[1] == "/chat/completions"], [])
+
+
+class ScheduleTest(UiTest):
+    def scheduled(self, at=time_of_day(7, 30)):
+        """This install's job, set up as `jobscan schedule` would; launchctl's calls counted from here."""
+        schedule.install(self.home, at, self.launchd.agents, self.launchd.run)
+        self.launchd.run.calls.clear()
+
+    def calls(self):
+        return [c for c in self.launchd.run.calls if c != "print"]
+
+    def save(self, **typed):
+        self.press("goto:schedule")
+        self.press("next", **typed)
+        return self.press("save")
+
+    def test_unchanged_it_only_asks_launchd(self):
+        self.install()
+        self.scheduled()
+        text = self.open()
+        self.assertIn("every day at 07:30", text)
+        for step in page.EDITABLE:
+            self.press(f"goto:{step}")
+            self.press("next")
+        text = self.press("save")
+        self.assertEqual((self.step(), self.calls()), ("done", []))
+        self.assertIn("every day at 07:30", text)
+        self.assertNotIn("Runs every day", text)  # nothing changed, nothing said
+
+    def test_a_new_time_replaces_the_job_and_unticking_removes_it(self):
+        self.install()
+        self.scheduled()
+        self.open()
+        self.assertIn("Runs every day at 09:05.", self.save(schedule_at="9:05"))
+        self.assertEqual((self.calls(), schedule.scheduled_at(self.home, self.launchd.agents)),
+                         (["bootout", "bootstrap"], time_of_day(9, 5)))
+        self.press("goto:summary")
+        text = self.save(unticked=[("schedule_on", "on")])
+        self.assertIn("No longer scheduled.", text)
+        self.assertNotIn("by itself", text)
+        self.assertFalse(schedule.job(self.home, self.launchd.agents).plist.exists())
+        self.assertFalse(schedule.loaded(self.home, self.launchd))
+
+    def test_launchd_refusing_says_so_and_what_became_of_the_old_job(self):
+        self.install()
+        self.scheduled()
+        self.open()
+        self.launchd.run.refuse["bootstrap"] = 1
+        text = self.save(schedule_at="9:00")
+        self.assertEqual(self.step(), "summary")
+        self.assertIn("Scheduling failed: launchctl bootstrap failed (5)", text)
+        self.assertEqual(schedule.scheduled_at(self.home, self.launchd.agents), time_of_day(7, 30))  # put back
+        self.assertTrue(schedule.loaded(self.home, self.launchd))
+        self.launchd.run.refuse["bootstrap"] = 2
+        text = self.press("save")
+        self.assertIn("putting the previous schedule back also failed", text)
+
+    def test_a_removal_half_done_is_set_up_again(self):
+        self.install()
+        self.scheduled()
+        self.open()
+        with mock.patch.object(Path, "unlink", side_effect=PermissionError("locked")):
+            text = self.save(unticked=[("schedule_on", "on")])
+        self.assertIn("Scheduling failed: PermissionError: locked", text)
+        self.assertFalse(schedule.loaded(self.home, self.launchd))  # unloaded, its plist left behind
+        reopened = ui.Site(self.home, "t", self.launchd)
+        self.assertIn("every day at 07:30", reopened.show())
+        fields = {**Fields(reopened.show()).fields, "token": ["t"], "action": ["save"]}
+        self.assertIn("Runs every day at 07:30.", reopened.post(fields))
+        self.assertTrue(schedule.loaded(self.home, self.launchd))
+
+    def test_a_time_cleared_then_back_is_refused_at_save(self):
+        self.install()
+        self.open()
+        self.press("goto:schedule")
+        self.press("back", schedule_on="on", schedule_at="")
+        before = (self.home / "profiles" / "ae.toml").read_bytes()
+        text = self.press("save")
+        self.assertEqual(self.step(), "summary")
+        self.assertIn("Use HH:MM", text)
+        self.assertEqual(((self.home / "profiles" / "ae.toml").read_bytes(), self.launchd.run.calls), (before, []))
+        self.assertFalse((self.home / "profiles" / "ae.toml.prev").exists())
+
+    def test_a_key_a_scheduled_run_cant_see_schedules_nothing_but_unticking_still_removes(self):
+        self.install(key=None)
+        self.open()
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or-v1-env"}):
+            text = self.save(schedule_on="on", schedule_at="08:00")
+        self.assertIn("a scheduled run won&#x27;t find your key", text)
+        self.assertIn("Not scheduled: fix the above first", text)
+        self.assertNotIn("bootstrap", self.launchd.run.calls)
+        init.save_key(self.home, "sk-or-v1-old")
+        self.scheduled()
+        (self.home / "email.toml").write_text("not toml [")
+        broken = ui.Site(self.home, "t", self.launchd)
+        broken.show()
+        broken.post({"token": ["t"], "step": ["summary"], "revision": ["0"], "action": ["goto:schedule"]})
+        text = broken.post({"token": ["t"], "step": ["schedule"], "revision": ["1"], "action": ["next"],
+                            "schedule_at": ["07:30"]})
+        text = broken.post({"token": ["t"], "step": ["summary"], "revision": ["2"], "action": ["save"]})
+        self.assertIn("No longer scheduled.", text)
+        self.assertIn("email settings don&#x27;t load", text)
+        self.assertFalse(schedule.loaded(self.home, self.launchd))
+
+    def test_a_moved_interpreter_is_written_again(self):
+        self.install()
+        self.scheduled()
+        self.open()
+        with mock.patch.object(sys, "executable", "/elsewhere/python3"):
+            self.assertIn("Runs every day at 07:30.", self.press("save"))
+        self.assertEqual(self.calls(), ["bootout", "bootstrap"])
+        self.assertIn(b"/elsewhere/python3", schedule.job(self.home, self.launchd.agents).plist.read_bytes())
+
+
+class ElsewhereTest(UiTest):
+    mac = False
+    home_name = "it's my home"
+
+    def test_the_page_gives_a_cron_line_and_quoted_commands(self):
+        self.start()
+        self.assertIn("crontab", self.pages[0])
+        self.press("next", key="sk-or-v1-fresh")
+        self.press("skip")
+        self.press("next", title_more="Account Executive")
+        self.press("next")
+        self.press("next", place_more="London", eligible_where="the UK")
+        self.press("next")
+        self.press("next")
+        self.assertIn("Unticking removes nothing", self.pages[-1])
+        self.press("next")
+        self.assertIn("a cron line at 08:00, added by you", self.pages[-1])
+        text = self.press("save")
+        self.assertEqual(self.step(), "done")
+        quoted = shlex.quote(str(self.home))
+        for command in ("run", "ui", "check"):
+            self.assertIn(html.escape(f"JOBSCAN_HOME={quoted} jobscan {command}"), text)
+        self.assertIn(html.escape(schedule.cron_line(self.home, time_of_day(8, 0))), text)
+        self.assertNotIn("by itself", text)
+        self.assertEqual(shlex.split(f"JOBSCAN_HOME={quoted}")[0], f"JOBSCAN_HOME={self.home}")
 
 
 if __name__ == "__main__":

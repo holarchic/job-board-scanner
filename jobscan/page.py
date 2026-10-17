@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from urllib.parse import quote_plus
 
-from jobscan import init, report, tag
+from jobscan import init, report, schedule, tag
 from jobscan.config import (
     CUSTOM_TAG_VALUES,
     ConfigError,
@@ -22,20 +22,22 @@ from jobscan.config import (
 from jobscan.preview import Preview
 from jobscan.titles import Outcome
 
+REPOSITORY = "https://github.com/holarchic/job-board-scanner"
 MOST_TAGS = 99  # custom tags the page edits, plus one blank row to add another; a profile with more is edited in
 # its file
 TEXT_LIMIT = 20_000  # characters in one field; a longer one is refused, never cut
 LARGEST_POST = 256 * 1024  # bytes the server reads from one post
-STEPS = ("key", "describe", "titles", "exclude", "places", "tags", "email", "summary")
-EXISTING_STEPS = tuple(s for s in STEPS if s != "describe")  # an existing install is edited, not described again
+STEPS = ("intro", "key", "describe", "titles", "exclude", "places", "tags", "email", "schedule", "summary")
+# An existing install is edited, not introduced or described again; `done`, after Save, is in neither order.
+EXISTING_STEPS = tuple(s for s in STEPS if s not in ("intro", "describe"))
 EDITABLE = tuple(s for s in EXISTING_STEPS if s != "summary")  # the summary's Edit buttons, new install or not
 HEADINGS = MappingProxyType({
-    "key": "Your OpenRouter key", "describe": "What are you looking for?", "titles": "Job titles",
-    "exclude": "Titles to leave out", "places": "Places", "tags": "Tags", "email": "Email (optional)",
-    "summary": "Your search"})
+    "intro": "How it works", "key": "Your OpenRouter key", "describe": "What are you looking for?",
+    "titles": "Job titles", "exclude": "Titles to leave out", "places": "Places", "tags": "Tags",
+    "email": "Email (optional)", "schedule": "When to run", "summary": "Your search", "done": "Saved: what now"})
 STEP_FIELDS = MappingProxyType({  # where each error shows; custom-N rows belong to tags
     "key": ("key",), "describe": ("description",), "titles": ("titles",), "exclude": ("exclude_titles",),
-    "places": ("locations", "eligible_where"), "tags": ("tags",),
+    "places": ("locations", "eligible_where"), "tags": ("tags",), "schedule": ("schedule_at",),
     "email": ("email", "email_to", "email_from", "email_host", "email_port", "password"), "summary": ("name", "")})
 WHERE_UNSAID = "anywhere"  # fills location_eligible's question while the tags step is checked before a where is set
 
@@ -65,6 +67,8 @@ class Form:
     email_host: str = ""
     email_port: str = ""
     email_off: bool = False
+    schedule_on: bool = False  # a daily run; the server fills both from this install's schedule
+    schedule_at: str = ""
     key: str = field(default="", repr=False)  # typed in this post; never rendered
     password: str = field(default="", repr=False)
     too_long: frozenset[str] = frozenset()  # fields over TEXT_LIMIT, refused by the checks
@@ -91,6 +95,19 @@ class Checked:
 
 
 @dataclass(frozen=True)
+class Saved:
+    """What the page after Save says, as display strings the server builds."""
+    run: str  # the commands, home included when it isn't the default
+    ui: str
+    check: str
+    digests: str  # the folder digests land in
+    log: str
+    email_to: str  # "" when email is off
+    at: str  # "08:00" when launchd runs it daily, else ""
+    cron: str  # off macOS with a time chosen: the line to add with `crontab -e`; else ""
+
+
+@dataclass(frozen=True)
 class View:
     """Everything one page shows."""
     form: Form
@@ -100,6 +117,8 @@ class View:
     token: str
     catalogue: tuple[tag.BuiltinTag, ...]  # the built-in tags, loaded by the caller: rendering reads nothing
     fresh: bool  # no install yet: every step in order, the name asked and the key required
+    home: str  # where the install lives, as shown
+    launchd: bool  # this Mac can schedule a daily run; elsewhere a schedule is a cron line the person adds
     key_held: bool  # a key is saved, or typed earlier on this page
     password_held: bool
     email: EmailConfig | None  # saved email settings, shown without the password
@@ -108,6 +127,7 @@ class View:
     notices: tuple[str, ...] = ()
     preview: Preview | None = None
     previewed: bool = False  # Preview pressed: None then means no postings yet
+    saved: Saved | None = None  # the done page's facts
 
 
 def steps(fresh: bool) -> tuple[str, ...]:
@@ -188,6 +208,8 @@ def read_step(step: str, fields: Mapping[str, list[str]], form: Form, offers: Of
             changes.update(email_to=one("email_to").strip(), email_from=one("email_from").strip(),
                            email_host=one("email_host").strip(), email_port=one("email_port").strip(),
                            email_off=one("email_off") == "on")
+        case "schedule":
+            changes.update(schedule_on=one("schedule_on") == "on", schedule_at=one("schedule_at").strip())
         case "summary":
             changes["name"] = one("name").strip() if "name" in fields else form.name
     new = replace(form, **changes, too_long=frozenset(long))
@@ -220,7 +242,9 @@ def actions(step: str, fresh: bool) -> frozenset[str]:
     """The buttons a step's page shows: the server accepts only these."""
     if step == "summary":
         return frozenset({"save", "preview", *(f"goto:{s}" for s in EDITABLE)})
-    return frozenset({"next", *(() if fresh and step == "key" else ("back",)),
+    if step == "done":
+        return frozenset({"goto:summary"})
+    return frozenset({"next", *(() if step == "intro" else ("back",)),
                       *(("skip",) if step == "describe" else ()), *(("suggest",) if step == "titles" else ())})
 
 
@@ -240,7 +264,16 @@ def check_step(step: str, form: Form, *, key_held: bool, fresh: bool, password: 
             errors = _profile_errors(step, form) | errors
         case "email":
             errors = _email_errors(form, password, email_saved) | errors
+        case "schedule":
+            errors = schedule_errors(form) | errors
     return errors
+
+
+def schedule_errors(form: Form) -> dict[str, str]:
+    """The schedule step's check, which Save repeats: Back skips a step's check."""
+    if form.schedule_on and schedule.parse_at(form.schedule_at) is None:
+        return {"schedule_at": "Use HH:MM, 24-hour, e.g. 08:00."}
+    return {}
 
 
 def _too_long(form: Form, step: str) -> dict[str, str]:
@@ -431,9 +464,9 @@ def blocked(message: str) -> str:
 
 
 def render(view: View) -> str:
-    order = steps(view.fresh)
-    where = (f"Step {order.index(view.step) + 1} of {len(order)}" if view.fresh and view.step != "summary"
-             else "")
+    numbered = steps(view.fresh)[1:]  # from the key: the intro and the summary go unnumbered
+    where = (f"Step {numbered.index(view.step) + 1} of {len(numbered)}"
+             if view.fresh and view.step in numbered and view.step != "summary" else "")
     parts = [_HEAD, f"<h1>jobscan: {_x(HEADINGS[view.step])}</h1>"]
     if where:
         parts.append(f'<p class="hint">{where}</p>')
@@ -444,7 +477,7 @@ def render(view: View) -> str:
                  f'<input type="hidden" name="step" value="{_x(view.step)}">'
                  f'<input type="hidden" name="revision" value="{view.revision}">'
                  # Enter submits the form's first button: this one, out of sight, so Enter moves on, never Edit.
-                 f'<button name="action" value="{"save" if view.step == "summary" else "next"}" tabindex="-1" '
+                 f'<button name="action" value="{_DEFAULT_ACTION.get(view.step, "next")}" tabindex="-1" '
                  'aria-hidden="true" style="position:absolute;left:-9999px">Next</button>')
     parts.append(_BODIES[view.step](view))
     parts.append(_buttons(view))
@@ -459,8 +492,9 @@ def render(view: View) -> str:
 
 def _buttons(view: View) -> str:
     """The step's buttons from `actions` (the summary's Edit buttons sit in its table), in this order."""
-    labels = {"save": "Save", "preview": "Preview matches", "next": "Next" if view.fresh else "Done",
-              "skip": "Go on without suggestions", "back": "Back"}
+    labels = {"save": "Save", "preview": "Preview matches",
+              "next": "Start" if view.step == "intro" else "Next" if view.fresh else "Done",
+              "skip": "Go on without suggestions", "back": "Back", "goto:summary": "Back to your search"}
     shown = actions(view.step, view.fresh)
     out = '<p class="buttons">' + " ".join(f'<button name="action" value="{a}">{labels[a]}</button>'
                                            for a in labels if a in shown) + "</p>"
@@ -468,6 +502,31 @@ def _buttons(view: View) -> str:
         out += ("<p class=\"hint\">Saving rewrites your profile file; comments you wrote in it by hand aren't kept "
                 "(the previous file stays beside it as <code>.toml.prev</code>).</p>")
     return out
+
+
+def _intro_body(view: View) -> str:
+    when = ("<p>It runs by itself once a day, at a time you choose, while you're logged in. If your Mac is asleep "
+            "then (the lid closed), it runs when the Mac wakes, and several missed days make one run. If the Mac is "
+            "switched off, it waits for the next day's time. You can also run it yourself whenever you like.</p>"
+            if view.launchd else
+            "<p>It runs when you run it, or daily from a line you add to your crontab, which runs only while the "
+            "computer is awake.</p>")
+    return ("<p>jobscan reads tech companies' own job boards for you and writes you a digest of the new postings "
+            "that fit your search.</p>"
+            "<h2>What a run does</h2><ol>"
+            "<li>Reads the job boards of thousands of companies, on Ashby, Greenhouse, Workday and seven other job "
+            "sites. It finds the boards itself.</li>"
+            "<li>Keeps the postings whose title and place match your search.</li>"
+            "<li>Asks a language model your questions about each new one (your tags: is it a founding team? can you "
+            "work from where you are?), each answer quoting the posting.</li>"
+            "<li>Writes a digest of what's new since the last run, and emails it to you if you set that up.</li></ol>"
+            "<p>A run takes around 45 minutes, mostly reading boards. Your OpenRouter key pays for the model: usually "
+            "cents a run.</p>"
+            f"<h2>Where it runs</h2><p>On this computer, not on a server. Everything lives in <code>{_x(view.home)}"
+            "</code>; your key and your email password in files only you can read.</p>" + when +
+            "<h2>What you'll do here</h2><p>About five minutes: your OpenRouter key, what you're looking for in your "
+            "own words, ticks on what that suggests, email if you want it, and when to run. Nothing is saved until "
+            "the last page.</p>")
 
 
 def _key_body(view: View) -> str:
@@ -484,8 +543,8 @@ def _describe_body(view: View) -> str:
             "anything you care about.</p>"
             f'<p><textarea name="description" rows="6" placeholder="I\'m looking for account executive jobs with '
             f'founding teams in London, and I\'m happy to be remote.">{_x(view.form.description)}</textarea></p>'
-            '<p class="hint">To talk instead of typing on a Mac, click in the box and press Fn (🌐) twice. Next '
-            "reads it with your key (well under a cent) and fills in the next steps for you to tick"
+            '<p class="hint">Next reads it with your key (well under a cent) and fills in the next steps for you to '
+            "tick"
             + ("; changing what you said replaces the titles, places and tags chosen since" if view.form.description
                else "") + ".</p>"
             + _err("description", view.errors))
@@ -557,15 +616,60 @@ def _email_body(view: View) -> str:
     held = " An app password is held: leave it empty to keep it." if view.password_held else ""
     off = (f' <label><input type="checkbox" name="email_off"{" checked" if f.email_off else ""}> turn email off'
            "</label>") if view.email or view.email_file or f.email_off else ""
-    return (f'<p class="hint">{_x(saved)}{_x(held)} Gmail and iCloud need only the address and an app password '
-            "(Gmail: myaccount.google.com/apppasswords; iCloud: account.apple.com). A test email is sent when you "
-            f"save.</p>{_err('email', e)}"
+    return (f'<p class="hint">{_x(saved)}{_x(held)} A test email is sent when you save.</p>' + _MAIL_HELP
+            + _err("email", e)
             + _text("email_to", "Send digests to", f.email_to, e)
             + _text("email_from", "From (empty: the same address)", f.email_from, e)
             + _text("email_host", "Mail server (empty: Gmail or iCloud's)", f.email_host, e)
             + _text("email_port", "Port (465 or 587)", f.email_port, e)
             + '<label>App password <input type="password" name="password" autocomplete="off"></label>'
             + _err("password", e) + off)
+
+
+def _schedule_body(view: View) -> str:
+    f, e = view.form, view.errors
+    ticked = " checked" if f.schedule_on else ""
+    hint = ("Your Mac needs to be on and you logged in. Asleep at that time (the lid closed), it runs when the Mac "
+            "wakes, and several missed days make one run; switched off, it waits for the next day's time. Pick a "
+            "time your Mac is usually awake, such as when you start work. A notification shows when there's "
+            "something new or a problem (you may need to allow it in System Settings, Notifications). Unticked, it "
+            "runs only when you type jobscan run." if view.launchd else
+            "jobscan can't see your crontab here. Tick to get the line to add with crontab -e after Save; it runs "
+            "only while the computer is awake. Unticking removes nothing: delete the line yourself.")
+    return ("<p>Each run looks for new postings; when there are any, it writes the digest and emails it to you. A "
+            "quiet day sends nothing. Once a day is enough: boards change slowly.</p>"
+            f'<p><label><input type="checkbox" name="schedule_on"{ticked}> Run it every day at</label> '
+            f'<input type="time" name="schedule_at" value="{_x(f.schedule_at)}">{_err("schedule_at", e)}</p>'
+            f'<p class="hint">{_x(hint)}</p>')
+
+
+def _done_body(view: View) -> str:
+    s = view.saved
+    if s is None:
+        return ""
+    by_itself = f", or wait: it runs by itself every day at {_x(s.at)}" if s.at else ""
+    cron = (f"<p>To run it daily, add this line with <code>crontab -e</code>; nothing runs until you do (to stop, "
+            f"delete the line):</p><pre>{_x(s.cron)}</pre>") if s.cron else ""
+    email = f" and emails it to {_x(s.email_to)}" if s.email_to else ""
+    return (f"<h2>Your first run</h2><p>Run it now in a terminal: <code>{_x(s.run)}</code>{by_itself}. A run takes "
+            "around 45 minutes; the first also finds the boards and tags every posting your search matches, so it can "
+            "take over an hour. Later runs tag only the new ones.</p>"
+            + cron +
+            f"<h2>Your digest</h2><p>Each run with something new writes it to <code>{_x(s.digests)}</code>{email}. "
+            "A quiet run writes nothing.</p>"
+            f"<h2>Changing your search</h2><p>Run <code>{_x(s.ui)}</code> again: it opens at your summary, each step "
+            "one Edit away. After a first run, Preview matches shows what your search finds among the stored "
+            "postings, and Suggest more titles counts what each title would add.</p>"
+            f"<h2>If something's wrong</h2><p><code>{_x(s.check)}</code> says what doesn't load, and "
+            f"<code>{_x(s.log)}</code> logs each run.</p>"
+            f'<h2>Feedback and ideas</h2><p>Found a problem, or want something it doesn\'t do? '
+            f'{_link(REPOSITORY + "/issues", "Open an issue")}: say what you ran and what happened, and leave out your '
+            "key, your search and your digests. To build it yourself, fork the repository on GitHub, make a branch, "
+            "change it with tests (<code>python3 -m unittest</code>) and open a pull request; for anything bigger "
+            "than a small fix, open an issue first. "
+            f'{_link(REPOSITORY + "/blob/main/CONTRIBUTING.md", "CONTRIBUTING.md")} has the rules, such as '
+            "standard-library Python only.</p>"
+            '<p class="hint">You can close this tab: Ctrl-C in the terminal stops the page.</p>')
 
 
 def _summary_body(view: View) -> str:
@@ -575,11 +679,15 @@ def _summary_body(view: View) -> str:
     custom = [r.name for r in f.custom]
     email = "off" if f.email_off or not f.email_to else f"to {f.email_to}"
     key = "held" if view.key_held else "none"
+    if view.launchd:
+        when = f"every day at {f.schedule_at}" if f.schedule_on else "not scheduled"
+    else:
+        when = f"a cron line at {f.schedule_at}, added by you" if f.schedule_on else "not set here"
     shown = {"key": ("OpenRouter key", key), "titles": ("Titles", "; ".join(_lines(f.titles))),
              "exclude": ("Left out", "; ".join(_lines(f.exclude_titles)) or "none"),
              "places": ("Places", "; ".join(_lines(f.locations)) + f" (you can work from: {f.eligible_where})"),
              "tags": ("Tags", ", ".join([*(t.name for t in view.catalogue if t.name in f.tags), *custom]) or "none"),
-             "email": ("Email", email)}
+             "email": ("Email", email), "schedule": ("When to run", when)}
     rows = []
     for step, (label, value) in ((s, shown[s]) for s in EDITABLE):
         mistakes = [m for n, m in e.items() if n and _step_of(n) == step]
@@ -589,9 +697,17 @@ def _summary_body(view: View) -> str:
     return name + "<table>" + "".join(rows) + "</table>"
 
 
-_BODIES = MappingProxyType({"key": _key_body, "describe": _describe_body, "titles": _titles_body,
-                            "exclude": _exclude_body, "places": _places_body, "tags": _tags_body,
-                            "email": _email_body, "summary": _summary_body})
+_BODIES = MappingProxyType({"intro": _intro_body, "key": _key_body, "describe": _describe_body,
+                            "titles": _titles_body, "exclude": _exclude_body, "places": _places_body,
+                            "tags": _tags_body, "email": _email_body, "schedule": _schedule_body,
+                            "summary": _summary_body, "done": _done_body})
+_DEFAULT_ACTION = MappingProxyType({"summary": "save", "done": "goto:summary"})  # Enter's button; else next
+
+
+def _link(url: str, text: str) -> str:
+    """A link out that opens a tab of its own and sends no Referer."""
+    return f'<a href="{_x(url)}" target="_blank" rel="noopener noreferrer">{_x(text)}</a>'
+
 
 
 def _ticks(name: str, chosen: tuple[str, ...], offered: tuple[str, ...], counts: Mapping[str, int], sign: str) -> str:
@@ -633,3 +749,23 @@ fieldset{margin:1rem 0;border:1px solid #ccc}.hint{color:#666;font-size:13px}.er
 textarea{width:100%}pre{background:#f6f6f6;padding:.5rem;white-space:pre-wrap}
 label{line-height:1.9}th{text-align:left;padding-right:1rem;vertical-align:top}td{padding:.3rem .5rem}
 </style></head><body>"""
+
+# Checked 17 Oct 2026 against support.google.com/accounts/answer/185833, support.apple.com/102654 and /102525.
+_MAIL_HELP = (
+    "<details><summary>How to get an app password, and your mail server</summary>"
+    "<p>Mail apps sign in with an app password: a separate password you make for one app, not the one you sign in "
+    "with.</p>"
+    f'<p><b>Gmail.</b> Turn on 2-Step Verification, then make an app password at '
+    f'{_link("https://myaccount.google.com/apppasswords", "myaccount.google.com/apppasswords")}: name it jobscan and '
+    "paste the 16 letters below. Google offers none to accounts under Advanced Protection or signing in only with "
+    "security keys; on a work or school account it depends on your organisation.</p>"
+    f'<p><b>iCloud.</b> With two-factor authentication on, sign in at '
+    f'{_link("https://account.apple.com", "account.apple.com")}, open Sign-In and Security, then App-Specific '
+    "Passwords, and generate one. Send from your @icloud.com address.</p>"
+    "<p>Gmail and iCloud addresses need nothing else: the server and port fill themselves in.</p>"
+    "<p><b>Other providers.</b> Search the web for your provider's SMTP settings: you need the outgoing mail server "
+    "(its name usually starts with smtp.) and its port, 465 (SSL/TLS) or 587 (STARTTLS). Your full address is the "
+    "login, and most providers want an app password made in their security settings. Outlook.com and Hotmail "
+    "addresses can't be used: Microsoft lets mail apps sign in only with OAuth.</p>"
+    "<p><b>From</b> is for sending from an account other than the one you read, such as a Gmail account sending to "
+    "your work address. That account's app password goes below.</p></details>")

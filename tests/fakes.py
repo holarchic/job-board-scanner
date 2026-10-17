@@ -1,10 +1,14 @@
-"""Local servers standing in for Ashby, the model endpoint, Common Crawl's index files and mail servers in tests."""
+"""Local servers standing in for Ashby, the model endpoint, Common Crawl's index files and mail servers in tests;
+a launchd that keeps what it loads."""
 import gzip
 import json
+import plistlib
 import re
 import socketserver
+import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import NamedTuple
 from unittest import mock
 from xml.sax.saxutils import escape
@@ -408,3 +412,31 @@ class PlainSMTPServer:
     def close(self):
         self.server.shutdown()
         self.server.server_close()
+
+
+class StatefulLaunchctl:
+    """A launchd that keeps what it has loaded (`print` finds it). `interrupt` names the call, as (verb, nth), that
+    takes effect and is then interrupted, as Ctrl-C landing while launchctl returns."""
+
+    def __init__(self, interrupt=None):
+        self.loaded, self.calls, self.interrupt = {}, [], interrupt
+        self.refuse: dict[str, int] = {}  # verb → how many more of its calls to refuse, changing nothing
+
+    def __call__(self, args):
+        self.calls.append(args[0])
+        if self.refuse.get(args[0]):
+            self.refuse[args[0]] -= 1
+            return subprocess.CompletedProcess(args, 5, "", f"{args[0]} said 5")
+        label = args[1].rsplit("/", 1)[1] if args[0] in ("bootout", "print") else None
+        if args[0] == "print":
+            code = 0 if label in self.loaded else 113  # launchctl print: "Could not find service"
+        elif args[0] == "bootout":
+            code = 0 if self.loaded.pop(label, None) is not None else 3
+        else:
+            spec = plistlib.loads(Path(args[2]).read_bytes())
+            code = 5 if spec["Label"] in self.loaded else 0  # launchd refuses a label already loaded
+            if not code:
+                self.loaded[spec["Label"]] = Path(args[2]).read_bytes()
+        if (args[0], self.calls.count(args[0])) == self.interrupt:
+            raise KeyboardInterrupt
+        return subprocess.CompletedProcess(args, code, "", f"{args[0]} said {code}")

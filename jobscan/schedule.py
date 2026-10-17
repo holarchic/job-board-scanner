@@ -96,12 +96,16 @@ def scheduled_at(home: Path, agents: Path) -> time | None:
 
 def loaded(home: Path, launchd: Launchd) -> bool:
     """launchd's own answer: whether it holds this install's job, whatever its plist says."""
-    return launchd.run(["print", f"gui/{os.getuid()}/{job(home, launchd.agents).label}"]).returncode == 0
+    try:
+        return launchd.run(["print", f"gui/{os.getuid()}/{job(home, launchd.agents).label}"]).returncode == 0
+    except (OSError, subprocess.SubprocessError) as e:
+        raise ScheduleError(f"{type(e).__name__}: {e}") from None
 
 
 def in_place(home: Path, at: time, launchd: Launchd) -> bool:
     """The job `install` would set up is already there: the plist byte for byte (same time, same interpreter) and
-    loaded. A job left unloaded beside its plist (by hand, or a removal whose delete failed) is not."""
+    loaded. A job left unloaded beside its plist (by hand, or a removal whose delete failed) is not. ScheduleError
+    when launchctl can't be asked."""
     j = job(home, launchd.agents)
     try:
         written = j.plist.read_bytes()

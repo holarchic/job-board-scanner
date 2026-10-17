@@ -303,7 +303,7 @@ def _preview(home: Path) -> int:
 
 def _ui(home: Path, port: int, open_browser: bool) -> int:
     try:
-        server = ui.Server(home, port)
+        server = ui.Server(home, port, schedule.launchd())
     except OSError as e:
         print(f"jobscan: can't serve on port {port} ({type(e).__name__})", file=sys.stderr)
         return EXIT_USAGE

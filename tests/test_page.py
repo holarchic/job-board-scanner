@@ -15,6 +15,11 @@ DRAFT = page.Form(name="ae", titles="Account Executive\nSales Executive", locati
                           page.CustomRow(name="buyer", definition="Who buys.", values="smb\nenterprise", multi=True)))
 
 
+SAVED = page.Saved(run="JOBSCAN_HOME='/h o'\"'\"'me' jobscan run", ui="jobscan ui", check="jobscan check",
+                   digests="/h/digests/ae", log="/h/runs.log", email_to="me@gmail.com", at="08:00", cron="")
+ALL_STEPS = (*page.STEPS, "done")
+
+
 def checks(step, form, **given):
     return page.check_step(step, form, **{"key_held": False, "fresh": True, "password": "", **given})
 
@@ -71,6 +76,14 @@ class ReadStepTest(unittest.TestCase):
         form, _ = page.read_step("tags", rows, DRAFT, page.Offers())
         self.assertIn(f"More than {page.MOST_TAGS} custom tags", checks("tags", form)["tags"])
 
+    def test_the_schedule_is_a_box_and_a_time(self):
+        on, _ = page.read_step("schedule", {"schedule_on": ["on"], "schedule_at": [" 07:30 "]}, DRAFT, page.Offers())
+        self.assertEqual((on.schedule_on, on.schedule_at), (True, "07:30"))
+        off, _ = page.read_step("schedule", {"schedule_at": ["07:30"]}, on, page.Offers())  # unticked: not posted
+        self.assertEqual((off.schedule_on, off.schedule_at), (False, "07:30"))
+        elsewhere, _ = page.read_step("titles", {"title": ["Account Executive"]}, on, page.Offers())
+        self.assertTrue(elsewhere.schedule_on)
+
     def test_counts_go_once_the_lists_they_counted_change(self):
         offers = page.Offers(titles=("Sales Executive",), adds={"Sales Executive": 4}, leaves_out={"Assistant": 2})
         _, kept = page.read_step("titles", {"title": ["Account Executive", "Sales Executive"]},
@@ -121,6 +134,15 @@ class CheckStepTest(unittest.TestCase):
         self.assertIn("port", checks("email", replace(mail, email_port="9" * 9), password="p")["email_port"])
         self.assertIn("not an email address", checks("email", replace(mail, email_to="me"), password="p")["email"])
         self.assertEqual(checks("email", replace(mail, email_to="me", email_off=True)), {})
+
+
+    def test_a_daily_run_needs_a_time(self):
+        for at in ["", "25:00", "8.30", "08:00:00"]:
+            self.assertEqual(checks("schedule", replace(DRAFT, schedule_on=True, schedule_at=at)),
+                             {"schedule_at": "Use HH:MM, 24-hour, e.g. 08:00."}, at)
+            self.assertEqual(checks("schedule", replace(DRAFT, schedule_at=at)), {}, at)  # unticked: no time needed
+        self.assertEqual(checks("schedule", replace(DRAFT, schedule_on=True, schedule_at="8:30")), {})
+        self.assertEqual(checks("summary", replace(DRAFT, schedule_on=True)), {})  # Save checks it itself
 
 
 class ToProfileTest(unittest.TestCase):
@@ -185,10 +207,10 @@ class RenderTest(unittest.TestCase):
         form = replace(DRAFT, titles='<script>alert(1)</script>\n"quoted"', key="sk-or-v1-abc", password="pass word")
         return page.View(**{"form": form, "offers": page.Offers(), "step": step, "revision": 3, "token": "tok&en",
                             "catalogue": tag.builtins(), "fresh": True, "key_held": False, "password_held": False,
-                            "email": None, **changes})
+                            "email": None, "home": "/h o'me", "launchd": True, "saved": SAVED, **changes})
 
     def test_text_is_escaped_and_secrets_never_shown(self):
-        for step in page.STEPS:
+        for step in ALL_STEPS:
             html = page.render(self.view(step))
             self.assertNotIn("<script>", html, step)
             self.assertIn('value="tok&amp;en"', html)
@@ -234,11 +256,13 @@ class RenderTest(unittest.TestCase):
         self.assertIn("A key is held", page.render(self.view("key", key_held=True)))
 
     def test_buttons_follow_the_step(self):
-        self.assertNotIn('value="back"', page.render(self.view("key")))  # nothing before the key
+        self.assertNotIn('value="back"', page.render(self.view("intro")))  # nothing before the intro
+        self.assertIn('value="back"', page.render(self.view("key")))
+        self.assertIn(">Start</button>", page.render(self.view("intro")))
         self.assertIn('value="skip"', page.render(self.view("describe")))
         self.assertIn('value="suggest"', page.render(self.view("titles")))
         self.assertIn(">Done</button>", page.render(self.view("titles", fresh=False)))
-        self.assertIn("Fn", page.render(self.view("describe")))
+        self.assertNotIn("Fn", page.render(self.view("describe")))
         summary = page.render(self.view("summary", fresh=False, errors={"titles": "Give at least one title."}))
         self.assertIn('value="save"', summary)
         self.assertIn('Give at least one title.</span></td><td><button name="action" value="goto:titles">', summary)
@@ -246,7 +270,7 @@ class RenderTest(unittest.TestCase):
         self.assertIn('name="name" value="ae"', page.render(self.view("summary")))
 
     def test_rendering_reads_nothing(self):
-        views = [self.view(step) for step in page.STEPS]
+        views = [self.view(step) for step in ALL_STEPS]
         with mock.patch.object(tag, "builtin_names", side_effect=AssertionError("read tags.toml")), \
                 mock.patch.object(tag, "builtins", side_effect=AssertionError("read tags.toml")):
             for view in views:
@@ -254,14 +278,64 @@ class RenderTest(unittest.TestCase):
 
     def test_every_button_is_an_action_the_server_takes_and_enter_moves_on(self):
         for fresh in (True, False):
-            for step in page.steps(fresh):
+            for step in (*page.steps(fresh), "done"):
                 html = page.render(self.view(step, fresh=fresh))
                 pressed = re.findall(r'<button name="action" value="([^"]+)"', html)
                 self.assertEqual(set(pressed), page.actions(step, fresh), (step, fresh))
-                self.assertEqual(pressed[0], "save" if step == "summary" else "next")  # what Enter presses
+                enter = {"summary": "save", "done": "goto:summary"}.get(step, "next")
+                self.assertEqual(pressed[0], enter, step)  # what Enter presses
         said = replace(DRAFT, description="AE jobs in London")
         self.assertIn("replaces the titles, places and tags", page.render(self.view("describe", form=said)))
         self.assertNotIn("replaces", page.render(self.view("describe", form=page.Form())))
+
+    def test_the_intro_says_how_and_where_it_runs(self):
+        mac, other = page.render(self.view("intro")), page.render(self.view("intro", launchd=False))
+        self.assertIn("/h o&#x27;me", mac)
+        self.assertIn("when the Mac wakes", mac)
+        self.assertIn("waits for the next day", mac)
+        self.assertNotIn("crontab", mac)
+        self.assertIn("crontab", other)
+        self.assertNotIn("Step ", mac)  # unnumbered: the steps count from the key
+        self.assertIn("Step 1 of 9", page.render(self.view("key")))
+
+    def test_the_schedule_step_and_its_summary_row(self):
+        on = replace(DRAFT, schedule_on=True, schedule_at="07:30")
+        html = page.render(self.view("schedule", form=on, errors={"schedule_at": "Use HH:MM."}))
+        self.assertIn('<input type="checkbox" name="schedule_on" checked>', html)
+        self.assertIn('<input type="time" name="schedule_at" value="07:30">', html)
+        self.assertIn("Use HH:MM.", html)
+        self.assertIn("when the Mac wakes", html)
+        self.assertIn("Unticking removes nothing", page.render(self.view("schedule", launchd=False)))
+        self.assertNotIn("checked", page.render(self.view("schedule", form=replace(DRAFT, tags=frozenset()))))
+        for launchd, form, said in [(True, on, "every day at 07:30"), (True, DRAFT, "not scheduled"),
+                                    (False, on, "a cron line at 07:30, added by you"), (False, DRAFT, "not set here")]:
+            summary = page.render(self.view("summary", form=form, launchd=launchd))
+            self.assertIn(f"<th>When to run</th><td>{said}", summary)
+            self.assertIn('value="goto:schedule"', summary)
+
+    def test_the_email_step_says_how_to_get_an_app_password(self):
+        html = page.render(self.view("email"))
+        for said in ["https://myaccount.google.com/apppasswords", "2-Step Verification", "https://account.apple.com",
+                     "App-Specific", "465 (SSL/TLS) or 587 (STARTTLS)", "Outlook.com"]:
+            self.assertIn(said, html)
+        links = re.findall(r"<a [^>]*>", html)
+        self.assertEqual(len(links), 2)
+        self.assertTrue(all('rel="noopener noreferrer"' in link and 'target="_blank"' in link for link in links))
+
+    def test_after_save_the_page_says_what_now(self):
+        html = page.render(self.view("done"))
+        for said in ["JOBSCAN_HOME=&#x27;/h o&#x27;&quot;&#x27;&quot;&#x27;me&#x27; jobscan run",
+                     "every day at 08:00", "/h/digests/ae", "emails it to me@gmail.com", "<code>jobscan ui</code>",
+                     "<code>jobscan check</code>", "/h/runs.log", f'href="{page.REPOSITORY}/issues"',
+                     "fork the repository", "pull request", "CONTRIBUTING.md", "Ctrl-C"]:
+            self.assertIn(said, html)
+        self.assertNotIn("crontab", html)
+        bare = page.render(self.view("done", saved=replace(SAVED, at="", email_to="", cron="5 7 * * *  x % y")))
+        self.assertNotIn("by itself", bare)
+        self.assertNotIn("emails it", bare)
+        self.assertIn("<pre>5 7 * * *  x % y</pre>", bare)
+        self.assertIn("crontab -e", bare)
+        self.assertTrue(all('rel="noopener noreferrer"' in a for a in re.findall(r"<a [^>]*>", html)))
 
     def test_a_preview_before_any_run_says_so(self):
         self.assertIn("No postings yet", page.render(self.view("summary", previewed=True)))

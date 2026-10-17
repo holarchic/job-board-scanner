@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from jobscan import cli, notify, schedule
+from tests.fakes import StatefulLaunchctl
 
 PROFILE = 'titles = ["PM"]\nlocations = ["London"]\neligible_where = "the UK"\ntags = ["founding"]\n'
 CONFIG = ('[model]\nbase_url = "https://openrouter.ai/api/v1"\nslug = "x/y"\nprovider = "p"\n'
@@ -30,30 +31,6 @@ class FakeLaunchctl:
         codes = self.answers.get(args[0], [])
         code = codes.pop(0) if codes else 0
         return subprocess.CompletedProcess(["launchctl", *args], code, stdout="", stderr=f"{args[0]} said {code}")
-
-
-class StatefulLaunchctl:
-    """A launchd that keeps what it has loaded. `interrupt` names the call, as (verb, nth), that takes effect and is
-    then interrupted, as Ctrl-C landing while launchctl returns."""
-
-    def __init__(self, interrupt=None):
-        self.loaded, self.calls, self.interrupt = {}, [], interrupt
-
-    def __call__(self, args):
-        self.calls.append(args[0])
-        label = args[1].rsplit("/", 1)[1] if args[0] in ("bootout", "print") else None
-        if args[0] == "print":
-            code = 0 if label in self.loaded else 113  # launchctl print: "Could not find service"
-        elif args[0] == "bootout":
-            code = 0 if self.loaded.pop(label, None) is not None else 3
-        else:
-            spec = plistlib.loads(Path(args[2]).read_bytes())
-            code = 5 if spec["Label"] in self.loaded else 0  # launchd refuses a label already loaded
-            if not code:
-                self.loaded[spec["Label"]] = Path(args[2]).read_bytes()
-        if (args[0], self.calls.count(args[0])) == self.interrupt:
-            raise KeyboardInterrupt
-        return subprocess.CompletedProcess(args, code, "", f"{args[0]} said {code}")
 
 
 class ScheduleTest(unittest.TestCase):

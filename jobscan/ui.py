@@ -5,6 +5,7 @@ interleave. Secrets typed into the page are held in memory for this server run a
 import hmac
 import os
 import secrets
+import shlex
 import webbrowser
 from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -12,8 +13,9 @@ from pathlib import Path
 from types import MappingProxyType
 from urllib.parse import parse_qs, urlsplit
 
-from jobscan import describe, init, install, mail, page, preview, report, tag, titles
+from jobscan import describe, init, install, mail, page, preview, report, schedule, tag, titles
 from jobscan.config import (
+    DEFAULT_HOME,
     EMAIL_FILE,
     KEY_FILE,
     Config,
@@ -27,6 +29,7 @@ from jobscan.config import (
 )
 from jobscan.lock import RunLocked
 
+FIRST_RUN_AT = "08:00"  # a new install's daily run, ticked; an existing one unscheduled shows it unticked
 READ_TIMEOUT = 10  # seconds a connection may sit silent while sending its request: a browser's idle spare socket
 # can't stall the one-at-a-time server
 HEADERS = MappingProxyType({
@@ -59,12 +62,14 @@ class Site:
     the search (nothing is written before Save). Each method answers one request. Every page carries the step and a
     revision; a post from any other page (an old tab, the browser's Back) is shown the current step, unapplied."""
 
-    def __init__(self, home: Path, token: str):
-        self.home, self.token, self.drafts = home, token, Drafts()
+    def __init__(self, home: Path, token: str, launchd: schedule.Launchd | None):
+        """`launchd`: this Mac's, where Save sets the daily run; None elsewhere (the page gives a cron line)."""
+        self.home, self.token, self.drafts, self.launchd = home, token, Drafts(), launchd
         self.revision, self.step, self.blocked = 0, "", ""
         self.form, self.offers = page.Form(), page.Offers()
         self.read_words = ""  # the description the offers came from: read again only when it changes
         self.named = False  # a new search's name is suggested once, when the summary is first reached
+        self.saved: page.Saved | None = None  # what the page after Save says
 
     def show(self) -> str:
         self._start()
@@ -108,7 +113,8 @@ class Site:
         if self.step:
             return
         if self._fresh():
-            self.step = "key"
+            self.step = "intro"
+            self.form = replace(self.form, schedule_on=True, schedule_at=FIRST_RUN_AT)
             return
         self.step = "summary"
         try:
@@ -120,7 +126,13 @@ class Site:
         if reason:
             self.blocked = f"This page can't edit your profile without changing it ({reason}): edit it in its file."
             return
-        self.form = page.form_from_profile(profile, self._prefill_email())
+        self.form = self._reopened(profile)
+
+    def _reopened(self, profile: Profile) -> page.Form:
+        """The draft as the install on disk stands: the profile, the email settings and the daily run."""
+        at = schedule.scheduled_at(self.home, self.launchd.agents) if self.launchd else None
+        return replace(page.form_from_profile(profile, self._prefill_email()), schedule_on=at is not None,
+                       schedule_at=f"{at:%H:%M}" if at else FIRST_RUN_AT)
 
     def _next(self) -> str:
         errors = page.check_step(self.step, self.form, key_held=self._key_held(), fresh=self._fresh(),
@@ -190,7 +202,11 @@ class Site:
 
     def _save(self, profile: Profile) -> str:
         """Search (and, on a new install, settings and key), then a new key, then email, then the whole install
-        checked as `jobscan check` does: each section reported; drafts cleared only when all of it holds."""
+        checked as `jobscan check` does, then the daily run: each section reported. When all of it holds, the drafts
+        are cleared and the page after Save says what now."""
+        schedule_errors = page.schedule_errors(self.form)  # Back skips the step's own check
+        if schedule_errors:
+            return self._render(errors=schedule_errors)
         fresh = self._fresh()
         try:
             if fresh:
@@ -210,11 +226,51 @@ class Site:
             done.append(self._save_key())
         done.append(self._save_email(profile.name))
         done.append(self._checked())
-        errors = {"": " ".join(d.error for d in done if d.error)} if any(d.error for d in done) else {}
-        if not errors:
-            self.drafts = Drafts()
-            self.form, self.offers = page.form_from_profile(profile, self._prefill_email()), page.Offers()
-        return self._render(errors=errors, notices=tuple(d.notice for d in done if d.notice))
+        done.append(self._save_schedule(ok=not any(d.error for d in done)))
+        notices = tuple(d.notice for d in done if d.notice)
+        if any(d.error for d in done):
+            return self._render(errors={"": " ".join(d.error for d in done if d.error)}, notices=notices)
+        self.saved = self._what_now(profile)
+        self.drafts = Drafts()
+        self.form, self.offers, self.step = self._reopened(profile), page.Offers(), "done"
+        return self._render(notices=notices)
+
+    def _save_schedule(self, ok: bool) -> Done:
+        """The daily run, last: set or changed only when every other section held (a run on an install whose email
+        failed would deliver its first postings to nobody, never to be resent); removed whatever else failed, as
+        `jobscan schedule --off` is. Off macOS there is nothing to set: the page after Save gives the cron line."""
+        launchd = self.launchd
+        if launchd is None:
+            return Done()
+        at = schedule.parse_at(self.form.schedule_at) if self.form.schedule_on else None
+        try:
+            if at is None:
+                if not (schedule.job(self.home, launchd.agents).plist.exists() or schedule.loaded(self.home, launchd)):
+                    return Done()
+                schedule.remove(self.home, launchd.agents, launchd.run)
+                return Done(notice="No longer scheduled.")
+            if not ok:
+                return Done(error="Not scheduled: fix the above first; any previous schedule is as it was.")
+            if schedule.in_place(self.home, at, launchd):
+                return Done()
+            schedule.install(self.home, at, launchd.agents, launchd.run)
+            if not schedule.loaded(self.home, launchd):
+                return Done(error="Scheduling failed: launchd didn't load the job.")
+        except schedule.ScheduleError as e:  # its words say whether the previous job is back
+            return Done(error=f"Scheduling failed: {e}")
+        return Done(notice=f"Runs every day at {at:%H:%M}.")
+
+    def _what_now(self, profile: Profile) -> page.Saved:
+        """The facts the page after Save gives, from the draft as saved (before it is read back from disk)."""
+        form, home = self.form, self.home
+        at = schedule.parse_at(form.schedule_at) if form.schedule_on else None
+        prefix = "" if home.resolve() == DEFAULT_HOME.expanduser().resolve() else \
+            f"JOBSCAN_HOME={shlex.quote(str(home))} "
+        return page.Saved(run=f"{prefix}jobscan run", ui=f"{prefix}jobscan ui", check=f"{prefix}jobscan check",
+                          digests=str(home / "digests" / profile.name), log=str(home / "runs.log"),
+                          email_to="" if form.email_off else form.email_to,
+                          at=f"{at:%H:%M}" if at and self.launchd else "",
+                          cron=schedule.cron_line(home, at) if at and not self.launchd else "")
 
     def _save_key(self) -> Done:
         try:
@@ -312,7 +368,8 @@ class Site:
         fresh = self._fresh()
         return page.render(page.View(
             form=self.form, offers=self.offers, step=self.step, revision=self.revision, token=self.token,
-            catalogue=tag.builtins(), fresh=fresh, key_held=self._key_held(),
+            catalogue=tag.builtins(), fresh=fresh, home=str(self.home), launchd=self.launchd is not None,
+            saved=self.saved if self.step == "done" else None, key_held=self._key_held(),
             password_held=bool(self.drafts.password), email=email,
             email_file=not fresh and (self.home / EMAIL_FILE).exists(), errors=errors, **parts))
 
@@ -332,9 +389,9 @@ def _prefilled(form: page.Form, described: describe.Described) -> tuple[page.For
 class Server(HTTPServer):
     """127.0.0.1 only, one request at a time."""
 
-    def __init__(self, home: Path, port: int):
+    def __init__(self, home: Path, port: int, launchd: schedule.Launchd | None):
         super().__init__(("127.0.0.1", port), _Handler)
-        self.site = Site(home, secrets.token_urlsafe(32))
+        self.site = Site(home, secrets.token_urlsafe(32), launchd)
         self.hosts = {f"127.0.0.1:{self.server_port}", f"localhost:{self.server_port}"}
 
     @property
