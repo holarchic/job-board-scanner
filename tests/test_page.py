@@ -309,7 +309,7 @@ class RenderTest(unittest.TestCase):
         kept = page.render(self.view("schedule", schedule_kept=True))
         self.assertIn("left as it is unless you tick a time", kept)
         self.assertNotIn("runs only when you type", kept)  # the kept schedule may still run
-        self.assertNotIn("checked", page.render(self.view("schedule", form=replace(DRAFT, tags=frozenset()))))
+        self.assertIn('name="schedule_on">', page.render(self.view("schedule", form=replace(DRAFT, tags=frozenset()))))
         for launchd, form, said in [(True, on, "every day at 07:30"), (True, DRAFT, "not scheduled"),
                                     (False, on, "a cron line at 07:30, added by you"), (False, DRAFT, "not set here")]:
             summary = page.render(self.view("summary", form=form, launchd=launchd))
@@ -339,6 +339,33 @@ class RenderTest(unittest.TestCase):
         self.assertIn("<pre>5 7 * * *  x % y</pre>", bare)
         self.assertIn("crontab -e", bare)
         self.assertTrue(all('rel="noopener noreferrer"' in a for a in re.findall(r"<a [^>]*>", html)))
+
+    def test_one_question_a_screen(self):
+        key = page.render(self.view("key"))
+        self.assertIn('aria-label="Step 1 of 9"><span style="width:11%">', key)  # the progress bar
+        self.assertIn('<h1><span class="num">1 →</span>Your OpenRouter key</h1>', key)
+        self.assertIn('aria-label="OpenRouter key"', key)
+        self.assertIn('value="next" class="primary">Next</button>', key)
+        self.assertIn("press <b>Enter ↵</b>", key)
+        self.assertNotIn("Enter ↵", page.render(self.view("titles")))  # its box takes Enter as a new line
+        self.assertNotIn('class="progress"', page.render(self.view("intro")))
+        self.assertNotIn('class="progress"', page.render(self.view("titles", fresh=False)))
+        self.assertIn('<h1>Your search</h1>', page.render(self.view("summary")))
+        self.assertIn('<label class="choice"><input type="checkbox" name="title" value="Sales Executive" checked>',
+                      page.render(self.view("titles", form=replace(DRAFT, titles="Sales Executive"))))
+
+    def test_what_most_people_skip_is_folded_away_unless_set(self):
+        plain = page.render(self.view("email", form=page.Form()))
+        self.assertIn("<details><summary>Another provider", plain)
+        for typed in ({"email_host": "smtp.example.com"}, {"email_port": "587"}, {"email_from": "a@b.c"}):
+            self.assertIn("<details open><summary>Another provider",
+                          page.render(self.view("email", form=replace(page.Form(), **typed))), typed)
+        self.assertIn("<details open><summary>Another provider",
+                      page.render(self.view("email", form=page.Form(), errors={"email_port": "Bad port."})))
+        self.assertIn("<details><summary>Tags of your own", page.render(self.view("tags", form=page.Form())))
+        self.assertIn("<details open><summary>Tags of your own", page.render(self.view("tags")))  # DRAFT has rows
+        self.assertIn("<details open><summary>Tags of your own", page.render(self.view(
+            "tags", form=page.Form(), errors={"custom-0": "Bad."})))
 
     def test_a_preview_before_any_run_says_so(self):
         self.assertIn("No postings yet", page.render(self.view("summary", previewed=True)))

@@ -461,16 +461,19 @@ def _union(first: tuple[str, ...], more) -> tuple[str, ...]:
 
 def blocked(message: str) -> str:
     """The page when the install can't be edited here: why, and nothing to press."""
-    return f'{_HEAD}<h1>jobscan</h1><p class="error">{_x(message)}</p></body></html>'
+    return (f'{_HEAD}<main><h1>This install can\'t be edited here</h1><p class="error">{_x(message)}</p>'
+            "</main></body></html>")
 
 
 def render(view: View) -> str:
-    numbered = steps(view.fresh)[1:]  # from the key: the intro and the summary go unnumbered
-    where = (f"Step {numbered.index(view.step) + 1} of {len(numbered)}"
-             if view.fresh and view.step in numbered and view.step != "summary" else "")
-    parts = [_HEAD, f"<h1>jobscan: {_x(HEADINGS[view.step])}</h1>"]
-    if where:
-        parts.append(f'<p class="hint">{where}</p>')
+    numbered = steps(view.fresh)[1:]  # from the key: the intro goes unnumbered, the summary fills the bar
+    at = numbered.index(view.step) + 1 if view.fresh and view.step in numbered else 0
+    parts = [_HEAD]
+    if at:
+        parts.append(f'<div class="progress" role="progressbar" aria-label="Step {at} of {len(numbered)}">'
+                     f'<span style="width:{100 * at // len(numbered)}%"></span></div>')
+    number = f'<span class="num">{at} →</span>' if at and view.step != "summary" else ""
+    parts += ["<main>", f"<h1>{number}{_x(HEADINGS[view.step])}</h1>"]
     parts += [f'<p class="notice">{_x(n)}</p>' for n in view.notices]
     if "" in view.errors:
         parts.append(f'<p class="error">{_x(view.errors[""])}</p>')
@@ -487,7 +490,7 @@ def render(view: View) -> str:
         lines = report.preview_lines(view.form.name, view.preview) if view.preview \
             else ["No postings yet: after the first `jobscan run`, Preview counts what your search matches."]
         parts.append("<h2>Preview</h2><pre>" + _x("\n".join(lines)) + "</pre>")
-    parts.append("</body></html>")
+    parts.append("</main></body></html>")
     return "\n".join(p for p in parts if p)
 
 
@@ -497,8 +500,12 @@ def _buttons(view: View) -> str:
               "next": "Start" if view.step == "intro" else "Next" if view.fresh else "Done",
               "skip": "Go on without suggestions", "back": "Back", "goto:summary": "Back to your search"}
     shown = actions(view.step)
-    out = '<p class="buttons">' + " ".join(f'<button name="action" value="{a}">{labels[a]}</button>'
-                                           for a in labels if a in shown) + "</p>"
+    buttons = []
+    for a in (a for a in labels if a in shown):
+        kind = "primary" if a in _PRIMARY else "secondary"
+        buttons.append(f'<button name="action" value="{a}" class="{kind}">{labels[a]}</button>')
+    enter = ' <span class="enter">press <b>Enter ↵</b></span>' if view.step in _ENTER_MOVES_ON else ""
+    out = '<p class="buttons">' + " ".join(buttons) + enter + "</p>"
     if view.step == "summary":
         out += ("<p class=\"hint\">Saving rewrites your profile file; comments you wrote in it by hand aren't kept "
                 "(the previous file stays beside it as <code>.toml.prev</code>).</p>")
@@ -512,8 +519,8 @@ def _intro_body(view: View) -> str:
             if view.launchd else
             "<p>It runs when you run it, or daily from a line you add to your crontab, which runs only while the "
             "computer is awake.</p>")
-    return ("<p>jobscan reads tech companies' own job boards for you and writes you a digest of the new postings "
-            "that fit your search.</p>"
+    return ("<p class=\"lead\">jobscan reads tech companies' own job boards for you and writes you a digest of the "
+            "new postings that fit your search.</p>"
             "<h2>What a run does</h2><ol>"
             "<li>Reads the job boards of thousands of companies, on Ashby, Greenhouse, Workday and seven other job "
             "sites. It finds the boards itself.</li>"
@@ -535,15 +542,17 @@ def _key_body(view: View) -> str:
         "Paste it from openrouter.ai/keys. It's kept in a file only you can read, and pays for the model that " \
         "reads your words and tags each posting (cents a day)." if view.fresh else \
         "Needed only for an OpenRouter model."
-    return (f'<p><label>OpenRouter key<br><input type="password" name="key" autocomplete="off" size="50"></label></p>'
+    return ('<p><input type="password" name="key" aria-label="OpenRouter key" autocomplete="off" size="50" '
+            'placeholder="sk-or-v1-…" autofocus></p>'
             f'<p class="hint">{_x(held)}</p>{_err("key", view.errors)}')
 
 
 def _describe_body(view: View) -> str:
     return ('<p>Say what you\'re looking for, as you would to a friend: the job, the kind of company, where, and '
             "anything you care about.</p>"
-            f'<p><textarea name="description" rows="6" placeholder="I\'m looking for account executive jobs with '
-            f'founding teams in London, and I\'m happy to be remote.">{_x(view.form.description)}</textarea></p>'
+            f'<p><textarea name="description" rows="5" autofocus placeholder="I\'m looking for account executive '
+            f'jobs with founding teams in London, and I\'m happy to be remote.">{_x(view.form.description)}'
+            "</textarea></p>"
             '<p class="hint">Next reads it with your key (well under a cent) and fills in the next steps for you to '
             "tick"
             + ("; changing what you said replaces the titles, places and tags chosen since" if view.form.description
@@ -579,13 +588,15 @@ def _tags_body(view: View) -> str:
     rows = []
     for t in view.catalogue:
         checked = " checked" if t.name in form.tags else ""
-        rows.append(f'<label><input type="checkbox" name="tag" value="{_x(t.name)}"{checked}> <b>{_x(t.name)}</b>: '
-                    f"{_x(t.summary)} <i>({_x(report.VALIDATED[t.validated])})</i></label><br>")
+        rows.append(f'<label class="choice"><input type="checkbox" name="tag" value="{_x(t.name)}"{checked}> '
+                    f'<span><b>{_x(t.name)}</b>: {_x(t.summary)} <i>({_x(report.VALIDATED[t.validated])})</i>'
+                    "</span></label>")
     named = {r.name for r in form.custom}
     offered = [r for r in view.offers.custom if r.name not in named]  # once ticked, a tag is an editable row
     suggested = ("<fieldset><legend>Suggested tags of your own: tick to add</legend>" + "".join(
-        f'<label><input type="checkbox" name="add_custom" value="{_x(r.name)}"> <b>{_x(r.name)}</b>: '
-        f"{_x(r.definition)} <i>({_x(', '.join(_lines(r.values)) or 'yes, no, unknown')})</i></label><br>"
+        f'<label class="choice"><input type="checkbox" name="add_custom" value="{_x(r.name)}"> <span><b>'
+        f"{_x(r.name)}</b>: {_x(r.definition)} <i>({_x(', '.join(_lines(r.values)) or 'yes, no, unknown')})</i>"
+        "</span></label>"
         for r in offered) + "</fieldset>") if offered else ""
     return ("<p>The model answers each ticked tag for every matching posting, quoting it.</p>"
             + "<fieldset><legend>Built-in tags</legend>" + "".join(rows) + "</fieldset>" + _err("tags", e)
@@ -594,8 +605,9 @@ def _tags_body(view: View) -> str:
 
 def _custom(form: Form, e: Mapping[str, str]) -> str:
     rows = [*form.custom, CustomRow()]
-    out = ["<fieldset><legend>Your own tags</legend><p class=\"hint\">Say what each answer means. Leave the name "
-           "empty to remove one; fill the empty row to add one.</p>"]
+    opened = " open" if form.custom or any(n.startswith("custom-") for n in e) else ""
+    out = [f"<details{opened}><summary>Tags of your own</summary><fieldset><p class=\"hint\">Say what each answer "
+           "means. Leave the name empty to remove one; fill the empty row to add one.</p>"]
     for i, row in enumerate(rows):
         multi = " checked" if row.multi else ""
         out.append(
@@ -606,7 +618,7 @@ def _custom(form: Form, e: Mapping[str, str]) -> str:
             f'<label>Definition<br><textarea name="custom-{i}-definition" rows="3">{_x(row.definition)}</textarea>'
             f'</label><br><label>Answers, one per line (empty: yes, no, unknown)<br>'
             f'<textarea name="custom-{i}-values" rows="2">{_x(row.values)}</textarea></label></div>')
-    return "".join(out) + "</fieldset>"
+    return "".join(out) + "</fieldset></details>"
 
 
 def _email_body(view: View) -> str:
@@ -615,16 +627,22 @@ def _email_body(view: View) -> str:
         "Now: your email settings don't load." if view.email_file else \
         "Now: off. Leave the address empty to keep it off."
     held = " An app password is held: leave it empty to keep it." if view.password_held else ""
-    off = (f' <label><input type="checkbox" name="email_off"{" checked" if f.email_off else ""}> turn email off'
-           "</label>") if view.email or view.email_file or f.email_off else ""
+    fields = ("email_from", "email_host", "email_port")
+    other = " open" if any(getattr(f, n) for n in fields) or any(n in e for n in fields) else ""
+    off = (' <label class="choice"><input type="checkbox" name="email_off"'
+           f'{" checked" if f.email_off else ""}> turn email off</label>') \
+        if view.email or view.email_file or f.email_off else ""
     return (f'<p class="hint">{_x(saved)}{_x(held)} A test email is sent when you save.</p>' + _MAIL_HELP
             + _err("email", e)
             + _text("email_to", "Send digests to", f.email_to, e)
+            + '<label>App password <input type="password" name="password" autocomplete="off"></label>'
+            + _err("password", e)
+            # Gmail and iCloud need none of these: out of the way unless one is set or wrong.
+            + f"<details{other}><summary>Another provider, or sending from another account</summary>"
             + _text("email_from", "From (empty: the same address)", f.email_from, e)
             + _text("email_host", "Mail server (empty: Gmail or iCloud's)", f.email_host, e)
-            + _text("email_port", "Port (465 or 587)", f.email_port, e)
-            + '<label>App password <input type="password" name="password" autocomplete="off"></label>'
-            + _err("password", e) + off)
+            + _text("email_port", "Port (465 or 587)", f.email_port, e) + "</details>"
+            + off)
 
 
 def _schedule_body(view: View) -> str:
@@ -641,7 +659,7 @@ def _schedule_body(view: View) -> str:
             "only while the computer is awake. Unticking removes nothing: delete the line yourself.")
     return ("<p>Each run looks for new postings; when there are any, it writes the digest and, with email set up, "
             "emails it to you. A quiet day sends nothing. Once a day is enough: boards change slowly.</p>"
-            f'<p><label><input type="checkbox" name="schedule_on"{ticked}> Run it every day at</label> '
+            f'<label class="choice"><input type="checkbox" name="schedule_on"{ticked}> Run it every day at</label><p>'
             f'<input type="time" name="schedule_at" value="{_x(f.schedule_at)}">{_err("schedule_at", e)}</p>'
             + ('<p class="hint">This install has a schedule this page can\'t show (not one daily time): it is '
                "left as it is unless you tick a time, which replaces it.</p>" if view.schedule_kept else "")
@@ -708,6 +726,8 @@ _BODIES = MappingProxyType({"intro": _intro_body, "key": _key_body, "describe": 
                             "tags": _tags_body, "email": _email_body, "schedule": _schedule_body,
                             "summary": _summary_body, "done": _done_body})
 _DEFAULT_ACTION = MappingProxyType({"summary": "save", "done": "goto:summary"})  # Enter's button; else next
+_PRIMARY = frozenset(_DEFAULT_ACTION.values()) | {"next"}  # the one bold button: what Enter presses
+_ENTER_MOVES_ON = frozenset({"key", "email", "schedule", "summary"})  # no box where Enter makes a new line
 
 
 def _link(url: str, text: str) -> str:
@@ -721,9 +741,9 @@ def _ticks(name: str, chosen: tuple[str, ...], offered: tuple[str, ...], counts:
     values = list(dict.fromkeys((*chosen, *offered)))
     if not values:
         return ""
-    return "".join(f'<label><input type="checkbox" name="{name}" value="{_x(v)}"'
+    return "".join(f'<label class="choice"><input type="checkbox" name="{name}" value="{_x(v)}"'
                    f'{" checked" if v in chosen else ""}> {_x(v)}'
-                   + (f" <i>{sign}{counts[v]}</i>" if v in counts else "") + "</label><br>" for v in values)
+                   + (f" <i>{sign}{counts[v]}</i>" if v in counts else "") + "</label>" for v in values)
 
 
 def _note(offers: Offers) -> str:
@@ -748,13 +768,64 @@ def _x(text: str) -> str:
     return html.escape(text, quote=True)
 
 
-_HEAD = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>jobscan</title><style>
-body{font:15px/1.4 -apple-system,system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem}
-fieldset{margin:1rem 0;border:1px solid #ccc}.hint{color:#666;font-size:13px}.error{color:#b00;display:block}
-.notice{background:#eef7ee;padding:.5rem}.custom{border-top:1px dashed #ddd;padding:.5rem 0}
-textarea{width:100%}pre{background:#f6f6f6;padding:.5rem;white-space:pre-wrap}
-label{line-height:1.9}th{text-align:left;padding-right:1rem;vertical-align:top}td{padding:.3rem .5rem}
-</style></head><body>"""
+# One question a screen, big type, a bar for progress: inline CSS only (the policy allows no script, font or image).
+_HEAD = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>jobscan</title><style>
+:root{--ink:#191919;--muted:#6b6b6b;--line:#d6d6d6;--accent:#0445af;--on-accent:#fff;--tint:rgba(4,69,175,.07);
+--bg:#fff;--error:#b3261e;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--ink:#f1f1f1;--muted:#a0a0a0;--line:#3b3b3b;--accent:#8ab0ff;
+--on-accent:#0b1530;--tint:rgba(138,176,255,.1);--bg:#141414;--error:#ff8a80}}
+*{box-sizing:border-box}html{background:var(--bg);color:var(--ink)}
+body{margin:0;font:18px/1.55 -apple-system,BlinkMacSystemFont,"Helvetica Neue",system-ui,sans-serif;
+-webkit-font-smoothing:antialiased}
+header{position:fixed;top:4px;left:0;right:0;padding:.9rem 1.5rem;font-weight:700;letter-spacing:-.02em;
+background:var(--bg);z-index:1}
+.progress{position:fixed;top:0;left:0;right:0;height:4px;background:var(--tint);z-index:2}
+.progress span{display:block;height:100%;background:var(--accent)}
+main{max-width:40rem;margin:0 auto;padding:clamp(5rem,18vh,11rem) 1.5rem 6rem;
+animation:rise .45s cubic-bezier(.2,.7,.2,1)}
+@keyframes rise{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){main{animation:none}}
+h1{font-size:clamp(1.6rem,3.4vw,2.25rem);font-weight:500;line-height:1.25;letter-spacing:-.02em;margin:0 0 1.25rem}
+h1 .num{color:var(--accent);font-size:.55em;font-weight:600;vertical-align:.3em;margin-right:.5em;white-space:nowrap}
+h2{font-size:1.15rem;font-weight:600;margin:2rem 0 .4rem}p{margin:.6rem 0}ol{padding-left:1.3rem}li{margin:.35rem 0}
+a{color:var(--accent)}.lead{font-size:1.3rem;line-height:1.45}.hint{color:var(--muted);font-size:15px}.enter{color:var(--muted);font-size:13px}
+code,pre{font:15px ui-monospace,SFMono-Regular,Menlo,monospace}code{background:var(--tint);padding:.1em .35em;
+border-radius:4px;overflow-wrap:anywhere}pre{background:var(--tint);padding:.8rem 1rem;border-radius:8px;
+white-space:pre-wrap;overflow-wrap:anywhere}
+label{display:block;margin:.5rem 0}
+input:not([type]),input[type=password],input[type=time],textarea{display:block;width:100%;margin-top:.3rem;
+font:inherit;font-size:1.35rem;color:var(--accent);background:transparent;border:0;border-bottom:2px solid
+var(--line);border-radius:0;padding:.35rem 0;outline:none;transition:border-color .2s}
+input[type=time]{width:auto;min-width:9rem}textarea{resize:vertical;line-height:1.4}
+input:focus,textarea:focus{border-bottom-color:var(--accent)}::placeholder{color:var(--muted);opacity:.55}
+.choice{display:flex;gap:.8rem;align-items:flex-start;margin:.5rem 0;padding:.65rem .9rem;border:1px solid
+var(--line);border-radius:8px;cursor:pointer;transition:border-color .15s,box-shadow .15s,background .15s}
+.choice:hover{border-color:var(--accent)}
+.choice:has(input:checked){border-color:var(--accent);background:var(--tint);box-shadow:inset 0 0 0 1px var(--accent)}
+.choice input{flex:none;width:1.15rem;height:1.15rem;margin:.22rem 0 0;accent-color:var(--accent)}
+.choice i{color:var(--muted);font-style:normal;font-size:15px}
+fieldset{border:0;padding:0;margin:1.75rem 0}legend{padding:0;margin-bottom:.4rem;font-size:13px;font-weight:600;
+text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+button{font:inherit;font-size:16px;font-weight:600;padding:.55rem 1.1rem;border-radius:8px;cursor:pointer;
+color:var(--ink);background:transparent;border:1px solid var(--line)}
+button:hover{border-color:var(--accent)}
+button.primary{font-size:19px;padding:.6rem 1.6rem;color:var(--on-accent);background:var(--accent);
+border-color:var(--accent);box-shadow:0 4px 14px rgba(0,0,0,.12)}button.primary:hover{filter:brightness(1.1)}
+.buttons{display:flex;flex-wrap:wrap;align-items:center;gap:.9rem;margin-top:2.2rem}
+.error{display:block;color:var(--error);font-size:15px;margin:.35rem 0}
+.notice{margin:.6rem 0;padding:.55rem .9rem;border-left:3px solid var(--accent);background:var(--tint);
+border-radius:0 8px 8px 0}
+table{width:100%;border-collapse:collapse;margin:1.2rem 0}th,td{text-align:left;vertical-align:top;
+padding:.8rem .4rem;border-bottom:1px solid var(--line)}th{width:9.5rem;font-weight:500;font-size:15px;
+color:var(--muted)}td:last-child{text-align:right;width:1%}td button{font-size:14px;padding:.3rem .8rem}
+details{margin:1.2rem 0;padding:.7rem 1rem;border:1px solid var(--line);border-radius:8px}
+summary{cursor:pointer;font-weight:600}details[open] summary{margin-bottom:.4rem}
+details fieldset{margin:.4rem 0}
+.custom{padding:.9rem 0;border-top:1px dashed var(--line)}.custom label{font-size:15px;color:var(--muted)}
+.custom input:not([type]),.custom textarea{font-size:1.05rem;color:var(--ink)}
+.custom .choice{display:inline-flex;padding:.3rem .7rem}
+</style></head><body><header>jobscan</header>"""
 
 # Checked 17 Oct 2026 against support.google.com/accounts/answer/185833, support.apple.com/102654 and /102525.
 _MAIL_HELP = (
