@@ -342,12 +342,15 @@ class RenderTest(unittest.TestCase):
 
     def test_one_question_a_screen(self):
         key = page.render(self.view("key"))
-        self.assertIn('aria-label="Step 1 of 9"><span style="width:11%">', key)  # the progress bar
+        self.assertIn('aria-label="Step 1 of 9" aria-valuemin="0" aria-valuemax="100" aria-valuenow="11">'
+                      '<span style="width:11%">', key)  # the progress bar
         self.assertIn('<h1><span class="num">1 →</span>Your OpenRouter key</h1>', key)
         self.assertIn('aria-label="OpenRouter key"', key)
         self.assertIn('value="next" class="primary">Next</button>', key)
         self.assertIn("press <b>Enter ↵</b>", key)
         self.assertNotIn("Enter ↵", page.render(self.view("titles")))  # its box takes Enter as a new line
+        self.assertIn("Enter ↵", page.render(self.view("summary")))  # the name box
+        self.assertNotIn("Enter ↵", page.render(self.view("summary", fresh=False)))  # nothing to type in
         self.assertNotIn('class="progress"', page.render(self.view("intro")))
         self.assertNotIn('class="progress"', page.render(self.view("titles", fresh=False)))
         self.assertIn('<h1>Your search</h1>', page.render(self.view("summary")))

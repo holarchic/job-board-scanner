@@ -470,8 +470,10 @@ def render(view: View) -> str:
     at = numbered.index(view.step) + 1 if view.fresh and view.step in numbered else 0
     parts = [_HEAD]
     if at:
-        parts.append(f'<div class="progress" role="progressbar" aria-label="Step {at} of {len(numbered)}">'
-                     f'<span style="width:{100 * at // len(numbered)}%"></span></div>')
+        done = 100 * at // len(numbered)
+        parts.append(f'<div class="progress" role="progressbar" aria-label="Step {at} of {len(numbered)}" '
+                     f'aria-valuemin="0" aria-valuemax="100" aria-valuenow="{done}"><span style="width:{done}%">'
+                     "</span></div>")
     number = f'<span class="num">{at} →</span>' if at and view.step != "summary" else ""
     parts += ["<main>", f"<h1>{number}{_x(HEADINGS[view.step])}</h1>"]
     parts += [f'<p class="notice">{_x(n)}</p>' for n in view.notices]
@@ -504,7 +506,8 @@ def _buttons(view: View) -> str:
     for a in (a for a in labels if a in shown):
         kind = "primary" if a in _PRIMARY else "secondary"
         buttons.append(f'<button name="action" value="{a}" class="{kind}">{labels[a]}</button>')
-    enter = ' <span class="enter">press <b>Enter ↵</b></span>' if view.step in _ENTER_MOVES_ON else ""
+    typed_in = view.step in _ENTER_MOVES_ON and (view.fresh or view.step != "summary")  # the name box: new only
+    enter = ' <span class="enter">press <b>Enter ↵</b></span>' if typed_in else ""
     out = '<p class="buttons">' + " ".join(buttons) + enter + "</p>"
     if view.step == "summary":
         out += ("<p class=\"hint\">Saving rewrites your profile file; comments you wrote in it by hand aren't kept "
@@ -727,7 +730,7 @@ _BODIES = MappingProxyType({"intro": _intro_body, "key": _key_body, "describe": 
                             "summary": _summary_body, "done": _done_body})
 _DEFAULT_ACTION = MappingProxyType({"summary": "save", "done": "goto:summary"})  # Enter's button; else next
 _PRIMARY = frozenset(_DEFAULT_ACTION.values()) | {"next"}  # the one bold button: what Enter presses
-_ENTER_MOVES_ON = frozenset({"key", "email", "schedule", "summary"})  # no box where Enter makes a new line
+_ENTER_MOVES_ON = frozenset({"key", "email", "summary"})  # a one-line box to type in, none taking Enter as a line
 
 
 def _link(url: str, text: str) -> str:
@@ -798,7 +801,7 @@ input:not([type]),input[type=password],input[type=time],textarea{display:block;w
 font:inherit;font-size:1.35rem;color:var(--accent);background:transparent;border:0;border-bottom:2px solid
 var(--line);border-radius:0;padding:.35rem 0;outline:none;transition:border-color .2s}
 input[type=time]{width:auto;min-width:9rem}textarea{resize:vertical;line-height:1.4}
-input:focus,textarea:focus{border-bottom-color:var(--accent)}::placeholder{color:var(--muted);opacity:.55}
+input:focus,textarea:focus{border-bottom-color:var(--accent)}::placeholder{color:var(--muted);opacity:1}
 .choice{display:flex;gap:.8rem;align-items:flex-start;margin:.5rem 0;padding:.65rem .9rem;border:1px solid
 var(--line);border-radius:8px;cursor:pointer;transition:border-color .15s,box-shadow .15s,background .15s}
 .choice:hover{border-color:var(--accent)}
