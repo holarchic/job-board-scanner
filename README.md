@@ -86,12 +86,11 @@ The repo is job-board-scanner; the command it installs is still `jobscan`.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"
 uv tool install git+https://github.com/holarchic/job-board-scanner   # fetches Python 3.11+ if needed
-jobscan ui                     # a page in your browser for your search, your key and email (or: jobscan init)
-jobscan run                    # prints the path of your first digest
-jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line for `crontab -e`
+jobscan ui                     # a page in your browser: your search, key, email and daily run
+jobscan run                    # the first run now, or wait for the daily one; prints your first digest's path
 ```
 
-`run` prints the search name, the count of new postings and the digest's path, in `~/.jobscan/digests/<search>/`.
+`run` prints the search name, the count of new postings and the digest's path, in `~/.jobscan/digests/<search>/`. Set up with `jobscan init` instead of the page? Add the daily run with `jobscan schedule --at 08:00` (Mac; on Linux it prints a cron line for `crontab -e`).
 
 **In a browser.** `jobscan ui` opens a page on your own machine that asks one thing at a time. It starts by saying how jobscan works. Paste your OpenRouter key, then type what you're looking for in your own words ("account executive jobs with founding teams in London, happy to be remote"). One model call, a fraction of a cent, fills in the next steps: titles, titles to leave out, places and tags, each a tick box, with suggestions you may have missed beside them. Tick, add a few, set up email if you like (the page says how to get an app password), and choose when it runs: every day at 08:00 unless you change it. Save writes everything, checks it loads, sets up the daily run on a Mac (elsewhere it gives you a cron line), and then says what now: the command for a first run, where digests land, and how to report a problem or contribute. Run it again later to edit any step from a summary; after a first run, Preview shows what your search matches. The page runs only on 127.0.0.1, behind a one-time link, and never shows your key or password back to you.
 
@@ -116,11 +115,11 @@ jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line f
 
 Every command has `--help` with examples. `run` exit codes: 0 done, 1 some postings left untagged or the digest couldn't be written or emailed, 2 a config or usage error. Logs: `~/.jobscan/runs.log`.
 
-**Schedule.** On a Mac, `jobscan schedule --at 08:00` runs daily while you're logged in, and notifies you of new postings or a problem; a quiet day stays quiet. Asleep at 08:00: it runs when the Mac wakes, and several missed days make one run. Powered off: the next day's slot. Notifications may need allowing in System Settings › Notifications.
+**Schedule.** On a Mac, the set-up page's Save or `jobscan schedule --at 08:00` runs it daily while you're logged in, and notifies you of new postings or a problem; a quiet day stays quiet. Asleep at 08:00: it runs when the Mac wakes, and several missed days make one run. Powered off: the next day's slot. Notifications may need allowing in System Settings › Notifications.
 
 **Email.** `jobscan email` asks for the address, which of your accounts sends it (the same one, or another such as a Gmail account), and that account's app password (Gmail: [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords), which needs 2-Step Verification; iCloud: [account.apple.com](https://account.apple.com), App-Specific Passwords). It sends a test email and saves the settings in `~/.jobscan/email.toml`, readable only by you, once your mail server accepts it. From then on every run with a digest emails it; a quiet run sends nothing. If sending fails, the run exits 1 and says so in the notification. Gmail and iCloud work; personal Outlook.com and Hotmail accounts don't (Microsoft allows only OAuth sign-in). Google offers no app passwords to accounts under Advanced Protection or signing in only with security keys, and a Workspace admin can turn them off. Other providers work if their mail server takes the address as its login over TLS.
 
-**Updating and troubleshooting.** `uv tool upgrade jobscan` updates it; the schedule keeps working. `jobscan: command not found`: run `uv tool update-shell` and open a new terminal. A fresh Mac may ask to install Apple's command-line developer tools; say yes. If daily runs stop after a uv update, run `uv tool install --reinstall git+https://github.com/holarchic/job-board-scanner`, then `jobscan schedule --at 08:00` again.
+**Updating and troubleshooting.** `uv tool upgrade jobscan` updates it; the schedule keeps working. `jobscan: command not found`: run `uv tool update-shell` and open a new terminal. A fresh Mac may ask to install Apple's command-line developer tools; say yes. If daily runs stop after a uv update, run `uv tool install --reinstall git+https://github.com/holarchic/job-board-scanner`, then `jobscan schedule --at 08:00` again (or Save in `jobscan ui`).
 
 ## Configuration
 
