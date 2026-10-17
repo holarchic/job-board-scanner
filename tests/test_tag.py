@@ -1,7 +1,10 @@
 import hashlib
 import json
+import socket
+import ssl
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -257,6 +260,17 @@ class TagPostingTest(unittest.TestCase):
             attempt = tag.tag_posting(POSTING, DEFS, self.model, None)
         self.assertIsInstance(attempt, tag.TagSuccess)
         self.assertEqual((attempt.usage.cost, attempt.usage.cost_reported), (0.002, False))
+
+    def test_a_call_that_reaches_nothing_names_why_by_class_only(self):
+        for cause, named in [(socket.gaierror(8, "nodename nor servname provided, sk-or-v1-x"), "URLError (gaierror)"),
+                             (ssl.SSLCertVerificationError("certificate verify failed"),
+                              "URLError (SSLCertVerificationError)"),
+                             ("no cause, just text sk-or-v1-x", "URLError")]:
+            with mock.patch.object(tag._OPENER, "open", side_effect=urllib.error.URLError(cause)), \
+                    self.assertRaises(tag.CallFailed) as failed:
+                tag.call(self.model, "sk-or-v1-x", "text", {"type": "object"}, "tags")
+            self.assertEqual((failed.exception.reason, failed.exception.http_status), (named, None))
+            self.assertNotIn("sk-or", str(failed.exception))
 
     def test_huge_integer_in_reply_is_an_invalid_reply(self):
         self.server.routes["/chat/completions"] = (

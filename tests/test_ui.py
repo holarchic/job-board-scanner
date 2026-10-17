@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 from datetime import time as time_of_day
 from html.parser import HTMLParser
 from pathlib import Path
@@ -295,6 +296,45 @@ class NewInstallTest(UiTest):
         self.assertEqual(load_config(self.home, environ={}).api_key, "sk-or-v1-fresh")
         self.assertEqual(self.described(), 1)
 
+    def test_the_spinner_arrives_before_the_model_answers(self):
+        release = threading.Event()
+
+        def slow(payload):
+            release.wait(10)
+            return answers(payload)
+
+        self.model.routes["/chat/completions"] = (200, slow)
+        self.start()
+        self.press("next", key="sk-or-v1-fresh")
+        fields = {**Fields(self.pages[-1]).fields, "description": [WORDS], "action": ["next"]}
+        body = urlencode(fields, doseq=True).encode()
+        with socket.create_connection(("127.0.0.1", self.port), timeout=10) as raw:
+            raw.sendall(b"POST / HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: application/x-www-form-urlencoded"
+                        b"\r\nContent-Length: %d\r\n\r\n" % (self.port, len(body)) + body)
+            received = b""
+            while b"Reading what you said" not in received:
+                chunk = raw.recv(65536)
+                self.assertTrue(chunk, received[-300:])
+                received += chunk
+            self.assertFalse(release.is_set())  # the model hasn't answered: the spinner came first
+            self.assertNotIn(b"Content-Length", received.split(b"\r\n\r\n", 1)[0])
+            release.set()
+            while chunk := raw.recv(65536):
+                received += chunk
+        page_text = received.decode().split("\r\n\r\n", 1)[1]
+        self.assertEqual(page_text.count("<!doctype html>"), 1)
+        self.assertIn("<style>.waiting{display:none}</style>", page_text)
+        self.assertEqual(checked(page_text, "title"), ["Account Executive"])
+        self.assertEqual(self.server.site.step, "titles")
+
+    def test_quick_posts_and_stale_slow_ones_answer_whole(self):
+        first = self.start()
+        _, headers, _ = self.request("POST", body=urlencode({**Fields(first).fields, "action": "next"}, doseq=True),
+                                     headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertIn("Content-Length", headers)  # Next on the key: quick, one piece
+        stale = {**Fields(first).fields, "step": "describe", "action": "next"}  # an old revision
+        self.assertEqual(self.server.site.waiting(stale), "")
+
     def test_back_keeps_what_was_typed_and_the_same_words_are_not_read_twice(self):
         self.to_titles()
         self.press("back", title_more="SDR")
@@ -335,6 +375,14 @@ class NewInstallTest(UiTest):
         self.assertIn("The model couldn&#x27;t read it", text)
         self.assertIn('value="skip"', text)
         self.assertEqual(self.press("skip") and self.step(), "titles")
+
+    def test_a_model_out_of_reach_says_check_the_connection(self):
+        with mock.patch("jobscan.tag._OPENER.open", side_effect=urllib.error.URLError(socket.gaierror(8, "x"))):
+            text = self.to_titles()
+        self.assertEqual(self.step(), "describe")
+        self.assertIn("Couldn&#x27;t reach OpenRouter (URLError (gaierror))", text)
+        self.assertIn("VPN, firewall or web filter", text)
+        self.assertIn('value="skip"', text)
 
     def test_each_step_keeps_a_wrong_value_but_never_waits_on_later_steps(self):
         self.start()

@@ -93,8 +93,9 @@ class Reply:
 
 
 class CallFailed(Exception):
-    """The request got no reply: `reason` is the HTTP status or the exception's class, never its text (request
-    errors can echo headers, and the key is one). `usage` says whether it may have been billed."""
+    """The request got no reply: `reason` is the HTTP status or the exception's class (and its cause's), never its
+    text (request errors can echo headers, and the key is one). `http_status` None: no answer at all came back.
+    `usage` says whether it may have been billed."""
 
     def __init__(self, reason: str, http_status: int | None, usage: "Usage"):
         super().__init__(reason)
@@ -308,7 +309,10 @@ def call(model: ModelConfig, api_key: str | None, text: str, response_schema: di
     except (OSError, http.client.HTTPException, ValueError) as e:
         # Unless the connection was refused, the request may have been sent and billed.
         unknown = Usage() if isinstance(e, ConnectionRefusedError) else Usage(cost_reported=False)
-        raise CallFailed(type(e).__name__, None, unknown) from None
+        # A URLError's cause names what went wrong (gaierror: no DNS answer; SSLCertVerificationError; a timeout):
+        # its class only, like the error's own.
+        cause = e.reason if isinstance(e, urllib.error.URLError) and isinstance(e.reason, BaseException) else None
+        raise CallFailed(type(e).__name__ + (f" ({type(cause).__name__})" if cause else ""), None, unknown) from None
     if not isinstance(reply, dict):  # answered, possibly billed, but nothing readable: billing unknown
         return Reply(content=None, usage=Usage(cost_reported=False))
     usage = reply.get("usage") if isinstance(reply.get("usage"), dict) else {}

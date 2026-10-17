@@ -58,9 +58,9 @@ def _schema() -> dict:
 class DescribeError(Exception):
     """The model call failed or its reply wasn't the shape asked for. `usage` is the reply's, when one came back."""
 
-    def __init__(self, reason: str, usage: tag.Usage | None = None):
+    def __init__(self, reason: str, usage: tag.Usage | None = None, unreachable: bool = False):
         super().__init__(reason)
-        self.usage = usage
+        self.usage, self.unreachable = usage, unreachable  # unreachable: no answer came back at all
 
 
 @dataclass(frozen=True)
@@ -86,7 +86,7 @@ def read(words: str, model: ModelConfig, api_key: str | None) -> Described:
         reply = tag.call(model, api_key, PROMPT.format(words=words, catalogue=catalogue), _schema(), "description",
                          reasoning=False)
     except tag.CallFailed as e:  # an HTTP refusal isn't billed; another failure may have been
-        raise DescribeError(e.reason, usage=None if e.http_status else e.usage) from None
+        raise DescribeError(e.reason, usage=None if e.http_status else e.usage, unreachable=not e.http_status) from None
     try:
         data = json.loads(reply.content) if reply.content is not None else None
     except (ValueError, RecursionError):

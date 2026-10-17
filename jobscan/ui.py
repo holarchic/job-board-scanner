@@ -107,6 +107,15 @@ class Site:
         return self._render(errors=checked.errors) if checked.profile is None else self._preview(checked.profile)
 
 
+    def waiting(self, fields: dict[str, list[str]]) -> str:
+        """What the page says while a post that waits on the model, the mail server or the database works, read
+        before the post is applied; "" for any other post (a stale one included)."""
+        self._start()
+        step, revision = (fields.get("step") or [""])[0], (fields.get("revision") or [""])[0]
+        if self.blocked or step != self.step or revision != str(self.revision):
+            return ""
+        return page.WAITING.get((step, (fields.get("action") or [""])[0]), "")
+
     def _start(self) -> None:
         """The first request decides where the steps begin: a new install at how it works, an existing one at its
         summary, or a message when its profile can't go through the page unchanged."""
@@ -157,6 +166,11 @@ class Site:
         except ConfigError as e:
             return self._render(errors={"description": f"Not read: {e}."})
         except describe.DescribeError as e:
+            if e.unreachable:
+                return self._render(errors={"description": f"Couldn't reach OpenRouter ({e}): check this computer is "
+                                                           "online and that no VPN, firewall or web filter blocks "
+                                                           "openrouter.ai, then try again, or go on without "
+                                                           "suggestions."})
             return self._render(errors={"description": f"The model couldn't read it ({e}): try again, or go on "
                                                        "without suggestions."})
         self.read_words = words
@@ -460,7 +474,17 @@ class _Handler(BaseHTTPRequestHandler):
             return self._answer(400, "<p>Refused: not UTF-8.</p>")
         if not _same((fields.get("token") or [""])[0], self.server.site.token):
             return self._answer(403, "<p>Open the link <code>jobscan ui</code> printed.</p>")
-        self._answer(200, self.server.site.post(fields))
+        waiting = self.server.site.waiting(fields)
+        if not waiting:
+            return self._answer(200, self.server.site.post(fields))
+        # The browser draws what has arrived: the spinner first, the page once the work is done. No length is
+        # sent, so the page ends when the connection closes (HTTP/1.0, one request per connection).
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(page.waiting(waiting).encode())
+        self.wfile.flush()
+        self.wfile.write(page.after_waiting(self.server.site.post(fields)).encode())
 
     def _allowed(self) -> bool:
         if self.headers.get("Host") not in self.server.hosts:

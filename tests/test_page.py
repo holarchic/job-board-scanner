@@ -370,6 +370,15 @@ class RenderTest(unittest.TestCase):
         self.assertIn("<details open><summary>Tags of your own", page.render(self.view(
             "tags", form=page.Form(), errors={"custom-0": "Bad."})))
 
+    def test_a_slow_post_answers_a_spinner_first_then_the_page(self):
+        top = page.waiting("<Reading>")
+        self.assertTrue(top.startswith("<!doctype html>"))
+        self.assertIn('<div class="waiting" role="status"><div class="spinner"></div><p>&lt;Reading&gt;</p>', top)
+        rest = page.after_waiting(page.render(self.view("titles")))
+        self.assertTrue(rest.startswith("<style>.waiting{display:none}</style>"))
+        self.assertNotIn("<!doctype", rest)  # one document: the rest carries no second head
+        self.assertIn("Job titles", rest)
+
     def test_a_preview_before_any_run_says_so(self):
         self.assertIn("No postings yet", page.render(self.view("summary", previewed=True)))
 

@@ -31,6 +31,10 @@ STEPS = ("intro", "key", "describe", "titles", "exclude", "places", "tags", "ema
 # An existing install is edited, not introduced or described again; `done`, after Save, is in neither order.
 EXISTING_STEPS = tuple(s for s in STEPS if s not in ("intro", "describe"))
 EDITABLE = tuple(s for s in EXISTING_STEPS if s != "summary")  # the summary's Edit buttons, new install or not
+WAITING = MappingProxyType({  # (step, action) → what the page says while that post works
+    ("describe", "next"): "Reading what you said…", ("titles", "suggest"): "Asking for more titles…",
+    ("summary", "save"): "Saving, and sending a test email if you set one up…",
+    ("summary", "preview"): "Counting what your search matches…"})
 HEADINGS = MappingProxyType({
     "intro": "How it works", "key": "Your OpenRouter key", "describe": "What are you looking for?",
     "titles": "Job titles", "exclude": "Titles to leave out", "places": "Places", "tags": "Tags",
@@ -465,6 +469,17 @@ def blocked(message: str) -> str:
             "</main></body></html>")
 
 
+def waiting(message: str) -> str:
+    """The top of a slow post's page, sent before the work: a spinner over everything until the rest arrives."""
+    return (f'{_HEAD}<div class="waiting" role="status"><div class="spinner"></div><p>{_x(message)}</p>'
+            '<p class="hint">This takes a few seconds.</p></div>')
+
+
+def after_waiting(html: str) -> str:
+    """The rest of a page whose top was `waiting`: the spinner hidden, then the page itself."""
+    return "<style>.waiting{display:none}</style>" + html.removeprefix(_HEAD)
+
+
 def render(view: View) -> str:
     numbered = steps(view.fresh)[1:]  # from the key: the intro goes unnumbered, the summary fills the bar
     at = numbered.index(view.step) + 1 if view.fresh and view.step in numbered else 0
@@ -788,7 +803,11 @@ background:var(--bg);z-index:1}
 main{max-width:40rem;margin:0 auto;padding:clamp(5rem,18vh,11rem) 1.5rem 6rem;
 animation:rise .45s cubic-bezier(.2,.7,.2,1)}
 @keyframes rise{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
-@media (prefers-reduced-motion:reduce){main{animation:none}}
+.waiting{position:fixed;inset:0;z-index:5;display:flex;flex-direction:column;align-items:center;
+justify-content:center;gap:.4rem;background:var(--bg);font-size:1.3rem;text-align:center;padding:1.5rem}
+.spinner{width:46px;height:46px;margin-bottom:1rem;border-radius:50%;border:4px solid var(--tint);
+border-top-color:var(--accent);animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){main{animation:none}.spinner{animation-duration:2.4s}}
 h1{font-size:clamp(1.6rem,3.4vw,2.25rem);font-weight:500;line-height:1.25;letter-spacing:-.02em;margin:0 0 1.25rem}
 h1 .num{color:var(--accent);font-size:.55em;font-weight:600;vertical-align:.3em;margin-right:.5em;white-space:nowrap}
 h2{font-size:1.15rem;font-weight:600;margin:2rem 0 .4rem}p{margin:.6rem 0}ol{padding-left:1.3rem}li{margin:.35rem 0}
