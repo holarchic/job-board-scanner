@@ -616,7 +616,10 @@ def _tags_body(view: View) -> str:
         f"{_x(r.name)}</b>: {_x(r.definition)} <i>({_x(', '.join(_lines(r.values)) or 'yes, no, unknown')})</i>"
         "</span></label>"
         for r in offered) + "</fieldset>") if offered else ""
-    return ("<p>The model answers each ticked tag for every matching posting, quoting it.</p>"
+    return ("<p>Tags are questions about each posting, answered beside it in your digest with a quote from the ad: "
+            "is it a founding role? can you work it from where you are?</p>"
+            '<p class="notice">Tags never hide a posting. Every posting that matches your titles and places is in '
+            "your digest, whatever its answers; tick the questions you'd like answered when you skim.</p>"
             + "<fieldset><legend>Built-in tags</legend>" + "".join(rows) + "</fieldset>" + _err("tags", e)
             + suggested + _custom(form, e))
 
