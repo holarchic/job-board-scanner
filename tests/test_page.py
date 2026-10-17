@@ -281,7 +281,7 @@ class RenderTest(unittest.TestCase):
             for step in (*page.steps(fresh), "done"):
                 html = page.render(self.view(step, fresh=fresh))
                 pressed = re.findall(r'<button name="action" value="([^"]+)"', html)
-                self.assertEqual(set(pressed), page.actions(step, fresh), (step, fresh))
+                self.assertEqual(set(pressed), page.actions(step), (step, fresh))
                 enter = {"summary": "save", "done": "goto:summary"}.get(step, "next")
                 self.assertEqual(pressed[0], enter, step)  # what Enter presses
         said = replace(DRAFT, description="AE jobs in London")
@@ -306,6 +306,9 @@ class RenderTest(unittest.TestCase):
         self.assertIn("Use HH:MM.", html)
         self.assertIn("when the Mac wakes", html)
         self.assertIn("Unticking removes nothing", page.render(self.view("schedule", launchd=False)))
+        kept = page.render(self.view("schedule", schedule_kept=True))
+        self.assertIn("left as it is unless you tick a time", kept)
+        self.assertNotIn("runs only when you type", kept)  # the kept schedule may still run
         self.assertNotIn("checked", page.render(self.view("schedule", form=replace(DRAFT, tags=frozenset()))))
         for launchd, form, said in [(True, on, "every day at 07:30"), (True, DRAFT, "not scheduled"),
                                     (False, on, "a cron line at 07:30, added by you"), (False, DRAFT, "not set here")]:

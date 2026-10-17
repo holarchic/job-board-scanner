@@ -23,8 +23,9 @@ TIMEOUT = 30
 
 
 class ScheduleError(Exception):
-    """launchd refused the job or its plist couldn't be written; unless the message says otherwise, the previous
-    schedule, if any, is back in place."""
+    """launchd refused the job, its plist couldn't be written or deleted, or launchctl couldn't be asked. From
+    `install`, unless the message says otherwise, the previous schedule, if any, is back in place; from `remove`, the
+    job may be unloaded with its plist left behind (`in_place` then sets it up again)."""
 
 
 @dataclass(frozen=True)

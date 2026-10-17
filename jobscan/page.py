@@ -239,7 +239,7 @@ def _rows(fields: Mapping[str, list[str]], one, offers: Offers) -> tuple[CustomR
     return tuple(rows)
 
 
-def actions(step: str, fresh: bool) -> frozenset[str]:
+def actions(step: str) -> frozenset[str]:
     """The buttons a step's page shows: the server accepts only these."""
     if step == "summary":
         return frozenset({"save", "preview", *(f"goto:{s}" for s in EDITABLE)})
@@ -496,7 +496,7 @@ def _buttons(view: View) -> str:
     labels = {"save": "Save", "preview": "Preview matches",
               "next": "Start" if view.step == "intro" else "Next" if view.fresh else "Done",
               "skip": "Go on without suggestions", "back": "Back", "goto:summary": "Back to your search"}
-    shown = actions(view.step, view.fresh)
+    shown = actions(view.step)
     out = '<p class="buttons">' + " ".join(f'<button name="action" value="{a}">{labels[a]}</button>'
                                            for a in labels if a in shown) + "</p>"
     if view.step == "summary":
@@ -634,11 +634,13 @@ def _schedule_body(view: View) -> str:
             "wakes, and several missed days make one run; switched off, it waits for the next day's time. Pick a "
             "time your Mac is usually awake, such as when you start work. A notification shows when there's "
             "something new or a problem (you may need to allow it in System Settings, Notifications). Unticked, it "
-            "runs only when you type jobscan run." if view.launchd else
+            "runs only when you type jobscan run." if view.launchd and not view.schedule_kept else
+            "Your Mac needs to be on and you logged in; a run missed while it slept runs when it wakes." if view.launchd
+            else
             "jobscan can't see your crontab here. Tick to get the line to add with crontab -e after Save; it runs "
             "only while the computer is awake. Unticking removes nothing: delete the line yourself.")
-    return ("<p>Each run looks for new postings; when there are any, it writes the digest and emails it to you. A "
-            "quiet day sends nothing. Once a day is enough: boards change slowly.</p>"
+    return ("<p>Each run looks for new postings; when there are any, it writes the digest and, with email set up, "
+            "emails it to you. A quiet day sends nothing. Once a day is enough: boards change slowly.</p>"
             f'<p><label><input type="checkbox" name="schedule_on"{ticked}> Run it every day at</label> '
             f'<input type="time" name="schedule_at" value="{_x(f.schedule_at)}">{_err("schedule_at", e)}</p>'
             + ('<p class="hint">This install has a schedule this page can\'t show (not one daily time): it is '

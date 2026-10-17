@@ -82,7 +82,7 @@ class Site:
         if (fields.get("step") or [""])[0] != self.step or (fields.get("revision") or [""])[0] != str(self.revision):
             return self._render(notices=("That page was out of date: this is where you are.",))
         action = (fields.get("action") or [""])[0]
-        if action not in page.actions(self.step, self._fresh()):  # refused before anything is applied
+        if action not in page.actions(self.step):  # refused before anything is applied
             return self._render(errors={"": "Press one of the buttons."})
         self.revision += 1
         self.form, self.offers = page.read_step(self.step, fields, self.form, self.offers)
