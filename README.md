@@ -98,6 +98,16 @@ jobscan run                    # the first run now, or wait for the daily one; p
 
 `run` prints the search name, the count of new postings and the digest's path, in `~/.jobscan/digests/<search>/`. Set up with `jobscan init` instead of the page? Add the daily run with `jobscan schedule --at 08:00` (Mac; on Linux it prints a cron line for `crontab -e`).
 
+**Without uv.** With [Homebrew](https://brew.sh), install with pipx instead:
+
+```bash
+brew install pipx
+pipx install https://github.com/holarchic/job-board-scanner/archive/refs/heads/main.zip
+pipx ensurepath                # puts jobscan on your PATH for new windows
+```
+
+Then open a new terminal window and carry on with `jobscan ui`. To update, run `pipx reinstall jobscan`: `pipx upgrade` skips it, because the version number doesn't change between updates. The same command fixes daily runs that stop after Homebrew updates its Python.
+
 **In a browser.** `jobscan ui` opens a page on your own machine that asks one thing at a time. It starts by saying how jobscan works. Paste your OpenRouter key, then type what you're looking for in your own words ("account executive jobs with founding teams in London, happy to be remote"). One model call, a fraction of a cent, fills in the next steps: titles, titles to leave out, places and tags, each a tick box, with suggestions you may have missed beside them. Tick, add a few, set up email if you like (the page says how to get an app password), and choose when it runs: every day at 08:00 unless you change it. Save writes everything, checks it loads, sets up the daily run on a Mac (elsewhere it gives you a cron line), and then says what now: the command for a first run, where digests land, and how to report a problem or contribute. Run it again later to edit any step from a summary; after a first run, Preview shows what your search matches. The page runs only on 127.0.0.1, behind a one-time link, and never shows your key or password back to you.
 
 **With an agent.** Every step also works without a terminal, so a coding agent can set it up for you: point it at this repo and have it read `jobscan --help`, which lists the steps in order with examples. `init` and `email` take flags instead of asking, the key and the app password are read from stdin, and `jobscan check` confirms the install loads. After the first run, `jobscan titles` suggests titles to add or leave out and `jobscan preview` shows what your titles match among the stored postings, so you can tune them without another run.
