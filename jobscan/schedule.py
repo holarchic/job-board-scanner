@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import time
 from pathlib import Path
 from typing import NoReturn
+from xml.parsers.expat import ExpatError
 
 LABEL_PREFIX = "io.github.holarchic.jobscan."
 NOT_LOADED = 3  # `launchctl bootout` of a label that isn't loaded: ESRCH, "No such process"
@@ -82,10 +83,11 @@ def plist(job: Job, home: Path, at: time) -> bytes:
 
 
 def scheduled_at(home: Path, agents: Path) -> time | None:
-    """The time this install's plist runs at, as written; None when there is none or it isn't a daily plist."""
+    """The time this install's plist runs at, as written; None when there is none, it doesn't parse, or it isn't a
+    daily plist as `install` writes."""
     try:
         spec = plistlib.loads(job(home, agents).plist.read_bytes())
-    except (OSError, plistlib.InvalidFileException, ValueError, TypeError):
+    except (OSError, plistlib.InvalidFileException, ExpatError, ValueError, TypeError):
         return None
     when = spec.get("StartCalendarInterval") if isinstance(spec, dict) else None
     if not (isinstance(when, dict) and set(when) == {"Hour", "Minute"}

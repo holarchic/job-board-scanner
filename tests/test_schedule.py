@@ -169,7 +169,8 @@ class ScheduleTest(unittest.TestCase):
         self.assertIsNone(schedule.scheduled_at(self.home, self.agents))
         schedule.install(self.home, time(7, 45), self.agents, FakeLaunchctl(bootout=[3]))
         self.assertEqual(schedule.scheduled_at(self.home, self.agents), time(7, 45))
-        for broken in [b"not a plist", plistlib.dumps({"StartCalendarInterval": {"Hour": 7}}),
+        truncated = plistlib.dumps({"StartCalendarInterval": {"Hour": 7, "Minute": 0}})[:120]
+        for broken in [b"not a plist", truncated, plistlib.dumps({"StartCalendarInterval": {"Hour": 7}}),
                        plistlib.dumps({"StartCalendarInterval": {"Hour": 25, "Minute": 0}}),
                        plistlib.dumps({"StartCalendarInterval": {"Hour": True, "Minute": 0}}),
                        plistlib.dumps({"StartCalendarInterval": [{"Hour": 7, "Minute": 0}]}), plistlib.dumps([1])]:

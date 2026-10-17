@@ -4,6 +4,7 @@ checks, then the steps of a new install and the summary of an existing one."""
 import html
 import http.client
 import os
+import plistlib
 import re
 import shlex
 import socket
@@ -649,6 +650,37 @@ class ScheduleTest(UiTest):
         fields = {**Fields(reopened.show()).fields, "token": ["t"], "action": ["save"]}
         self.assertIn("Runs every day at 07:30.", reopened.post(fields))
         self.assertTrue(schedule.loaded(self.home, self.launchd))
+
+    def test_unticking_removes_the_job_even_when_the_search_fails_to_save(self):
+        self.install()
+        self.scheduled()
+        self.open()
+        self.press("goto:schedule")
+        self.press("next", unticked=[("schedule_on", "on")])
+        with mock.patch.object(init, "save_profile", side_effect=init.ConfigError("disk full")):
+            text = self.press("save")
+        self.assertIn("Nothing was saved: disk full", text)
+        self.assertIn("No longer scheduled.", text)
+        self.assertFalse(schedule.loaded(self.home, self.launchd))
+        self.press("goto:titles")
+        self.press("back", unticked=[("title", "AE")])  # no titles, past the step's check: Save refuses the search
+        self.press("goto:schedule")
+        text = self.press("next", schedule_on="on", schedule_at="07:30")
+        self.assertIn("Not scheduled: fix the above first", self.press("save"))
+        self.assertNotIn("bootstrap", self.launchd.run.calls)
+
+    def test_a_plist_the_page_didnt_write_is_left_alone(self):
+        self.install()
+        plist = schedule.job(self.home, self.launchd.agents).plist
+        plist.parent.mkdir(parents=True)
+        for written in [plistlib.dumps({"StartCalendarInterval": {"Weekday": 1, "Hour": 7, "Minute": 0}}),
+                        plistlib.dumps({"StartCalendarInterval": {"Hour": 7, "Minute": 0}})[:120]]:
+            plist.write_bytes(written)
+            site = ui.Site(self.home, "t", self.launchd)
+            self.assertIn("not scheduled", site.show())  # read as unscheduled, never a crash
+            text = site.post({**Fields(site.show()).fields, "token": ["t"], "action": ["save"]})
+            self.assertIn("Saved your search", text)
+            self.assertEqual(plist.read_bytes(), written)
 
     def test_a_time_cleared_then_back_is_refused_at_save(self):
         self.install()

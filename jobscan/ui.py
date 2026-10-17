@@ -102,13 +102,13 @@ class Site:
         if action == "suggest":
             return self._suggest()
         checked = page.to_profile(self.form)
-        if checked.profile is None:
-            return self._render(errors=checked.errors)
-        return self._preview(checked.profile) if action == "preview" else self._save(checked.profile)
+        if action == "save":
+            return self._save(checked)
+        return self._render(errors=checked.errors) if checked.profile is None else self._preview(checked.profile)
 
 
     def _start(self) -> None:
-        """The first request decides where the steps begin: a new install at the key, an existing one at its
+        """The first request decides where the steps begin: a new install at how it works, an existing one at its
         summary, or a message when its profile can't go through the page unchanged."""
         if self.step:
             return
@@ -200,18 +200,21 @@ class Site:
             return self._render(errors={"": "A run is using the database; try once it's done."})
         return self._render(preview=result, previewed=True)
 
-    def _save(self, profile: Profile) -> str:
+    def _save(self, checked: page.Checked) -> str:
         """Search (and, on a new install, settings and key), then a new key, then email, then the whole install
         checked as `jobscan check` does, then the daily run: each section reported. When all of it holds, the drafts
         are cleared and the page after Save says what now."""
         schedule_errors = page.schedule_errors(self.form)  # Back skips the step's own check
         if schedule_errors:
             return self._render(errors=schedule_errors)
+        profile = checked.profile
+        if profile is None:
+            return self._unsaved(checked.errors)
         fresh = self._fresh()
         try:
             if fresh:
                 if not self.drafts.key:
-                    return self._render(errors={"key": "Your OpenRouter key is needed."})
+                    return self._unsaved({"key": "Your OpenRouter key is needed."})
                 init.init_from(self.home, init.Answers(
                     name=profile.name, titles=list(profile.titles), exclude_titles=list(profile.exclude_titles),
                     locations=list(profile.locations), eligible_where=profile.eligible_where,
@@ -219,7 +222,7 @@ class Site:
             else:
                 init.save_profile(self.home, profile)
         except ConfigError as e:
-            return self._render(errors={"": f"Nothing was saved: {e}"})
+            return self._unsaved({"": f"Nothing was saved: {e}"})
         done = [Done(notice="Saved your search, the settings and your key." if fresh
                      else "Saved your search (the previous file is kept as .toml.prev).")]
         if self.drafts.key and not fresh:
@@ -235,6 +238,13 @@ class Site:
         self.form, self.offers, self.step = self._reopened(profile), page.Offers(), "done"
         return self._render(notices=notices)
 
+    def _unsaved(self, errors: dict[str, str]) -> str:
+        """The search didn't save: nothing else is, but a daily run unticked is still removed."""
+        done = self._save_schedule(ok=False)
+        if done.error:
+            errors = {**errors, "": " ".join(e for e in (errors.get(""), done.error) if e)}
+        return self._render(errors=errors, notices=(done.notice,) if done.notice else ())
+
     def _save_schedule(self, ok: bool) -> Done:
         """The daily run, last: set or changed only when every other section held (a run on an install whose email
         failed would deliver its first postings to nobody, never to be resent); removed whatever else failed, as
@@ -245,7 +255,9 @@ class Site:
         at = schedule.parse_at(self.form.schedule_at) if self.form.schedule_on else None
         try:
             if at is None:
-                if not (schedule.job(self.home, launchd.agents).plist.exists() or schedule.loaded(self.home, launchd)):
+                ours = schedule.scheduled_at(self.home, launchd.agents) is not None or (
+                    not schedule.job(self.home, launchd.agents).plist.exists() and schedule.loaded(self.home, launchd))
+                if not ours:  # nothing scheduled, or a plist this page didn't write: left as it is
                     return Done()
                 schedule.remove(self.home, launchd.agents, launchd.run)
                 return Done(notice="No longer scheduled.")
