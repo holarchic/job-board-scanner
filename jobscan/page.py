@@ -799,7 +799,7 @@ white-space:pre-wrap;overflow-wrap:anywhere}
 label{display:block;margin:.5rem 0}
 input:not([type]),input[type=password],input[type=time],textarea{display:block;width:100%;margin-top:.3rem;
 font:inherit;font-size:1.35rem;color:var(--accent);background:transparent;border:0;border-bottom:2px solid
-var(--line);border-radius:0;padding:.35rem 0;outline:none;transition:border-color .2s}
+var(--muted);border-radius:0;padding:.35rem 0;outline:none;transition:border-color .2s}
 input[type=time]{width:auto;min-width:9rem}textarea{resize:vertical;line-height:1.4}
 input:focus,textarea:focus{border-bottom-color:var(--accent)}::placeholder{color:var(--muted);opacity:1}
 .choice{display:flex;gap:.8rem;align-items:flex-start;margin:.5rem 0;padding:.65rem .9rem;border:1px solid
