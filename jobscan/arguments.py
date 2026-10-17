@@ -189,7 +189,8 @@ def _schedule(commands) -> None:
     command = _command(
         commands, "schedule", "macOS: run every day at a set time, even after sleep (launchd); elsewhere: a cron line",
         "On macOS, install a launchd job running `jobscan run --notify` daily at --at; a slot missed while the Mac "
-        "slept runs on wake. Elsewhere, print the cron line to add. Use the installed `jobscan`, not a checkout.",
+        "slept runs on wake. Elsewhere, print the cron line to add. Use the installed `jobscan`, not a checkout. "
+        "`jobscan ui` sets the same job from its When to run step.",
         ["jobscan schedule --at 08:00", "jobscan schedule --off"])
     when = command.add_mutually_exclusive_group(required=True)
     when.add_argument("--at", type=clock, metavar="HH:MM", help="daily run time, 24-hour clock")
@@ -200,13 +201,14 @@ def _ui(commands) -> None:
     command = _command(
         commands, "ui", "set up or edit the whole search on a local web page",
         "Serve a page on this machine (127.0.0.1 only) to set up a new install one step at a time, or edit this one "
-        "from a summary. A new install asks for the OpenRouter key, then what you're looking for in your own words; "
-        "one model call (reasoning off: seconds, a fraction of a cent) fills titles, titles to leave out, places and "
-        "tags as tick boxes, with suggestions beside them; then email, when to run (macOS: the daily job `schedule` "
-        "sets up) and a summary to save, then what now. Suggest titles and "
-        "Preview work on the search as it stands. It opens in your browser through a link with a one-time token; "
-        "anyone with that link "
-        "can use the page until it stops. Ctrl-C stops it. Saving rewrites the profile without its comments (the "
+        "from a summary. A new install starts with how jobscan works, asks for the OpenRouter key, then what you're "
+        "looking for in your own words; one model call (reasoning off: seconds, a fraction of a cent) fills titles, "
+        "titles to leave out, places and tags as tick boxes, with suggestions beside them; then email, when to run "
+        "and a summary to save, then what now: the command for a first run and where digests land. On macOS, Save "
+        "sets the daily job `schedule` sets up, only once everything else saved (unticking it removes the job "
+        "whatever else failed); elsewhere the page gives the cron line to add. Suggest titles and Preview work on "
+        "the search as it stands. It opens in your browser through a link with a one-time token; anyone with that "
+        "link can use the page until it stops. Ctrl-C stops it. Saving rewrites the profile without its comments (the "
         "previous file is kept as .toml.prev). Typed keys and passwords stay in memory until you save; the page "
         "never shows them.",
         ["jobscan ui", "jobscan ui --port 8765 --no-browser"])
