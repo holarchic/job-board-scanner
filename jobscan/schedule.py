@@ -98,6 +98,30 @@ def scheduled_at(home: Path, agents: Path) -> time | None:
     return time(when["Hour"], when["Minute"])
 
 
+@dataclass(frozen=True)
+class State:
+    """This install's daily run as launchd and its plist have it."""
+    plist: Path | None  # None: no plist
+    at: time | None  # the plist's daily time; None when it isn't one daily time
+    loaded: bool  # launchd holds the label
+    python_missing: bool  # the plist names an interpreter that no longer exists (a uv update moved it)
+
+
+def state(home: Path, launchd: Launchd) -> State:
+    """Reads only: the plist and `launchctl print`. ScheduleError when launchctl can't be asked."""
+    j = job(home, launchd.agents)
+    try:
+        spec = plistlib.loads(j.plist.read_bytes())
+    except FileNotFoundError:
+        return State(plist=None, at=None, loaded=loaded(home, launchd), python_missing=False)
+    except (OSError, ExpatError, ValueError, TypeError, AttributeError, LookupError, OverflowError):
+        spec = None
+    program = spec.get("ProgramArguments") if isinstance(spec, dict) else None
+    python = program[0] if isinstance(program, list) and program and isinstance(program[0], str) else None
+    return State(plist=j.plist, at=scheduled_at(home, launchd.agents), loaded=loaded(home, launchd),
+                 python_missing=python is not None and not Path(python).exists())
+
+
 def loaded(home: Path, launchd: Launchd) -> bool:
     """launchd's own answer: whether it holds this install's job, whatever its plist says."""
     try:

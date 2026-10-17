@@ -8,6 +8,7 @@ from jobscan.boards import Added, Entry
 from jobscan.config import KEY_FILE, Profile
 from jobscan.install import Install
 from jobscan.preview import Preview, Sample
+from jobscan.schedule import ScheduleError, State
 from jobscan.titles import Counted, Suggested
 
 VALIDATED = MappingProxyType({"yes": "validated", "uk": "validated for the UK only", "no": "not validated"})
@@ -51,8 +52,8 @@ KEY_SOURCES = MappingProxyType({"none": "none needed", "environment": "OPENROUTE
                                 "file": KEY_FILE, "both": f"OPENROUTER_API_KEY here, {KEY_FILE} for scheduled runs"})
 
 
-def install(checked: Install) -> list[str]:
-    """What `check` loaded, as `run` will use it."""
+def install(checked: Install, scheduled: State | ScheduleError | None) -> list[str]:
+    """What `check` loaded, as `run` will use it, and the daily run (`schedule_line`)."""
     config, profile, email = checked.config, checked.profile, checked.email
     profile_path = config.home / "profiles" / f"{profile.name}.toml"
     custom = f"; custom: {', '.join(c.name for c in profile.custom_tags)}" if profile.custom_tags else ""
@@ -76,8 +77,29 @@ def install(checked: Install) -> list[str]:
     if checked.key_only_in_environment:
         lines.append(f"Warning: the key is only in OPENROUTER_API_KEY, which a scheduled run won't see: save it in "
                      f"{config.home / KEY_FILE}, readable only by you (chmod 600)")
+    lines.append(schedule_line(scheduled))
     lines.append("OK: `jobscan run` can start.")
     return lines
+
+
+def schedule_line(state: State | ScheduleError | None) -> str:
+    """The daily run, for `check`: None off macOS, where it is a cron line jobscan can't see."""
+    if state is None:
+        return "Schedule: not checked here (a cron line; `jobscan schedule --at 08:00` prints one)"
+    if isinstance(state, ScheduleError):
+        return f"Schedule: launchd couldn't be asked ({state})"
+    if state.plist is None:
+        return ("Schedule: launchd holds a job with no plist: `jobscan schedule --off` removes it" if state.loaded
+                else "Schedule: none (`jobscan schedule --at 08:00`, or `jobscan ui`, sets a daily run)")
+    if state.at is None:
+        return (f"Schedule: {state.plist} isn't one daily time, so jobscan leaves it alone; "
+                "`jobscan schedule --at HH:MM` replaces it")
+    again = f"`jobscan schedule --at {state.at:%H:%M}` sets it up again"
+    if state.python_missing:
+        return f"Warning: the daily run at {state.at:%H:%M} names a Python that no longer exists: {again}"
+    if not state.loaded:
+        return f"Warning: the plist says {state.at:%H:%M}, but launchd isn't running it: {again}"
+    return f"Schedule: every day at {state.at:%H:%M} (launchd)"
 
 
 def _items(values: tuple[str, ...]) -> str:

@@ -156,8 +156,9 @@ def _check(commands) -> None:
         commands, "check", "load the install as a run would and print what it holds, or the first problem",
         "Load config.toml, the key, the profile and its tags, email.toml and the boards file exactly as `jobscan "
         "run` loads them here, then the key as a scheduled run reads it (with no shell environment). Prints what "
-        "the install holds, or the first problem with exit 2. Reads only: no network, no database. Run it after "
-        "editing the profile by hand.",
+        "the install holds, the daily run included (macOS: what launchd and its plist say, with a warning and the "
+        "fix when it won't run), or the first problem with exit 2. Reads only: no network, no database. Run it "
+        "after editing the profile by hand.",
         ["jobscan check", "$EDITOR ~/.jobscan/profiles/*.toml && jobscan check"])
 
 

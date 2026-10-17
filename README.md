@@ -118,7 +118,7 @@ Then open a new terminal window and carry on with `jobscan ui`. `PIPX_DEFAULT_BA
 |---|---|
 | `jobscan ui` | A local page that sets everything up one step at a time from a sentence about what you want, the daily run included, or edits it from a summary |
 | `jobscan init` | Asks for your search, your OpenRouter key and, optionally, an email account; writes `~/.jobscan`. With flags (`--name`, `--title`, `--location`, `--eligible-where`, `--key-stdin`…) it asks nothing |
-| `jobscan check` | Loads the install as a run would and shows what it holds, or the first problem |
+| `jobscan check` | Loads the install as a run would and shows what it holds, the daily run included, or the first problem |
 | `jobscan preview` | What your search matches among the postings the last run stored: new jobs, the cost to tag them, samples |
 | `jobscan titles` | The model suggests other titles your jobs go by and near-misses to leave out, each with how many stored postings it would add or drop. Never changes your profile |
 | `jobscan tags [NAME]` | Lists the tags, or shows one's full definition |

@@ -280,7 +280,12 @@ def _check(home: Path) -> int:
     except ConfigError as e:
         print(f"jobscan: {e}", file=sys.stderr)
         return EXIT_USAGE
-    print("\n".join(report.install(checked)))
+    launchd = schedule.launchd()
+    try:
+        scheduled = schedule.state(home, launchd) if launchd else None
+    except schedule.ScheduleError as e:
+        scheduled = e
+    print("\n".join(report.install(checked, scheduled)))
     return EXIT_OK
 
 

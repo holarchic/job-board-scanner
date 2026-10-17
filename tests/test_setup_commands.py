@@ -5,17 +5,20 @@ import fcntl
 import io
 import json
 import os
+import plistlib
 import smtplib
+import sys
 import tempfile
 import threading
 import unittest
+from datetime import time
 from pathlib import Path
 from unittest import mock
 
-from jobscan import boards, cli, init, lock, store, tag
+from jobscan import boards, cli, init, lock, schedule, store, tag
 from jobscan.config import load_config, load_email, load_profile
 from jobscan.records import Board, Company, Posting
-from tests.fakes import patch_smtp
+from tests.fakes import StatefulLaunchctl, patch_smtp
 
 PROFILE = """titles = ["Account Executive"]
 locations = ["London"]
@@ -35,9 +38,11 @@ class CliHome(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name) / "home"
         environ = {k: v for k, v in os.environ.items() if k != "OPENROUTER_API_KEY"}
-        patcher = mock.patch.dict(os.environ, {**environ, "JOBSCAN_HOME": str(self.home)}, clear=True)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.launchd = schedule.Launchd(Path(tmp.name) / "LaunchAgents", StatefulLaunchctl())  # never the host's
+        for patcher in (mock.patch.dict(os.environ, {**environ, "JOBSCAN_HOME": str(self.home)}, clear=True),
+                        mock.patch.object(schedule, "launchd", return_value=self.launchd)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def cli(self, *argv, stdin="", terminal=False):
         out, err, typed = io.StringIO(), io.StringIO(), io.StringIO(stdin)
@@ -119,10 +124,40 @@ class CheckTest(CliHome):
         self.assertEqual((code, err), (0, ""))
         for line in ["Profile: " + str(self.home / "profiles" / "ae.toml"), "  titles: Account Executive",
                      "  excluded titles: (none)", "  tags: founding, location_eligible; custom: climate",
-                     "(key: openrouter.key)", "Email: off", "Boards file: none", "OK: `jobscan run` can start."]:
+                     "(key: openrouter.key)", "Email: off", "Boards file: none", "Schedule: none",
+                     "OK: `jobscan run` can start."]:
             self.assertIn(line, out)
         self.assertNotIn("Warning", out)
         self.assertEqual(self.files(), before)
+
+    def test_the_daily_run_as_launchd_and_its_plist_have_it(self):
+        self.write_install()
+        plist = schedule.job(self.home, self.launchd.agents).plist
+        schedule.install(self.home, time(7, 30), self.launchd.agents, self.launchd.run)
+        out = self.cli("check")[1]
+        self.assertIn("Schedule: every day at 07:30 (launchd)\nOK: `jobscan run` can start.", out)
+        with mock.patch.object(sys, "executable", "/nowhere/python3"):  # a uv update moved the interpreter
+            schedule.install(self.home, time(7, 30), self.launchd.agents, self.launchd.run)
+        code, out, _ = self.cli("check")
+        self.assertEqual(code, 0)  # a schedule is optional: a warning, never a failure
+        self.assertIn("Warning: the daily run at 07:30 names a Python that no longer exists: "
+                      "`jobscan schedule --at 07:30` sets it up again", out)
+        schedule.install(self.home, time(7, 30), self.launchd.agents, self.launchd.run)
+        self.launchd.run(["bootout", f"gui/{os.getuid()}/{schedule.job(self.home, self.launchd.agents).label}"])
+        self.assertIn("Warning: the plist says 07:30, but launchd isn't running it", self.cli("check")[1])
+        plist.write_bytes(plistlib.dumps({"StartCalendarInterval": {"Weekday": 1, "Hour": 7, "Minute": 0}}))
+        self.assertIn("isn't one daily time, so jobscan leaves it alone", self.cli("check")[1])
+        schedule.install(self.home, time(7, 30), self.launchd.agents, self.launchd.run)
+        plist.unlink()
+        self.assertIn("Schedule: launchd holds a job with no plist: `jobscan schedule --off` removes it",
+                      self.cli("check")[1])
+        with mock.patch.object(schedule, "launchd", return_value=None):
+            self.assertIn("Schedule: not checked here (a cron line", self.cli("check")[1])
+        broken = schedule.Launchd(self.launchd.agents, mock.Mock(side_effect=FileNotFoundError("launchctl")))
+        with mock.patch.object(schedule, "launchd", return_value=broken):
+            code, out, _ = self.cli("check")
+        self.assertEqual(code, 0)
+        self.assertIn("Schedule: launchd couldn't be asked (FileNotFoundError: launchctl)", out)
 
     def test_a_key_only_in_the_environment_is_a_warning(self):
         self.write_install(key=None)
