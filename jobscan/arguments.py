@@ -13,7 +13,7 @@ about each one, quoting the posting, and writes a markdown digest of what is new
 schedule it. Everything lives under $JOBSCAN_HOME (default ~/.jobscan)."""
 SET_UP = """Set up, in order (a person in a terminal, or an agent by flags):
   1. jobscan init                  the search and the OpenRouter key (openrouter.ai/keys); a person can use
-                                   `jobscan ui` instead, a local page that does steps 1, 2 and 4
+                                   `jobscan ui` instead, a local page that does steps 1, 2, 4 and 7
        printf '%s\\n' "$KEY" | jobscan init --name ae --title 'Account Executive' \\
            --location London --location Remote --eligible-where 'the UK' --key-stdin
   2. jobscan email                 optional: each digest emailed from your own Gmail or iCloud account
@@ -202,7 +202,8 @@ def _ui(commands) -> None:
         "Serve a page on this machine (127.0.0.1 only) to set up a new install one step at a time, or edit this one "
         "from a summary. A new install asks for the OpenRouter key, then what you're looking for in your own words; "
         "one model call (reasoning off: seconds, a fraction of a cent) fills titles, titles to leave out, places and "
-        "tags as tick boxes, with suggestions beside them; then email and a summary to save. Suggest titles and "
+        "tags as tick boxes, with suggestions beside them; then email, when to run (macOS: the daily job `schedule` "
+        "sets up) and a summary to save, then what now. Suggest titles and "
         "Preview work on the search as it stands. It opens in your browser through a link with a one-time token; "
         "anyone with that link "
         "can use the page until it stops. Ctrl-C stops it. Saving rewrites the profile without its comments (the "

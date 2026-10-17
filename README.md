@@ -93,7 +93,7 @@ jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line f
 
 `run` prints the search name, the count of new postings and the digest's path, in `~/.jobscan/digests/<search>/`.
 
-**In a browser.** `jobscan ui` opens a page on your own machine that asks one thing at a time. Paste your OpenRouter key, then say what you're looking for in your own words ("account executive jobs with founding teams in London, happy to be remote"), typed or dictated (on a Mac, press Fn twice). One model call, a fraction of a cent, fills in the next steps: titles, titles to leave out, places and tags, each a tick box, with suggestions you may have missed beside them. Tick, add a few, set up email if you like, then Save writes everything and checks it loads. Run it again later to edit any step from a summary; after a first run, Preview shows what your search matches. The page runs only on 127.0.0.1, behind a one-time link, and never shows your key or password back to you.
+**In a browser.** `jobscan ui` opens a page on your own machine that asks one thing at a time. It starts by saying how jobscan works. Paste your OpenRouter key, then type what you're looking for in your own words ("account executive jobs with founding teams in London, happy to be remote"). One model call, a fraction of a cent, fills in the next steps: titles, titles to leave out, places and tags, each a tick box, with suggestions you may have missed beside them. Tick, add a few, set up email if you like (the page says how to get an app password), and choose when it runs: every day at 08:00 unless you change it. Save writes everything, checks it loads, sets up the daily run on a Mac (elsewhere it gives you a cron line), and then says what now: the command for a first run, where digests land, and how to report a problem or contribute. Run it again later to edit any step from a summary; after a first run, Preview shows what your search matches. The page runs only on 127.0.0.1, behind a one-time link, and never shows your key or password back to you.
 
 **With an agent.** Every step also works without a terminal, so a coding agent can set it up for you: point it at this repo and have it read `jobscan --help`, which lists the steps in order with examples. `init` and `email` take flags instead of asking, the key and the app password are read from stdin, and `jobscan check` confirms the install loads. After the first run, `jobscan titles` suggests titles to add or leave out and `jobscan preview` shows what your titles match among the stored postings, so you can tune them without another run.
 
@@ -101,7 +101,7 @@ jobscan schedule --at 08:00    # Mac: runs it daily; Linux: prints a cron line f
 
 | Command | Does |
 |---|---|
-| `jobscan ui` | A local page that sets everything up one step at a time from a sentence about what you want, or edits it from a summary |
+| `jobscan ui` | A local page that sets everything up one step at a time from a sentence about what you want, the daily run included, or edits it from a summary |
 | `jobscan init` | Asks for your search, your OpenRouter key and, optionally, an email account; writes `~/.jobscan`. With flags (`--name`, `--title`, `--location`, `--eligible-where`, `--key-stdin`…) it asks nothing |
 | `jobscan check` | Loads the install as a run would and shows what it holds, or the first problem |
 | `jobscan preview` | What your search matches among the postings the last run stored: new jobs, the cost to tag them, samples |
