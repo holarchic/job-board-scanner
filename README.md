@@ -83,9 +83,15 @@ Notifications are Mac only, and the schedule runs only while you're logged in.
 The repo is job-board-scanner; the command it installs is still `jobscan`.
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source "$HOME/.local/bin/env"
+curl -LsSf https://astral.sh/uv/install.sh | sh    # installs uv; skip this line and the next if you have it
+source "$HOME/.local/bin/env"                       # uv, in this window
 uv tool install git+https://github.com/holarchic/job-board-scanner   # fetches Python 3.11+ if needed
+uv tool update-shell                                # puts jobscan on your PATH for new windows
+```
+
+Then open a new terminal window (without it, `jobscan` is "command not found"):
+
+```bash
 jobscan ui                     # a page in your browser: your search, key, email and daily run
 jobscan run                    # the first run now, or wait for the daily one; prints your first digest's path
 ```
