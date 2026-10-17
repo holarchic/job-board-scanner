@@ -4,6 +4,8 @@ import argparse
 from datetime import time
 from pathlib import Path
 
+from jobscan import schedule
+
 DESCRIPTION = """Self-hosted job-board scanner. jobscan finds company job boards itself (Ashby, Greenhouse, Gem,
 Teamtailor, Personio, SmartRecruiters, Rippling, Workday and Oracle sites, from Common Crawl; Workable boards from the
 boards file), keeps the postings whose titles and locations match your search, has a language model answer your tags
@@ -61,10 +63,10 @@ def port(text: str) -> int:
 
 
 def clock(text: str) -> time:
-    hour, _, minute = text.partition(":")
-    if not (hour.isdigit() and minute.isdigit() and len(minute) == 2 and int(hour) < 24 and int(minute) < 60):
+    at = schedule.parse_at(text)
+    if at is None:
         raise argparse.ArgumentTypeError("use HH:MM, 24-hour, e.g. 08:00")
-    return time(int(hour), int(minute))
+    return at
 
 
 def _command(commands, name: str, summary: str, description: str, examples: list[str]) -> argparse.ArgumentParser:

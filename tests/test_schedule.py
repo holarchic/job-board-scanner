@@ -41,8 +41,10 @@ class StatefulLaunchctl:
 
     def __call__(self, args):
         self.calls.append(args[0])
-        label = args[1].rsplit("/", 1)[1] if args[0] == "bootout" else None
-        if args[0] == "bootout":
+        label = args[1].rsplit("/", 1)[1] if args[0] in ("bootout", "print") else None
+        if args[0] == "print":
+            code = 0 if label in self.loaded else 113  # launchctl print: "Could not find service"
+        elif args[0] == "bootout":
             code = 0 if self.loaded.pop(label, None) is not None else 3
         else:
             spec = plistlib.loads(Path(args[2]).read_bytes())
@@ -179,6 +181,36 @@ class ScheduleTest(unittest.TestCase):
         self.assertFalse(self.job.plist.exists())
         with self.assertRaises(schedule.ScheduleError):
             schedule.remove(self.home, self.agents, FakeLaunchctl(bootout=[5]))
+
+    def test_a_daily_time_reads_as_the_clock_says(self):
+        for text, at in [("08:00", time(8)), ("8:05", time(8, 5)), ("23:59", time(23, 59))]:
+            self.assertEqual(schedule.parse_at(text), at, text)
+        for text in ["24:00", "08:60", "08:5", "008:00", "8", "", "ab:cd", "²:00", "08:00:00", " 08:00"]:
+            self.assertIsNone(schedule.parse_at(text), text)
+
+    def test_the_scheduled_time_is_read_from_the_plist_as_written(self):
+        self.assertIsNone(schedule.scheduled_at(self.home, self.agents))
+        schedule.install(self.home, time(7, 45), self.agents, FakeLaunchctl(bootout=[3]))
+        self.assertEqual(schedule.scheduled_at(self.home, self.agents), time(7, 45))
+        for broken in [b"not a plist", plistlib.dumps({"StartCalendarInterval": {"Hour": 7}}),
+                       plistlib.dumps({"StartCalendarInterval": {"Hour": 25, "Minute": 0}}),
+                       plistlib.dumps({"StartCalendarInterval": {"Hour": True, "Minute": 0}}),
+                       plistlib.dumps({"StartCalendarInterval": [{"Hour": 7, "Minute": 0}]}), plistlib.dumps([1])]:
+            self.job.plist.write_bytes(broken)
+            self.assertIsNone(schedule.scheduled_at(self.home, self.agents), broken)
+
+    def test_in_place_needs_the_same_plist_and_launchd_holding_it(self):
+        launchd = schedule.Launchd(self.agents, StatefulLaunchctl())
+        self.assertFalse(schedule.in_place(self.home, time(8), launchd))
+        schedule.install(self.home, time(8), self.agents, launchd.run)
+        self.assertTrue(schedule.loaded(self.home, launchd))
+        self.assertTrue(schedule.in_place(self.home, time(8), launchd))
+        self.assertFalse(schedule.in_place(self.home, time(9), launchd))
+        with mock.patch.object(sys, "executable", "/elsewhere/python3"):  # uv moved the interpreter
+            self.assertFalse(schedule.in_place(self.home, time(8), launchd))
+        launchd.run(["bootout", f"{self.domain}/{self.job.label}"])  # unloaded, the plist left behind
+        self.assertFalse(schedule.loaded(self.home, launchd))
+        self.assertFalse(schedule.in_place(self.home, time(8), launchd))
 
     def test_cron_escapes_percent(self):
         home = self.home.parent / "100%"

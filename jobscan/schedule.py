@@ -35,8 +35,31 @@ class Job:
 Launchctl = Callable[[list[str]], subprocess.CompletedProcess]
 
 
+@dataclass(frozen=True)
+class Launchd:
+    """Where this user's launch agents live and how launchd is asked: the real ones from `launchd()`, fakes in tests."""
+    agents: Path
+    run: Launchctl
+
+
 def launchctl(args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(["launchctl", *args], capture_output=True, text=True, timeout=TIMEOUT, check=False)
+
+
+def launchd() -> Launchd | None:
+    """This Mac's launchd; None elsewhere, where a schedule is a cron line the user adds."""
+    if sys.platform != "darwin":
+        return None
+    return Launchd(agents=Path.home() / "Library" / "LaunchAgents", run=launchctl)
+
+
+def parse_at(text: str) -> time | None:
+    """A daily time as HH:MM on the 24-hour clock (the hour may be one digit), else None."""
+    hour, _, minute = text.partition(":")
+    if not (hour.isascii() and hour.isdigit() and minute.isascii() and minute.isdigit() and len(hour) <= 2
+            and len(minute) == 2 and int(hour) < 24 and int(minute) < 60):
+        return None
+    return time(int(hour), int(minute))
 
 
 def job(home: Path, agents: Path) -> Job:
@@ -56,6 +79,35 @@ def plist(job: Job, home: Path, at: time) -> bytes:
         "StandardOutPath": str(home / "launchd.log"),
         "StandardErrorPath": str(home / "launchd.log"),
     })
+
+
+def scheduled_at(home: Path, agents: Path) -> time | None:
+    """The time this install's plist runs at, as written; None when there is none or it isn't a daily plist."""
+    try:
+        spec = plistlib.loads(job(home, agents).plist.read_bytes())
+    except (OSError, plistlib.InvalidFileException, ValueError, TypeError):
+        return None
+    when = spec.get("StartCalendarInterval") if isinstance(spec, dict) else None
+    if not (isinstance(when, dict) and set(when) == {"Hour", "Minute"}
+            and all(type(v) is int for v in when.values()) and 0 <= when["Hour"] < 24 and 0 <= when["Minute"] < 60):
+        return None
+    return time(when["Hour"], when["Minute"])
+
+
+def loaded(home: Path, launchd: Launchd) -> bool:
+    """launchd's own answer: whether it holds this install's job, whatever its plist says."""
+    return launchd.run(["print", f"gui/{os.getuid()}/{job(home, launchd.agents).label}"]).returncode == 0
+
+
+def in_place(home: Path, at: time, launchd: Launchd) -> bool:
+    """The job `install` would set up is already there: the plist byte for byte (same time, same interpreter) and
+    loaded. A job left unloaded beside its plist (by hand, or a removal whose delete failed) is not."""
+    j = job(home, launchd.agents)
+    try:
+        written = j.plist.read_bytes()
+    except OSError:
+        return False
+    return written == plist(j, home, at) and loaded(home, launchd)
 
 
 def install(home: Path, at: time, agents: Path, run: Launchctl | None = None) -> Job:

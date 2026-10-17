@@ -147,16 +147,16 @@ def _schedule(home: Path, at: time | None) -> int:
         except ConfigError as e:
             print(f"jobscan: {e}", file=sys.stderr)
             return EXIT_USAGE
-    if sys.platform != "darwin":
+    launchd = schedule.launchd()
+    if launchd is None:
         print(schedule.cron_line(home, at) if at else "jobscan: remove the jobscan line with `crontab -e`")
         return EXIT_OK
-    agents = Path.home() / "Library" / "LaunchAgents"
     try:
         if at is None:
-            job = schedule.remove(home, agents)
+            job = schedule.remove(home, launchd.agents, launchd.run)
             print(f"unscheduled\t{job.plist}")
         else:
-            job = schedule.install(home, at, agents)
+            job = schedule.install(home, at, launchd.agents, launchd.run)
             print(f"scheduled\t{at:%H:%M}\t{job.plist}")
     except schedule.ScheduleError as e:
         print(f"jobscan: could not change the schedule: {e}", file=sys.stderr)
