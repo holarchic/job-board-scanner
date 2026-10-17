@@ -102,7 +102,7 @@ def scheduled_at(home: Path, agents: Path) -> time | None:
 class State:
     """This install's daily run as launchd and its plist have it."""
     plist: Path | None  # None: no plist
-    at: time | None  # the plist's daily time; None when it isn't one daily time
+    at: time | None  # the plist's daily time; None unless it is one daily time running `jobscan run --notify`
     loaded: bool  # launchd holds the label
     python_missing: bool  # the plist names an interpreter that no longer exists (a uv update moved it)
 
@@ -117,9 +117,10 @@ def state(home: Path, launchd: Launchd) -> State:
     except (OSError, ExpatError, ValueError, TypeError, AttributeError, LookupError, OverflowError):
         spec = None
     program = spec.get("ProgramArguments") if isinstance(spec, dict) else None
-    python = program[0] if isinstance(program, list) and program and isinstance(program[0], str) else None
-    return State(plist=j.plist, at=scheduled_at(home, launchd.agents), loaded=loaded(home, launchd),
-                 python_missing=python is not None and not Path(python).exists())
+    ours = isinstance(program, list) and len(program) == 5 and isinstance(program[0], str) and \
+        program[1:] == ["-m", "jobscan", "run", "--notify"]  # the command `plist` writes
+    return State(plist=j.plist, at=scheduled_at(home, launchd.agents) if ours else None,
+                 loaded=loaded(home, launchd), python_missing=ours and not Path(program[0]).exists())
 
 
 def loaded(home: Path, launchd: Launchd) -> bool:

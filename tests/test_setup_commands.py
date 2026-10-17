@@ -146,7 +146,12 @@ class CheckTest(CliHome):
         self.launchd.run(["bootout", f"gui/{os.getuid()}/{schedule.job(self.home, self.launchd.agents).label}"])
         self.assertIn("Warning: the plist says 07:30, but launchd isn't running it", self.cli("check")[1])
         plist.write_bytes(plistlib.dumps({"StartCalendarInterval": {"Weekday": 1, "Hour": 7, "Minute": 0}}))
-        self.assertIn("isn't one daily time, so jobscan leaves it alone", self.cli("check")[1])
+        self.assertIn("isn't a daily run as jobscan writes it, so jobscan leaves it alone", self.cli("check")[1])
+        for program in ("bad", ["/usr/bin/true"], [sys.executable, "-m", "jobscan", "discover", "--notify"]):
+            schedule.install(self.home, time(7, 30), self.launchd.agents, self.launchd.run)  # loaded, 07:30
+            spec = plistlib.loads(plist.read_bytes())
+            plist.write_bytes(plistlib.dumps({**spec, "ProgramArguments": program}))
+            self.assertIn("isn't a daily run as jobscan writes it", self.cli("check")[1], program)
         schedule.install(self.home, time(7, 30), self.launchd.agents, self.launchd.run)
         plist.unlink()
         self.assertIn("Schedule: launchd holds a job with no plist: `jobscan schedule --off` removes it",

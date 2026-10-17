@@ -92,7 +92,7 @@ def schedule_line(state: State | ScheduleError | None) -> str:
         return ("Schedule: launchd holds a job with no plist: `jobscan schedule --off` removes it" if state.loaded
                 else "Schedule: none (`jobscan schedule --at 08:00`, or `jobscan ui`, sets a daily run)")
     if state.at is None:
-        return (f"Schedule: {state.plist} isn't one daily time, so jobscan leaves it alone; "
+        return (f"Schedule: {state.plist} isn't a daily run as jobscan writes it, so jobscan leaves it alone; "
                 "`jobscan schedule --at HH:MM` replaces it")
     again = f"`jobscan schedule --at {state.at:%H:%M}` sets it up again"
     if state.python_missing:

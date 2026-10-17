@@ -32,6 +32,7 @@ from jobscan import (
     personio,
     rippling,
     scan,
+    schedule,
     smartrecruiters,
     store,
     tag,
@@ -43,6 +44,7 @@ from jobscan.records import Board, Posting
 from tests.fakes import (
     FakeFiles,
     FakeServer,
+    StatefulLaunchctl,
     anywhere,
     ashby_job,
     cdx_line,
@@ -1124,6 +1126,9 @@ class AgentSetupTest(RunFixture):
         self.calls = []
         for patcher in patch_smtp(self.calls):
             patcher.start()
+        # check asks launchd: a fake one, never the host's
+        mock.patch.object(schedule, "launchd", return_value=schedule.Launchd(
+            self.home.parent / "LaunchAgents", StatefulLaunchctl())).start()
         # init writes the OpenRouter config; here the model is the fake one.
         mock.patch.object(init, "CONFIG", f'[model]\nbase_url = "{self.model.url}"\nslug = "test/model"\n').start()
 
