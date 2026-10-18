@@ -28,13 +28,17 @@ def anywhere(text):
 
 class FakeServer:
     """Serves `routes[path]` = (status, body). A callable body gets the parsed JSON request and returns
-    (status, body). A bytes body is sent truncated: its Content-Length promises more than arrives.
-    Every request is recorded in `requests` as (method, path, json_body), and in `content_types` as a `ContentType`."""
+    (status, body). A bytes body is sent truncated: its Content-Length promises more than arrives. `encode(raw)`, when
+    set, gives the bytes sent and their Content-Encoding (None: no header).
+    Every request is recorded in `requests` as (method, path, json_body), in `content_types` as a `ContentType`, and its
+    Accept-Encoding header in `accept_encodings`."""
 
     def __init__(self):
         self.routes = {}
         self.requests = []
         self.content_types = []
+        self.accept_encodings = []
+        self.encode = None
         server = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -48,12 +52,18 @@ class FakeServer:
             def _answer(self, payload):
                 server.requests.append((self.command, self.path, payload))
                 server.content_types.append(ContentType(self.command, self.path, self.headers.get("Content-Type")))
+                server.accept_encodings.append(self.headers.get("Accept-Encoding"))
                 status, body = server.routes.get(self.path, (404, {"error": "not found"}))
                 if callable(body):
                     status, body = body(payload)
                 truncated = isinstance(body, bytes)
                 raw = body if truncated else body.encode() if isinstance(body, str) else json.dumps(body).encode()
+                encoding = None
+                if server.encode is not None:
+                    raw, encoding = server.encode(raw)
                 self.send_response(status)
+                if encoding is not None:
+                    self.send_header("Content-Encoding", encoding)
                 for name, value in getattr(server, "extra_headers", {}).items():
                     self.send_header(name, value)
                 self.send_header("Content-Type", "application/json")

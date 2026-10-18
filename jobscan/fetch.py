@@ -7,6 +7,7 @@ import logging
 import time
 import urllib.error
 import urllib.request
+import zlib
 from collections.abc import Iterator
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
@@ -26,7 +27,8 @@ RETRY_PAUSES = (2, 10)  # seconds before the 2nd and 3rd tries
 RETRYABLE = {429, 500, 502, 503, 504}
 WORKERS = 8
 IN_FLIGHT = 2 * WORKERS  # boards fetching or fetched but not yet consumed: bounds postings held in memory
-HEADERS = {"User-Agent": "jobscan (+https://github.com/holarchic/job-board-scanner)"}
+HEADERS = {"User-Agent": "jobscan (+https://github.com/holarchic/job-board-scanner)", "Accept-Encoding": "gzip"}
+MAX_BODY = 256 << 20  # bytes an answer may inflate to; the largest board seen (Anduril's Greenhouse) inflates to 44 MB
 # OSError covers URLError, timeouts and resets; ValueError covers bad JSON and bad UTF-8;
 # RecursionError covers deeply nested JSON on Python < 3.14. XML decoding raises BoardError itself.
 FAILURES = (OSError, http.client.HTTPException, ValueError, RecursionError, BoardError)
@@ -189,7 +191,8 @@ def _get(board: Board, url: str, body: bytes | None = None) -> bytes:
             with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
                 if response.status != 200:
                     raise BoardError(f"HTTP {response.status}")
-                return response.read()
+                # Read whole, without a size: a connection cut short then raises IncompleteRead, which is retried.
+                return _decoded(response.read(), response.headers.get("Content-Encoding"))
         except urllib.error.HTTPError as e:
             e.close()
             if e.code == 429:  # every one, so rate limiting shows even when a retry then succeeds
@@ -200,6 +203,25 @@ def _get(board: Board, url: str, body: bytes | None = None) -> bytes:
             if pause is None:
                 raise
         time.sleep(pause)
+
+
+def _decoded(body: bytes, encoding: str | None) -> bytes:
+    """The answer's bytes as sent before its Content-Encoding: gzip (the one asked for) inflated to at most
+    MAX_BODY; any other encoding fails the board."""
+    if encoding is None or encoding.strip().casefold() == "identity":
+        return body
+    if encoding.strip().casefold() != "gzip":
+        raise BoardError(f"answer encoded {encoding!r}, not asked for")
+    inflater = zlib.decompressobj(16 + zlib.MAX_WBITS)  # gzip framing
+    try:
+        inflated = inflater.decompress(body, MAX_BODY + 1)
+    except zlib.error:
+        raise BoardError("malformed gzip") from None
+    if len(inflated) > MAX_BODY:
+        raise BoardError(f"answer inflates past {MAX_BODY >> 20} MB")
+    if not inflater.eof:
+        raise BoardError("malformed gzip: the stream ends early")
+    return inflated
 
 
 def _status(e: Exception) -> int | None:

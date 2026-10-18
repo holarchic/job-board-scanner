@@ -1,3 +1,4 @@
+import gzip
 import json
 import tempfile
 import time
@@ -245,6 +246,33 @@ class FetchBoardTest(unittest.TestCase):
                          [("POST", {"limit": 20}), ("GET", None)])
         self.assertEqual(self.server.content_types, [("POST", "/wday/cxs/acme/ext/jobs", "application/json"),
                                                      ("GET", "/wday/cxs/acme/ext/jobs", None)])
+
+    def test_every_request_asks_for_gzip_and_a_gzip_answer_is_read_inflated(self):
+        self.serve("acme", 200, {"jobs": [ashby_job("1", "Account Executive")]})
+        self.server.encode = lambda raw: (gzip.compress(raw), "gzip")
+        board = self.board()
+        postings = self.fetch_one()
+        self.assertEqual([p.title for p in postings], ["Account Executive"])
+        fetch._get(board, f"{self.server.url}/posting-api/job-board/acme", b"{}")
+        self.assertEqual(self.server.accept_encodings, ["gzip", "gzip"])
+
+    def test_a_plain_answer_is_read_as_sent(self):
+        self.serve("acme", 200, {"jobs": [ashby_job("1", "Account Executive")]})
+        self.server.encode = lambda raw: (raw, "identity")
+        self.assertEqual(len(self.fetch_one()), 1)
+
+    def test_a_bad_or_oversized_gzip_answer_fails_its_board(self):
+        whole = gzip.compress(json.dumps({"jobs": []}).encode())
+        for name, encode, reason in [
+            ("not gzip", lambda raw: (raw, "gzip"), "malformed gzip"),
+            ("cut short", lambda raw: (whole[:len(whole) // 2], "gzip"), "malformed gzip: the stream ends early"),
+            ("not asked for", lambda raw: (raw, "br"), "answer encoded 'br', not asked for"),
+            ("too big", lambda raw: (gzip.compress(b" " * 2048 + raw), "gzip"), "answer inflates past 0 MB"),
+        ]:
+            with self.subTest(name), mock.patch.object(fetch, "MAX_BODY", 1024):
+                self.serve("acme", 200, {"jobs": []})
+                self.server.encode = encode
+                self.assertEqual(self.fetch_one(), reason)
 
     def test_places_reach_each_read(self):
         seen = []
