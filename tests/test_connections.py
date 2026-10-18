@@ -1,10 +1,12 @@
 import gc
 import http.client
 import json
+import socket
 import threading
 import time
 import unittest
 import warnings
+from unittest import mock
 
 from jobscan.connections import MAX_REDIRECTS, Connections
 from tests.fakes import FakeServer
@@ -119,6 +121,33 @@ class ConnectionsTest(unittest.TestCase):
         self.assertEqual(len(self.server.client_ports), 3)
         self.assertEqual(len(set(self.server.client_ports)), 2)
 
+    def test_a_200_from_a_server_closing_every_answer_that_times_out_closes_its_socket(self):
+        plain = self.started(keep_alive=False)  # the response, not the connection, holds the socket
+        plain.routes["/slow"] = (200, b'{"page": "sl')
+        plain.stall.add("/slow")
+        self.addCleanup(plain.released.set)
+        made, dial = [], socket.create_connection
+
+        def dialled(*args, **kwargs):
+            made.append(dial(*args, **kwargs))
+            return made[-1]
+
+        with mock.patch("socket.create_connection", dialled):
+            try:
+                Connections(0.2).send(f"{plain.url}/slow", None, {})
+            except TimeoutError as e:
+                kept = e  # its traceback keeps everything send held, so nothing is closed by collection
+        self.assertEqual([sock.fileno() for sock in made], [-1])
+        del kept
+
+    def test_an_ipv6_host_is_asked_on_the_port_its_url_names_or_its_schemes(self):
+        for url, address in [("http://[::1]/a", ("::1", 80)), ("https://[2001:db8::abcd]/a", ("2001:db8::abcd", 443)),
+                             ("http://[::1]:8080/a", ("::1", 8080))]:
+            with self.subTest(url), mock.patch("socket.create_connection", side_effect=ConnectionRefusedError) as dial:
+                with self.assertRaises(ConnectionRefusedError):
+                    self.connections.send(url, None, {})
+                self.assertEqual(dial.call_args.args[0], address)
+
     def test_a_gets_redirects_are_followed(self):
         other = self.started(keep_alive=True)
         other.routes["/x"] = (200, {"page": "x"})
@@ -134,18 +163,23 @@ class ConnectionsTest(unittest.TestCase):
         self.server.routes["/nowhere"] = (302, {})
         self.server.routes["/ftp"] = (301, {}, {"Location": "ftp://127.0.0.1/a"})
         self.server.routes["/loop"] = (302, {}, {"Location": "/loop"})
+        self.server.routes["/badport"] = (302, {}, {"Location": "http://127.0.0.1:99999/a"})
         self.assertEqual(self.send("/moved", b"{}").status, 302)  # a POST's redirect
-        self.assertEqual([self.send(path).status for path in ("/nowhere", "/ftp", "/loop")], [302, 301, 302])
+        self.assertEqual([self.send(path).status for path in ("/nowhere", "/ftp", "/loop", "/badport")],
+                         [302, 301, 302, 302])
         self.assertEqual(sum(path == "/loop" for _, path, _ in self.server.requests), MAX_REDIRECTS + 1)
         self.assertNotIn("/a", [path for _, path, _ in self.server.requests])
 
     def test_only_http_urls_are_sent(self):
-        for url in ["ftp://127.0.0.1/a", "http:///a", "/a"]:
+        for url in ["ftp://127.0.0.1/a", "http:///a", "/a", "http://127.0.0.1:99999/a", "http://[::1/a"]:
             with self.assertRaises(ValueError, msg=url):
                 self.connections.send(url, None, {})
 
     def test_close_ends_every_kept_connection(self):
+        together = threading.Barrier(3, timeout=5)  # three live threads: an ended one's id can be reused
+
         def work():
+            together.wait()
             self.send("/a")
 
         workers = [threading.Thread(target=work) for _ in range(3)]
