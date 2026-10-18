@@ -15,7 +15,7 @@ SET_UP = """Set up, in order (a person in a terminal, or an agent by flags):
   1. jobscan init                  the search and the OpenRouter key (openrouter.ai/keys); a person can use
                                    `jobscan ui` instead, a local page that does steps 1, 2, 4 and 7
        printf '%s\\n' "$KEY" | jobscan init --name ae --title 'Account Executive' \\
-           --location London --location Remote --eligible-where 'the UK' --key-stdin
+           --location London --location UK --location Remote --eligible-where 'the UK' --key-stdin
   2. jobscan email                 optional: each digest emailed from your own Gmail or iCloud account
        printf '%s\\n' "$APP_PASSWORD" | jobscan email --to me@gmail.com --password-stdin
   3. jobscan boards add URL        optional: a company discovery misses

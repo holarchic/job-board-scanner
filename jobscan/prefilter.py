@@ -2,7 +2,7 @@
 import re
 from dataclasses import dataclass
 from enum import Enum
-from functools import cache
+from functools import lru_cache
 
 from jobscan import regions
 from jobscan.config import Profile
@@ -71,7 +71,7 @@ class _Places:
     regions: frozenset[str]  # case-folded names of each country a location names and of the regions holding it
 
 
-@cache
+@lru_cache(maxsize=64)  # a run holds one profile; the set-up page a draft per edit
 def _places(locations: tuple[str, ...]) -> _Places:
     remote = {t for t in locations if REMOTE.search(t.casefold()) and _unplaced(t.casefold())}
     return _Places(named=tuple(t for t in locations if t not in remote), remote=bool(remote),

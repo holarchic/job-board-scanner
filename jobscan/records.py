@@ -11,7 +11,8 @@ class Get(Protocol):
     def __call__(self, url: str, body: bytes | None = None) -> bytes: ...
 
 
-# The profile's location test: does this place's text name one of its locations? (`prefilter.in_places`)
+# The profile's location test: is this place's text in the profile's places? (`prefilter.in_places`: one of its
+# locations named, or, for a remote text, a country it names or a region holding one, or no place at all)
 Places = Callable[[str], bool]
 
 

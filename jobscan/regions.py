@@ -9,6 +9,7 @@ table. Membership is generous where usage varies (Türkiye and Cyprus are Europe
 Europe): a wrong inclusion costs one tagged posting, a wrong exclusion hides a job. The EU and the EEA are exact,
 without the UK."""
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 # Every country by its name, with the other names ads and profiles give it. A name holding another country's name
 # is listed under its own country, so the longer name is read first: "New England" is never England, nor "New
@@ -69,8 +70,15 @@ _SOUTH_WEST = ("Southwest", "South-West", "South West", "Southwestern", "South-W
 _NORTH_EAST = ("Northeast", "North-East", "North East", "Northeastern", "North-Eastern", "North Eastern")
 _NORTH_WEST = ("Northwest", "North-West", "North West", "Northwestern", "North-Western", "North Western")
 
-# Each region's names as ads write them, with its countries.
-REGIONS: tuple[tuple[tuple[str, ...], frozenset[str]], ...] = tuple((names, frozenset(members)) for names, members in (
+
+@dataclass(frozen=True)
+class Region:
+    names: tuple[str, ...]  # as ads write them
+    countries: frozenset[str]  # COUNTRIES keys
+
+
+# Every region, by its names, with its countries.
+REGIONS: tuple[Region, ...] = tuple(Region(names, frozenset(countries)) for names, countries in (
     (("Europe", "European"), _EUROPE),
     (_part_of("Europe", "Continental", "Mainland"),
      _EUROPE - {"United Kingdom", "Ireland", "Iceland", "Malta", "Cyprus"}),
@@ -113,7 +121,7 @@ _BY_NAME = {name.casefold(): country for country, others in COUNTRIES.items() fo
 
 # Every region and country name, case-folded, longest first: read in that order, "Eastern Europe" is never read as
 # "Europe", nor "Northern Ireland" as "Ireland".
-NAMES: tuple[str, ...] = tuple(sorted({n.casefold() for names, _ in REGIONS for n in names} | _BY_NAME.keys(),
+NAMES: tuple[str, ...] = tuple(sorted({n.casefold() for r in REGIONS for n in r.names} | _BY_NAME.keys(),
                                       key=lambda n: (-len(n), n)))
 
 
@@ -123,4 +131,4 @@ def containing(places: Iterable[str]) -> frozenset[str]:
     "europe", "emea", "uk&i" and the rest, never "eu". A country is the smallest region holding itself."""
     countries = {_BY_NAME[p] for p in (p.strip().casefold() for p in places) if p in _BY_NAME}
     return (frozenset(name for name, country in _BY_NAME.items() if country in countries)
-            | frozenset(n.casefold() for names, members in REGIONS if countries & members for n in names))
+            | frozenset(n.casefold() for r in REGIONS if countries & r.countries for n in r.names))

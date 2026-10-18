@@ -64,8 +64,8 @@ It works best where a few titles narrow the field and the posting answers the re
 ## How it works
 
 - **Discovery:** reads each board host's captures straight from Common Crawl's index files, in about a minute. `run` refreshes the list every 30 days and when an upgrade adds a job site. If any crawl can't be read, the old list stays.
-- **Fetch:** every board's public job API or feed, eight at a time. One board's failure never stops the run.
-- **Filter:** titles and locations match whole words, ignoring case, before any model call.
+- **Fetch:** every board's public job API or feed, eight at a time on each job site, every site at once. One board's failure never stops the run.
+- **Filter:** titles and locations match whole words, ignoring case, before any model call. A remote job counts when it names one of your places, a country you list by another name, or a region holding one.
 - **Describe:** SmartRecruiters, Rippling, Workday and Oracle list jobs without descriptions, so each match's description is fetched on its own. If that fails, the posting waits for the next run.
 - **Tag:** one model call per posting with all your tags, a strict JSON schema, and each quote checked against the posting text.
 - **Store:** everything in one SQLite file under `~/.jobscan`; no runtime dependencies beyond standard-library Python.

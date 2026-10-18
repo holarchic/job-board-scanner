@@ -32,8 +32,9 @@ Return JSON with:
 - `leave_out`: titles they said to skip.
 - `near_misses`: up to 6 real titles, common in job ads, that their titles match as words but are different jobs,
   to leave out ("Account Executive Assistant"); never the same job at another level ("Senior", "Junior").
-- `places`: the places they named or implied, as job ads write locations ("London", "Remote").
-- `other_places`: up to 4 other ways job ads commonly write those same places ("UK", "United Kingdom" for London);
+- `places`: the places they named or implied, as job ads write locations, with the country of each city named
+  ("London", "UK", "Remote").
+- `other_places`: up to 4 other ways job ads commonly write those same places ("United Kingdom", "England" for UK);
   never a wider area than they asked for.
 - `eligible_where`: where they can work from, in a few words: what they said, else the country of their places
   ("the UK" for London); "" if no place names a country.
