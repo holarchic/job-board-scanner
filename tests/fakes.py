@@ -34,8 +34,8 @@ class FakeServer:
     after the answer, unannounced, and one in `hang_up` closes it unanswered. A path in `stall` sends its truncated
     body, then holds the connection open until `released` is set.
     Every request is recorded in `requests` as (method, path, json_body), in `content_types` as a `ContentType`, its
-    Accept-Encoding header in `accept_encodings`, and its client's port in `client_ports` (one per connection);
-    `closed` counts connections ended."""
+    Accept-Encoding header in `accept_encodings`, and its client's port in `client_ports` (distinct ports, distinct
+    connections); `closed` counts connections ended."""
 
     def __init__(self, keep_alive=False):
         self.routes = {}
