@@ -11,6 +11,7 @@ from unittest import mock
 
 from jobscan import ashby, fetch, payload
 from jobscan.config import ConfigError
+from jobscan.connections import Connections
 from jobscan.records import Board, BoardError
 from tests.fakes import (
     FakeServer,
@@ -210,8 +211,10 @@ class FetchBoardTest(unittest.TestCase):
         self.serve("gone", 404, {"error": "not found"})
         self.serve("busy", 503, {"error": "busy"})
         self.serve("bad", 200, "{not json")
-        _, failed = split([self.board(s) for s in ("gone", "busy", "bad")])
-        self.assertEqual({f.board.slug: f.http_status for f in failed}, {"gone": 404, "busy": 503, "bad": None})
+        self.serve("accepted", 203, {"jobs": []})
+        _, failed = split([self.board(s) for s in ("gone", "busy", "bad", "accepted")])
+        self.assertEqual({f.board.slug: f.http_status for f in failed},
+                         {"gone": 404, "busy": 503, "bad": None, "accepted": 203})
 
     def test_every_429_response_is_logged(self):
         for statuses, logged in [([429, 200], 1), ([429, 429, 429], 3), ([503, 503, 429], 1)]:
@@ -227,7 +230,7 @@ class FetchBoardTest(unittest.TestCase):
     def test_slow_consumer_bounds_boards_in_flight(self):
         started = []
 
-        def fake_fetch(board, places):
+        def fake_fetch(connections, board, places):
             started.append(board.id)
             return fetch.BoardFetch(board, ())
 
@@ -244,7 +247,7 @@ class FetchBoardTest(unittest.TestCase):
         # WORKERS threads could never fill the barrier.
         together = threading.Barrier(3 * fetch.WORKERS, timeout=10)
 
-        def fake_fetch(board, places):
+        def fake_fetch(connections, board, places):
             with lock:
                 running[board.ats] += 1
                 peak[board.ats] = max(peak[board.ats], running[board.ats])
@@ -270,7 +273,7 @@ class FetchBoardTest(unittest.TestCase):
     def test_a_slow_consumer_bounds_boards_in_flight_per_lane(self):
         lock, started = threading.Lock(), Counter()
 
-        def fake_fetch(board, places):
+        def fake_fetch(connections, board, places):
             with lock:
                 started[board.ats] += 1
             return fetch.BoardFetch(board, ())
@@ -289,9 +292,9 @@ class FetchBoardTest(unittest.TestCase):
 
     def test_a_body_is_posted_as_json_and_a_bare_url_is_a_get(self):
         self.server.routes["/wday/cxs/acme/ext/jobs"] = (200, lambda payload: (200, {"echo": payload}))
-        board = self.board()
-        posted = fetch._get(board, f"{self.server.url}/wday/cxs/acme/ext/jobs", b'{"limit": 20}')
-        fetched = fetch._get(board, f"{self.server.url}/wday/cxs/acme/ext/jobs")
+        board, connections = self.board(), self.enterContext(Connections(fetch.TIMEOUT))
+        posted = fetch._get(connections, board, f"{self.server.url}/wday/cxs/acme/ext/jobs", b'{"limit": 20}')
+        fetched = fetch._get(connections, board, f"{self.server.url}/wday/cxs/acme/ext/jobs")
         self.assertEqual((json.loads(posted), json.loads(fetched)), ({"echo": {"limit": 20}}, {"echo": None}))
         self.assertEqual([(method, payload) for method, _, payload in self.server.requests],
                          [("POST", {"limit": 20}), ("GET", None)])
@@ -304,7 +307,8 @@ class FetchBoardTest(unittest.TestCase):
         board = self.board()
         postings = self.fetch_one()
         self.assertEqual([p.title for p in postings], ["Account Executive"])
-        fetch._get(board, f"{self.server.url}/posting-api/job-board/acme", b"{}")
+        connections = self.enterContext(Connections(fetch.TIMEOUT))
+        fetch._get(connections, board, f"{self.server.url}/posting-api/job-board/acme", b"{}")
         self.assertEqual(self.server.accept_encodings, ["gzip", "gzip"])
 
     def test_a_gzip_answer_in_several_members_is_read_whole(self):
@@ -354,6 +358,74 @@ class FetchBoardTest(unittest.TestCase):
         _, (failure,) = split([board])
         self.assertTrue(failure.reason.startswith("network"))
 
+
+
+class KeptConnectionTest(unittest.TestCase):
+    """Fetch, descriptions and company lookups each keep their connections, at most one per worker."""
+
+    def setUp(self):
+        self.server = FakeServer(keep_alive=True)
+        self.addCleanup(self.server.close)
+        patcher = mock.patch.object(fetch, "RETRY_PAUSES", (0, 0))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def ashby(self, slug):
+        self.server.routes[f"/posting-api/job-board/{slug}"] = (200, {"jobs": [ashby_job(slug, f"AE {slug}")]})
+        return Board(ats="ashby", slug=slug, company="x", api_url=f"{self.server.url}/posting-api/job-board/{slug}")
+
+    def test_a_cut_answer_is_tried_again_on_a_new_connection(self):
+        board = self.ashby("acme")
+        whole = json.dumps({"jobs": [ashby_job("1", "AE")]})  # text: sent whole; bytes are sent cut
+        for sent, outcome in [([b'{"jobs": [', b'{"jobs"', whole], "AE"),
+                                 ([b'{"jobs": [', b'{"jobs"', b"{"], "network: IncompleteRead")]:
+            with self.subTest(outcome):
+                before = len(self.server.requests)
+                answers = iter(sent)
+                self.server.routes["/posting-api/job-board/acme"] = (200, lambda _, a=answers: (200, next(a)))
+                fetched, failed = split([board])
+                self.assertEqual([p.title for f in fetched for p in f.postings] or [f.reason for f in failed],
+                                 [outcome])
+                ports = self.server.client_ports[before:]
+                self.assertEqual((len(ports), len(set(ports))), (3, 3))  # each cut connection left behind
+
+    def test_a_lane_reads_over_at_most_a_connection_per_worker(self):
+        boards = [self.ashby(f"b{n:02d}") for n in range(3 * fetch.WORKERS)]
+        fetched, failed = split(boards)
+        self.assertEqual(failed, [])
+        self.assertEqual(sorted((f.board.slug, [p.title for p in f.postings]) for f in fetched),
+                         [(b.slug, [f"AE {b.slug}"]) for b in boards])
+        self.assertEqual(sorted(path for _, path, _ in self.server.requests),
+                         sorted(f"/posting-api/job-board/{b.slug}" for b in boards))
+        self.assertLessEqual(len(set(self.server.client_ports)), fetch.WORKERS)
+
+    def test_descriptions_are_read_over_at_most_a_connection_per_worker(self):
+        board = fetch.board_for("Acme", f"{self.server.url}/v1/companies/acme/postings")
+        ids = [str(n) for n in range(3 * fetch.WORKERS)]
+        self.server.routes["/v1/companies/acme/postings?limit=100&offset=0"] = (200, smartrecruiters_page(
+            [smartrecruiters_job(n, "AE") for n in ids]))
+        ((fetched,), _) = split([board])
+        listed = len(self.server.requests)
+        for n in ids:
+            self.server.routes[f"/v1/companies/acme/postings/{n}"] = (200, smartrecruiters_detail(f"AE {n}"))
+        outcomes = fetch.describe_all([(board, p) for p in fetched.postings])
+        self.assertTrue(all(isinstance(o, fetch.Described) for o in outcomes), outcomes)
+        self.assertEqual([o.posting.description.rsplit("\n", 1)[-1] for o in outcomes],
+                         [f"AE {p.key.rsplit(':', 1)[-1]} role." for p in fetched.postings])
+        self.assertEqual(sorted(path for _, path, _ in self.server.requests[listed:]),
+                         sorted(f"/v1/companies/acme/postings/{n}" for n in ids))
+        self.assertLessEqual(len(set(self.server.client_ports[listed:])), fetch.WORKERS)
+
+    def test_companies_are_looked_up_over_at_most_a_connection_per_worker(self):
+        boards = [fetch.board_for("", f"{self.server.url}/v1/boards/b{n:02d}/jobs") for n in range(3 * fetch.WORKERS)]
+        for board in boards:
+            self.server.routes[f"/v1/boards/{board.slug}"] = (200, {"name": f"Company {board.slug}"})
+        outcomes = fetch.company_all(boards)
+        self.assertEqual([(o.board.slug, o.company.name) for o in outcomes],
+                         [(b.slug, f"Company {b.slug}") for b in boards])
+        self.assertEqual(sorted(path for _, path, _ in self.server.requests),
+                         sorted(f"/v1/boards/{b.slug}" for b in boards))
+        self.assertLessEqual(len(set(self.server.client_ports)), fetch.WORKERS)
 
 
 class DescribeAllTest(unittest.TestCase):

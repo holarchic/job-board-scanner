@@ -143,7 +143,7 @@ class ReadTest(unittest.TestCase):
     def test_a_malformed_link_fails_the_board_through_fetch(self):
         for path in [[], {}]:
             site = workday_site([{"title": "AE", "externalPath": path, "locationsText": "London"}], {})
-            with mock.patch.object(fetch, "_get", lambda board, url, body=None, site=site: json.dumps(
+            with mock.patch.object(fetch, "_get", lambda connections, board, url, body=None, site=site: json.dumps(
                     site(json.loads(body))[1]).encode()):
                 (outcome,) = fetch.fetch_each([BOARD], uk)
             self.assertIsInstance(outcome, fetch.BoardFailure, path)
