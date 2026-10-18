@@ -9,7 +9,8 @@ import urllib.error
 import urllib.request
 import zlib
 from collections.abc import Iterator
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
@@ -25,8 +26,8 @@ ADAPTERS = {ashby.ATS: ashby, greenhouse.ATS: greenhouse, workable.ATS: workable
 TIMEOUT = 20
 RETRY_PAUSES = (2, 10)  # seconds before the 2nd and 3rd tries
 RETRYABLE = {429, 500, 502, 503, 504}
-WORKERS = 8
-IN_FLIGHT = 2 * WORKERS  # boards fetching or fetched but not yet consumed: bounds postings held in memory
+WORKERS = 8  # per ATS lane (`fetch_each`); describe_all and company_all run one pool of this size
+IN_FLIGHT = 2 * WORKERS  # per lane: boards fetching or fetched but not yet consumed, bounding postings held
 HEADERS = {"User-Agent": "jobscan (+https://github.com/holarchic/job-board-scanner)", "Accept-Encoding": "gzip"}
 MAX_BODY = 256 << 20  # bytes an answer may inflate to; the largest board seen (Anduril's Greenhouse) inflates to 44 MB
 # OSError covers URLError, timeouts and resets; ValueError covers bad JSON and bad UTF-8;
@@ -130,16 +131,37 @@ def same_job(key: str) -> str:
 
 def fetch_each(boards: list[Board], places: Places) -> Iterator[BoardFetch | BoardFailure]:
     """Every board's outcome as it completes; `places` is the profile's location test, which an adapter may read only
-    the matching postings by (Workday does). A board is submitted only as an earlier outcome is handed over, so
-    at most IN_FLIGHT boards' postings are held here (plus whatever the caller keeps), however many boards there are."""
-    queue = iter(boards)
-    with ThreadPoolExecutor(WORKERS) as pool:
-        running = {pool.submit(_fetch_isolated, b, places) for b in itertools.islice(queue, IN_FLIGHT)}
+    the matching postings by (Workday does). Each ATS reads in its own lane of WORKERS, every lane at once: no ATS
+    sees more requests at a time than one shared pool gave it, and the fetch lasts as long as its slowest ATS rather
+    than all of them end to end. A board is submitted only as an earlier outcome of its lane is handed over, so at
+    most IN_FLIGHT boards' postings per lane are held here (plus whatever the caller keeps), however many boards."""
+    lanes: dict[str, list[Board]] = {}
+    for board in boards:
+        lanes.setdefault(board.ats, []).append(board)
+    queues = {ats: iter(lane) for ats, lane in lanes.items()}
+    left = {ats: len(lane) for ats, lane in lanes.items()}
+    started = time.monotonic()
+    with ExitStack() as stack:
+        pools = {ats: stack.enter_context(ThreadPoolExecutor(WORKERS)) for ats in lanes}
+        running: dict[Future, str] = {}
+
+        def submit(ats: str, n: int) -> None:
+            for board in itertools.islice(queues[ats], n):
+                running[pools[ats].submit(_fetch_isolated, board, places)] = ats
+
+        for ats in lanes:
+            submit(ats, IN_FLIGHT)
         while running:
-            done, running = wait(running, return_when=FIRST_COMPLETED)
+            done, _ = wait(running, return_when=FIRST_COMPLETED)
             while done:
-                outcome = done.pop().result()  # popped, so the finished future and its postings aren't kept
-                running |= {pool.submit(_fetch_isolated, b, places) for b in itertools.islice(queue, 1)}
+                future = done.pop()  # popped and dropped, so the finished future and its postings aren't kept
+                ats, outcome = running.pop(future), future.result()
+                del future
+                submit(ats, 1)
+                left[ats] -= 1
+                if not left[ats]:
+                    log.info("fetch_lane_done ats=%s boards=%d seconds=%.0f", ats, len(lanes[ats]),
+                             time.monotonic() - started)
                 yield outcome
                 del outcome
 
