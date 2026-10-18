@@ -175,6 +175,20 @@ class RunTest(RunFixture):
         self.assertIn("Founding Account Executive", Path(path).read_text())
         self.assertEqual(len(self.digests()), 2)
 
+    def test_remote_jobs_reach_the_digest_only_where_the_profile_can_work(self):
+        (self.home / "profiles" / "ae.toml").write_text(PROFILE.replace('["London"]', '["London", "UK", "Remote"]'))
+        self.jobs = [ashby_job("1", "Account Executive", location="Remote - United States"),
+                     ashby_job("2", "Account Executive", location="Remote - EMEA"),
+                     ashby_job("3", "Account Executive", location="Remote"),
+                     ashby_job("4", "Account Executive", location="Canada / Remote")]
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        text = Path(path).read_text()
+        self.assertIn("## Acme — Account Executive · Remote - EMEA", text)
+        self.assertIn("## Acme — Account Executive · Remote\n", text)
+        self.assertNotIn("United States", text)
+        self.assertNotIn("Canada", text)
+
     def test_the_run_times_its_steps_before_fetching(self):
         self.run_cli()
         self.assert_logged_in_order(r"run_start profile=ae setup_seconds=\d+\.\d$",

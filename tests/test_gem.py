@@ -66,12 +66,14 @@ class ParseTest(unittest.TestCase):
             self.assertEqual(gem.parse(self.board, [job])[0].location, expected)
 
     def test_remote_is_added_unless_a_name_says_remote_as_a_word(self):
-        remote_only = Profile(name="r", titles=("AE",), exclude_titles=(), locations=("Remote",), eligible_where="",
-                              tags=(), custom_tags=())
+        # A remote job in the United States is in the places of a profile naming the country another way only when
+        # its location says remote.
+        remote_us = Profile(name="r", titles=("AE",), exclude_titles=(), locations=("USA", "Remote"), eligible_where="",
+                            tags=(), custom_tags=())
         for location, offices in [("Work remotely", ()), ("United States", [("RemoteHQ", "")])]:
             (p,) = gem.parse(self.board, [gem_job("1", "AE", location, offices=offices, location_type="remote")])
             self.assertTrue(p.location.endswith(" / Remote"), p.location)
-            self.assertTrue(prefilter.matches(p, remote_only), p.location)
+            self.assertTrue(prefilter.matches(p, remote_us), p.location)
 
     def test_missing_location_and_offices_are_empty(self):
         for change in [{"location": None, "offices": None}, {"location": {"name": ""}, "offices": []}]:

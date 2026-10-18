@@ -48,8 +48,10 @@ class HelpTest(unittest.TestCase):
                          [("work_policy", ("remote", "hybrid", "onsite", "unknown"))])
         self.assertEqual(prefilter.verdict(profile, "Senior Product Manager", "London"), prefilter.Verdict.MATCH)
         self.assertEqual(prefilter.verdict(profile, "Product Marketing Manager", "London"), prefilter.Verdict.OTHER)
-        self.assertEqual(prefilter.verdict(profile, "Associate Product Manager", "Remote, US"),
+        self.assertEqual(prefilter.verdict(profile, "Associate Product Manager", "Remote, EMEA"),
                          prefilter.Verdict.EXCLUDED)
+        self.assertEqual(prefilter.verdict(profile, "Senior Product Manager", "Remote - US"), prefilter.Verdict.OTHER)
+        self.assertEqual(prefilter.verdict(profile, "Senior Product Manager", "Remote"), prefilter.Verdict.MATCH)
 
     def test_a_port_is_a_port(self):
         self.assertEqual(arguments.port("8765"), 8765)

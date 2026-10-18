@@ -159,7 +159,7 @@ tags = ["founding", "location_eligible", "language_required", "tech_company"]
 definition = "The company sells to businesses, not consumers."
 ```
 
-`locations` is checked against the posting's location field only. `eligible_where` is what `location_eligible` asks the model about.
+`locations` is checked against the posting's location field only. `"Remote"` keeps remote jobs that name no place. A remote job that names a country you list, by any of its names, or a region holding one, is kept too, so with `"UK"` you get "Remote - GB" and "Remote - EMEA" but not "Remote - US" or "Remote - EU". `eligible_where` is what `location_eligible` asks the model about.
 
 Your own tags run on every matching posting. They needn't be listed in `tags`. Say what each answer means; `jobscan tags NAME` shows a built-in one's definition as an example. `values` defaults to yes, no, unknown; `multi = true` answers a list; `default` is the answer when the posting is silent.
 

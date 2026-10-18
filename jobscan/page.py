@@ -593,8 +593,9 @@ def _exclude_body(view: View) -> str:
 
 
 def _places_body(view: View) -> str:
-    return ("<p>A posting is kept when its location names one of these, as whole words: a city, a country, "
-            "Remote.</p>"
+    return ("<p>A posting is kept when its location names one of these, as whole words: a city, a country. "
+            "Remote keeps remote jobs that name no place. A remote job naming a country here, or a region holding "
+            "it (EMEA, Europe for the UK), is kept too; one naming somewhere else (Remote - US) is not.</p>"
             + _ticks("place", _lines(view.form.locations), view.offers.places, {}, "")
             + _more("place_more", "Add other places, one per line") + _err("locations", view.errors)
             + _text("eligible_where", "Where you can work from", view.form.eligible_where, view.errors,

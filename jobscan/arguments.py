@@ -29,8 +29,10 @@ The profile is profiles/NAME.toml: edit it by hand, then `jobscan check`. For ex
   titles = ["Product Manager"]       # whole words, case-folded, anywhere in the title: matches "Senior Product
                                      # Manager", not "Product Marketing Manager"
   exclude_titles = ["Associate"]     # left out even when a title matches
-  locations = ["London", "Remote"]   # the same rule over the posting's location text only: "Remote" keeps
-                                     # remote jobs anywhere, and location_eligible says which are open to you
+  locations = ["London", "UK", "Remote"]
+                                     # the same rule over the posting's location text only. "Remote" keeps
+                                     # remote jobs naming no place; a remote job naming the UK by any name, or
+                                     # a region holding it (EMEA, Europe), is kept too; "Remote - US" is not
   eligible_where = "the UK"          # where you can work from: what location_eligible asks about
   tags = ["location_eligible"]       # built-in tags to ask: `jobscan tags` lists them, `jobscan tags NAME`
                                      # shows one
