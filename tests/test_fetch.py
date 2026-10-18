@@ -239,13 +239,15 @@ class FetchBoardTest(unittest.TestCase):
         self.assertEqual(len(started), len(boards))
 
     def test_each_ats_reads_in_its_own_lane_all_lanes_at_once(self):
-        lock, running, peak, total = threading.Lock(), Counter(), Counter(), []
+        lock, running, peak = threading.Lock(), Counter(), Counter()
+        together = threading.Barrier(3, timeout=10)  # each lane's first board waits for the other two lanes'
 
         def fake_fetch(board, places):
             with lock:
                 running[board.ats] += 1
                 peak[board.ats] = max(peak[board.ats], running[board.ats])
-                total.append(sum(running.values()))
+            if board.slug.endswith("00"):
+                together.wait()  # broken (a test error) unless all three lanes run at once
             time.sleep(0.002)
             with lock:
                 running[board.ats] -= 1
@@ -259,16 +261,16 @@ class FetchBoardTest(unittest.TestCase):
         self.assertEqual(sorted(handed), sorted(b.id for b in boards))
         self.assertEqual(set(peak), {"ashby", "greenhouse", "workday"})
         self.assertTrue(all(n <= fetch.WORKERS for n in peak.values()), peak)
-        self.assertGreater(max(total), fetch.WORKERS)  # more at once than one lane: lanes run together
         done = [m for m in logs.output if "fetch_lane_done" in m]
         self.assertEqual(sorted(m.split("ats=")[1].split()[0] for m in done), ["ashby", "greenhouse", "workday"])
         self.assertTrue(all("boards=60 " in m for m in done))
 
     def test_a_slow_consumer_bounds_boards_in_flight_per_lane(self):
-        started = Counter()
+        lock, started = threading.Lock(), Counter()
 
         def fake_fetch(board, places):
-            started[board.ats] += 1
+            with lock:
+                started[board.ats] += 1
             return fetch.BoardFetch(board, ())
 
         boards = [Board(ats=ats, slug=f"{ats}{i}", company="x", api_url="http://unused")
@@ -278,8 +280,9 @@ class FetchBoardTest(unittest.TestCase):
             for outcome in fetch.fetch_each(boards, anywhere):
                 handed[outcome.board.ats] += 1
                 time.sleep(0.001)
-                for ats in ("ashby", "gem"):
-                    self.assertLessEqual(started[ats] - handed[ats], fetch.IN_FLIGHT)
+                with lock:
+                    in_flight = {ats: started[ats] - handed[ats] for ats in ("ashby", "gem")}
+                self.assertTrue(all(n <= fetch.IN_FLIGHT for n in in_flight.values()), in_flight)
         self.assertEqual(started, handed)
 
     def test_a_body_is_posted_as_json_and_a_bare_url_is_a_get(self):

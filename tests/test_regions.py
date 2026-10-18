@@ -8,19 +8,19 @@ EU = {"Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czechia", "Denmark
 
 
 def members(name):
-    return next(m for names, m in regions.REGIONS if name in names)
+    return next(r.countries for r in regions.REGIONS if name in r.names)
 
 
 class RegionTableTest(unittest.TestCase):
     def test_every_member_is_a_listed_country_and_every_country_is_in_a_region(self):
-        listed = set().union(*(m for _, m in regions.REGIONS))
+        listed = set().union(*(r.countries for r in regions.REGIONS))
         self.assertEqual(listed - regions.COUNTRIES.keys(), set())
         self.assertEqual(regions.COUNTRIES.keys() - listed, set())
 
     def test_no_name_is_two_countries_or_two_regions(self):
         names = [n.casefold() for country, others in regions.COUNTRIES.items() for n in (country, *others)]
         self.assertEqual(len(names), len(set(names)))
-        region_names = [n.casefold() for names, _ in regions.REGIONS for n in names]
+        region_names = [n.casefold() for r in regions.REGIONS for n in r.names]
         self.assertEqual(len(region_names), len(set(region_names)))
         self.assertEqual(set(names) & set(region_names), set())
 
@@ -59,11 +59,11 @@ class RegionTableTest(unittest.TestCase):
         self.assertTrue(all(n == n.casefold() for n in regions.NAMES))
 
     def test_every_part_of_europe_and_asia_has_both_forms(self):
-        for names, _ in regions.REGIONS:
-            for name in names:
+        for region in regions.REGIONS:
+            for name in region.names:
                 for noun, adjective in [(" Europe", " European"), (" Asia", " Asian")]:
                     if name.endswith(noun):
-                        self.assertIn(name.removesuffix(noun) + adjective, names)
+                        self.assertIn(name.removesuffix(noun) + adjective, region.names)
 
 
 if __name__ == "__main__":
