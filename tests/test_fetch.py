@@ -1,8 +1,10 @@
 import gzip
 import json
 import tempfile
+import threading
 import time
 import unittest
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
@@ -235,6 +237,50 @@ class FetchBoardTest(unittest.TestCase):
                 time.sleep(0.001)
                 self.assertLessEqual(len(started) - consumed, fetch.IN_FLIGHT)  # started, not yet handed over
         self.assertEqual(len(started), len(boards))
+
+    def test_each_ats_reads_in_its_own_lane_all_lanes_at_once(self):
+        lock, running, peak, total = threading.Lock(), Counter(), Counter(), []
+
+        def fake_fetch(board, places):
+            with lock:
+                running[board.ats] += 1
+                peak[board.ats] = max(peak[board.ats], running[board.ats])
+                total.append(sum(running.values()))
+            time.sleep(0.002)
+            with lock:
+                running[board.ats] -= 1
+            return fetch.BoardFetch(board, ())
+
+        # In id order, as the run hands them over: one shared pool would read one ATS after another.
+        boards = [Board(ats=ats, slug=f"{ats}{i:02d}", company="x", api_url="http://unused")
+                  for ats in ("ashby", "greenhouse", "workday") for i in range(60)]
+        with mock.patch.object(fetch, "_fetch_isolated", fake_fetch), self.assertLogs("jobscan", "INFO") as logs:
+            handed = [o.board.id for o in fetch.fetch_each(boards, anywhere)]
+        self.assertEqual(sorted(handed), sorted(b.id for b in boards))
+        self.assertEqual(set(peak), {"ashby", "greenhouse", "workday"})
+        self.assertTrue(all(n <= fetch.WORKERS for n in peak.values()), peak)
+        self.assertGreater(max(total), fetch.WORKERS)  # more at once than one lane: lanes run together
+        done = [m for m in logs.output if "fetch_lane_done" in m]
+        self.assertEqual(sorted(m.split("ats=")[1].split()[0] for m in done), ["ashby", "greenhouse", "workday"])
+        self.assertTrue(all("boards=60 " in m for m in done))
+
+    def test_a_slow_consumer_bounds_boards_in_flight_per_lane(self):
+        started = Counter()
+
+        def fake_fetch(board, places):
+            started[board.ats] += 1
+            return fetch.BoardFetch(board, ())
+
+        boards = [Board(ats=ats, slug=f"{ats}{i}", company="x", api_url="http://unused")
+                  for ats in ("ashby", "gem") for i in range(5 * fetch.IN_FLIGHT)]
+        handed = Counter()
+        with mock.patch.object(fetch, "_fetch_isolated", fake_fetch):
+            for outcome in fetch.fetch_each(boards, anywhere):
+                handed[outcome.board.ats] += 1
+                time.sleep(0.001)
+                for ats in ("ashby", "gem"):
+                    self.assertLessEqual(started[ats] - handed[ats], fetch.IN_FLIGHT)
+        self.assertEqual(started, handed)
 
     def test_a_body_is_posted_as_json_and_a_bare_url_is_a_get(self):
         self.server.routes["/wday/cxs/acme/ext/jobs"] = (200, lambda payload: (200, {"echo": payload}))
