@@ -5,8 +5,6 @@ import itertools
 import json
 import logging
 import time
-import urllib.error
-import urllib.request
 import zlib
 from collections.abc import Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
@@ -17,6 +15,7 @@ from pathlib import Path
 
 from jobscan import ashby, gem, greenhouse, oracle, personio, rippling, smartrecruiters, teamtailor, workable, workday
 from jobscan.config import ConfigError
+from jobscan.connections import Connections
 from jobscan.payload import encodable
 from jobscan.records import Board, BoardError, Company, Places, Posting
 
@@ -30,10 +29,18 @@ WORKERS = 8  # per ATS lane (`fetch_each`); describe_all and company_all run one
 IN_FLIGHT = 2 * WORKERS  # per lane: boards fetching or fetched but not yet consumed, bounding postings held
 HEADERS = {"User-Agent": "jobscan (+https://github.com/holarchic/job-board-scanner)", "Accept-Encoding": "gzip"}
 MAX_BODY = 256 << 20  # bytes an answer may inflate to; the largest board seen (Anduril's Greenhouse) inflates to 44 MB
-# OSError covers URLError, timeouts and resets; ValueError covers bad JSON and bad UTF-8;
+# OSError covers DNS failures, refusals, timeouts and resets; ValueError covers bad JSON and bad UTF-8;
 # RecursionError covers deeply nested JSON on Python < 3.14. XML decoding raises BoardError itself.
 FAILURES = (OSError, http.client.HTTPException, ValueError, RecursionError, BoardError)
 log = logging.getLogger("jobscan")
+
+
+class StatusError(BoardError):
+    """An answer other than HTTP 200, after any retries."""
+
+    def __init__(self, status: int):
+        super().__init__(f"HTTP {status}")
+        self.status = status
 
 
 @dataclass(frozen=True)
@@ -142,12 +149,13 @@ def fetch_each(boards: list[Board], places: Places) -> Iterator[BoardFetch | Boa
     left = {ats: len(lane) for ats, lane in lanes.items()}
     started = time.monotonic()
     with ExitStack() as stack:
+        connections = stack.enter_context(Connections(TIMEOUT))  # entered first, so closed after the pools finish
         pools = {ats: stack.enter_context(ThreadPoolExecutor(WORKERS)) for ats in lanes}
         running: dict[Future, str] = {}
 
         def submit(ats: str, n: int) -> None:
             for board in itertools.islice(queues[ats], n):
-                running[pools[ats].submit(_fetch_isolated, board, places)] = ats
+                running[pools[ats].submit(_fetch_isolated, connections, board, places)] = ats
 
         for ats in lanes:
             submit(ats, IN_FLIGHT)
@@ -166,10 +174,10 @@ def fetch_each(boards: list[Board], places: Places) -> Iterator[BoardFetch | Boa
                 del outcome
 
 
-def _fetch_isolated(board: Board, places: Places) -> BoardFetch | BoardFailure:
+def _fetch_isolated(connections: Connections, board: Board, places: Places) -> BoardFetch | BoardFailure:
     adapter = ADAPTERS[board.ats]
     try:
-        return BoardFetch(board, adapter.read(board, partial(_get, board), places))
+        return BoardFetch(board, adapter.read(board, partial(_get, connections, board), places))
     except FAILURES as e:
         return BoardFailure(board, _reason(e), _status(e))
 
@@ -177,14 +185,14 @@ def _fetch_isolated(board: Board, places: Places) -> BoardFetch | BoardFailure:
 def describe_all(pairs: list[tuple[Board, Posting]]) -> list[Described | DescribeFailure]:
     """Each posting with the description its adapter's detail request returns, in order, WORKERS at a time. Only
     for adapters whose `describe` isn't None; one posting's failure never stops the rest."""
-    with ThreadPoolExecutor(WORKERS) as pool:
-        return list(pool.map(_describe_isolated, pairs))
+    with Connections(TIMEOUT) as connections, ThreadPoolExecutor(WORKERS) as pool:
+        return list(pool.map(partial(_describe_isolated, connections), pairs))
 
 
-def _describe_isolated(pair: tuple[Board, Posting]) -> Described | DescribeFailure:
+def _describe_isolated(connections: Connections, pair: tuple[Board, Posting]) -> Described | DescribeFailure:
     board, posting = pair
     try:
-        description = ADAPTERS[board.ats].describe(board, posting, partial(_get, board))
+        description = ADAPTERS[board.ats].describe(board, posting, partial(_get, connections, board))
         return Described(replace(posting, description=description))
     except FAILURES as e:
         return DescribeFailure(posting, _reason(e), _status(e))
@@ -193,34 +201,30 @@ def _describe_isolated(pair: tuple[Board, Posting]) -> Described | DescribeFailu
 def company_all(boards: list[Board]) -> list[CompanyFound | CompanyFailure]:
     """Each board's company as its adapter looks it up, in order, WORKERS at a time; one board's failure never stops
     the rest."""
-    with ThreadPoolExecutor(WORKERS) as pool:
-        return list(pool.map(_company_isolated, boards))
+    with Connections(TIMEOUT) as connections, ThreadPoolExecutor(WORKERS) as pool:
+        return list(pool.map(partial(_company_isolated, connections), boards))
 
 
-def _company_isolated(board: Board) -> CompanyFound | CompanyFailure:
+def _company_isolated(connections: Connections, board: Board) -> CompanyFound | CompanyFailure:
     try:
-        return CompanyFound(board, ADAPTERS[board.ats].company(board, partial(_get, board)))
+        return CompanyFound(board, ADAPTERS[board.ats].company(board, partial(_get, connections, board)))
     except FAILURES as e:
         return CompanyFailure(board, _reason(e), _status(e))
 
 
-def _get(board: Board, url: str, body: bytes | None = None) -> bytes:
-    """One request on the board's behalf, a GET, or a POST of `body` as JSON: its 429s are logged under its id."""
+def _get(connections: Connections, board: Board, url: str, body: bytes | None = None) -> bytes:
+    """One request on the board's behalf, a GET, or a POST of `body` as JSON: its 429s are logged under its id. An
+    answer cut short raises IncompleteRead, which is retried like a reset."""
     headers = HEADERS if body is None else HEADERS | {"Content-Type": "application/json"}
-    request = urllib.request.Request(url, data=body, headers=headers)
     for attempt, pause in enumerate((*RETRY_PAUSES, None), start=1):
         try:
-            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-                if response.status != 200:
-                    raise BoardError(f"HTTP {response.status}")
-                # Read whole, without a size: a connection cut short then raises IncompleteRead, which is retried.
-                return _decoded(response.read(), response.headers.get("Content-Encoding"))
-        except urllib.error.HTTPError as e:
-            e.close()
-            if e.code == 429:  # every one, so rate limiting shows even when a retry then succeeds
+            answer = connections.send(url, body, headers)
+            if answer.status == 200:
+                return _decoded(answer.body, answer.headers.get("Content-Encoding"))
+            if answer.status == 429:  # every one, so rate limiting shows even when a retry then succeeds
                 log.warning("board_429 board=%s attempt=%d", board.id, attempt)
-            if e.code not in RETRYABLE or pause is None:
-                raise
+            if answer.status not in RETRYABLE or pause is None:
+                raise StatusError(answer.status)
         except (OSError, http.client.HTTPException):
             if pause is None:
                 raise
@@ -252,14 +256,10 @@ def _decoded(body: bytes, encoding: str | None) -> bytes:
 
 
 def _status(e: Exception) -> int | None:
-    return e.code if isinstance(e, urllib.error.HTTPError) else None
+    return e.status if isinstance(e, StatusError) else None
 
 
 def _reason(e: Exception) -> str:
-    if isinstance(e, urllib.error.HTTPError):
-        return f"HTTP {e.code}"
-    if isinstance(e, urllib.error.URLError):
-        return f"network: {e.reason}"
     if isinstance(e, (OSError, http.client.HTTPException)):
         return f"network: {type(e).__name__}"
     if isinstance(e, (ValueError, RecursionError)):
