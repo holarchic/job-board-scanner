@@ -27,21 +27,40 @@ def anywhere(text):
 
 
 class FakeServer:
-    """Serves `routes[path]` = (status, body). A callable body gets the parsed JSON request and returns
-    (status, body). A bytes body is sent truncated: its Content-Length promises more than arrives. `encode(raw)`, when
-    set, gives the bytes sent and their Content-Encoding (None: no header).
-    Every request is recorded in `requests` as (method, path, json_body), in `content_types` as a `ContentType`, and its
-    Accept-Encoding header in `accept_encodings`."""
+    """Serves `routes[path]` = (status, body), or (status, body, headers). A callable body gets the parsed JSON request
+    and returns (status, body). A bytes body is sent truncated: its Content-Length promises more than arrives, and the
+    connection closes. `encode(raw)`, when set, gives the bytes sent and their Content-Encoding (None: no header).
+    HTTP/1.0 (a connection per request) unless `keep_alive`; then a path in `drop_after` has its connection closed
+    after the answer, unannounced, and one in `hang_up` closes it unanswered.
+    Every request is recorded in `requests` as (method, path, json_body), in `content_types` as a `ContentType`, its
+    Accept-Encoding header in `accept_encodings`, and its client's port in `client_ports` (one per connection);
+    `closed` counts connections ended."""
 
-    def __init__(self):
+    def __init__(self, keep_alive=False):
         self.routes = {}
         self.requests = []
         self.content_types = []
         self.accept_encodings = []
+        self.client_ports = []
+        self.drop_after, self.hang_up = set(), set()
+        self.closed = 0
         self.encode = None
-        server = self
+        server, lock = self, threading.Lock()
 
         class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1" if keep_alive else "HTTP/1.0"
+
+            def handle(self):
+                try:
+                    super().handle()
+                except ConnectionResetError:  # a client closing with an answer unread, as a non-200 is left
+                    pass
+
+            def finish(self):
+                super().finish()
+                with lock:
+                    server.closed += 1
+
             def do_GET(self):
                 self._answer(None)
 
@@ -53,10 +72,15 @@ class FakeServer:
                 server.requests.append((self.command, self.path, payload))
                 server.content_types.append(ContentType(self.command, self.path, self.headers.get("Content-Type")))
                 server.accept_encodings.append(self.headers.get("Accept-Encoding"))
-                status, body = server.routes.get(self.path, (404, {"error": "not found"}))
+                server.client_ports.append(self.client_address[1])
+                if self.path in server.hang_up:
+                    self.close_connection = True
+                    return
+                status, body, *headers = server.routes.get(self.path, (404, {"error": "not found"}))
                 if callable(body):
                     status, body = body(payload)
                 truncated = isinstance(body, bytes)
+                self.close_connection = self.close_connection or truncated or self.path in server.drop_after
                 raw = body if truncated else body.encode() if isinstance(body, str) else json.dumps(body).encode()
                 encoding = None
                 if server.encode is not None:
@@ -64,7 +88,7 @@ class FakeServer:
                 self.send_response(status)
                 if encoding is not None:
                     self.send_header("Content-Encoding", encoding)
-                for name, value in getattr(server, "extra_headers", {}).items():
+                for name, value in {**getattr(server, "extra_headers", {}), **(headers[0] if headers else {})}.items():
                     self.send_header(name, value)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(raw) + (100 if truncated else 0)))
