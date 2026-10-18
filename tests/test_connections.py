@@ -80,6 +80,10 @@ class ConnectionsTest(unittest.TestCase):
         self.assertEqual((missing.status, missing.body), (404, b""))
         self.assertEqual(self.page(self.send("/a")), (200, {"page": "a"}))
         self.assertEqual(len(set(self.server.client_ports)), 2)
+        self.server.routes["/stuck"] = (503, b'{"error": "bu')  # its body never ends: reading it would time out
+        self.server.stall.add("/stuck")
+        self.addCleanup(self.server.released.set)
+        self.assertEqual(Connections(0.2).send(f"{self.server.url}/stuck", None, {}).status, 503)
 
     def test_a_kept_connection_the_server_dropped_is_sent_once_more_on_a_new_one(self):
         self.server.drop_after.add("/a")
@@ -158,15 +162,25 @@ class ConnectionsTest(unittest.TestCase):
         self.assertEqual([self.page(self.send(path)) for path in ("/absolute", "/relative", "/elsewhere")],
                          [(200, {"page": "a"}), (200, {"page": "b with q"}), (200, {"page": "x"})])
 
+    def test_a_location_is_percent_encoded_as_urllib_does(self):
+        utf8 = "/caf\u00e9?q=a b".encode().decode("latin-1")  # header bytes, as http.client reads them: Latin-1
+        self.server.routes["/spaced"] = (302, {}, {"Location": "/with space/x%41"})
+        self.server.routes["/with%20space/x%41"] = (200, {"page": "spaced"})
+        self.server.routes["/accented"] = (302, {}, {"Location": utf8})
+        self.server.routes["/caf%C3%A9?q=a%20b"] = (200, {"page": "accented"})
+        self.assertEqual([self.page(self.send(path)) for path in ("/spaced", "/accented")],
+                         [(200, {"page": "spaced"}), (200, {"page": "accented"})])
+
     def test_redirects_not_followed_are_the_answer(self):
         self.server.routes["/moved"] = (302, {}, {"Location": "/a"})
         self.server.routes["/nowhere"] = (302, {})
         self.server.routes["/ftp"] = (301, {}, {"Location": "ftp://127.0.0.1/a"})
         self.server.routes["/loop"] = (302, {}, {"Location": "/loop"})
         self.server.routes["/badport"] = (302, {}, {"Location": "http://127.0.0.1:99999/a"})
+        self.server.routes["/badhost"] = (302, {}, {"Location": "http://[::1/a"})
         self.assertEqual(self.send("/moved", b"{}").status, 302)  # a POST's redirect
-        self.assertEqual([self.send(path).status for path in ("/nowhere", "/ftp", "/loop", "/badport")],
-                         [302, 301, 302, 302])
+        self.assertEqual([self.send(path).status for path in ("/nowhere", "/ftp", "/loop", "/badport", "/badhost")],
+                         [302, 301, 302, 302, 302])
         self.assertEqual(sum(path == "/loop" for _, path, _ in self.server.requests), MAX_REDIRECTS + 1)
         self.assertNotIn("/a", [path for _, path, _ in self.server.requests])
 

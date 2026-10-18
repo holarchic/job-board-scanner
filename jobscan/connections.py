@@ -2,10 +2,13 @@
 connection is kept only after a whole HTTP 200 its server didn't close, so no unread answer ever sits ahead of the next
 one. Statuses are answers here: what counts as success, and what is tried again later, is the caller's."""
 import http.client
+import string
 import threading
 import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass
+
+from jobscan.payload import http_url
 
 REDIRECTS = frozenset({301, 302, 303, 307, 308})
 MAX_REDIRECTS = 10
@@ -32,13 +35,19 @@ class _Url:
     whole: str  # what a redirect's Location is read against
 
 
+@dataclass(frozen=True)
+class _Kept:
+    origin: _Origin
+    connection: http.client.HTTPConnection
+
+
 class Connections:
     """The kept connections of the threads sending through it. `close`, or leaving its `with`, closes them all; it
     belongs after every such thread has finished."""
 
     def __init__(self, timeout: float):
         self._timeout = timeout
-        self._held: dict[int, tuple[_Origin, http.client.HTTPConnection]] = {}  # by thread
+        self._held: dict[int, _Kept] = {}  # by thread
         self._lock = threading.Lock()
 
     def __enter__(self) -> "Connections":
@@ -50,8 +59,8 @@ class Connections:
     def close(self) -> None:
         with self._lock:
             held, self._held = list(self._held.values()), {}
-        for _, connection in held:
-            connection.close()
+        for kept in held:
+            kept.connection.close()
 
     def send(self, url: str, body: bytes | None, headers: Mapping[str, str]) -> Answer:
         """A GET, or a POST of `body`. A GET's redirects to http(s) URLs are followed, up to MAX_REDIRECTS; any other
@@ -100,19 +109,18 @@ class Connections:
             connection.close()
         else:
             with self._lock:
-                self._held[threading.get_ident()] = (url.origin, connection)
+                self._held[threading.get_ident()] = _Kept(url.origin, connection)
         return Answer(200, response.headers, data)
 
     def _take(self, origin: _Origin) -> http.client.HTTPConnection | None:
         """The calling thread's kept connection when it is to `origin`; one to another host is closed."""
         with self._lock:
-            held = self._held.pop(threading.get_ident(), None)
-        if held is None:
+            kept = self._held.pop(threading.get_ident(), None)
+        if kept is None:
             return None
-        held_origin, connection = held
-        if held_origin == origin:
-            return connection
-        connection.close()
+        if kept.origin == origin:
+            return kept.connection
+        kept.connection.close()
         return None
 
     def _open(self, origin: _Origin) -> http.client.HTTPConnection:
@@ -127,20 +135,24 @@ def _ask(connection: http.client.HTTPConnection, method: str, target: str, body:
 
 
 def _parse(url: str) -> _Url | None:
-    """An http(s) URL with a host and a valid port, or None."""
-    try:
-        parts = urllib.parse.urlsplit(url)
-        port = parts.port  # ValueError when malformed
-    except ValueError:
-        return None
-    if parts.scheme not in ("http", "https") or not parts.hostname:
+    """The URL to send to, or None unless it is http(s) with a host and a valid port (`payload.http_url`'s rule)."""
+    parts = http_url(url)
+    if parts is None:
         return None
     default = http.client.HTTPS_PORT if parts.scheme == "https" else http.client.HTTP_PORT
-    origin = _Origin(parts.scheme, parts.hostname, default if port is None else port)
+    origin = _Origin(parts.scheme, parts.hostname, default if parts.port is None else parts.port)
     return _Url(origin, (parts.path or "/") + (f"?{parts.query}" if parts.query else ""), url)
 
 
 def _redirect(url: _Url, answer: Answer) -> _Url | None:
-    """Where a redirect answer sends a GET, or None when it isn't one this client follows."""
+    """Where a redirect answer sends a GET, or None when it isn't one this client follows. The Location's bytes, as
+    http.client decodes headers (Latin-1), are percent-encoded where a request line can't carry them, as urllib does."""
     location = answer.headers.get("Location") if answer.status in REDIRECTS else None
-    return _parse(urllib.parse.urljoin(url.whole, location)) if location else None
+    if not location:
+        return None
+    try:
+        target = urllib.parse.urljoin(url.whole, urllib.parse.quote(location, encoding="iso-8859-1",
+                                                                    safe=string.punctuation))
+    except ValueError:  # an unclosed IPv6 bracket
+        return None
+    return _parse(target)
