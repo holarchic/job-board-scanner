@@ -228,22 +228,27 @@ def _get(board: Board, url: str, body: bytes | None = None) -> bytes:
 
 
 def _decoded(body: bytes, encoding: str | None) -> bytes:
-    """The answer's bytes as sent before its Content-Encoding: gzip (the one asked for) inflated to at most
-    MAX_BODY; any other encoding fails the board."""
+    """The answer's bytes as sent before its Content-Encoding: gzip (the one asked for), every member of it in turn,
+    inflated to at most MAX_BODY in all; any other encoding fails the board. Zero bytes after the last member are
+    padding, as `gzip` reads them."""
     if encoding is None or encoding.strip().casefold() == "identity":
         return body
     if encoding.strip().casefold() != "gzip":
         raise BoardError(f"answer encoded {encoding!r}, not asked for")
-    inflater = zlib.decompressobj(16 + zlib.MAX_WBITS)  # gzip framing
-    try:
-        inflated = inflater.decompress(body, MAX_BODY + 1)
-    except zlib.error:
-        raise BoardError("malformed gzip") from None
-    if len(inflated) > MAX_BODY:
-        raise BoardError(f"answer inflates past {MAX_BODY >> 20} MB")
-    if not inflater.eof:
-        raise BoardError("malformed gzip: the stream ends early")
-    return inflated
+    inflated, rest = bytearray(), body
+    while True:
+        inflater = zlib.decompressobj(16 + zlib.MAX_WBITS)  # gzip framing, one member
+        try:
+            inflated += inflater.decompress(rest, MAX_BODY + 1 - len(inflated))
+        except zlib.error:
+            raise BoardError("malformed gzip") from None
+        if len(inflated) > MAX_BODY:
+            raise BoardError(f"answer inflates past {MAX_BODY >> 20} MB")
+        if not inflater.eof:
+            raise BoardError("malformed gzip: the stream ends early")
+        rest = inflater.unused_data
+        if not rest.strip(b"\0"):
+            return bytes(inflated)
 
 
 def _status(e: Exception) -> int | None:

@@ -302,6 +302,11 @@ class FetchBoardTest(unittest.TestCase):
         fetch._get(board, f"{self.server.url}/posting-api/job-board/acme", b"{}")
         self.assertEqual(self.server.accept_encodings, ["gzip", "gzip"])
 
+    def test_a_gzip_answer_in_several_members_is_read_whole(self):
+        self.serve("acme", 200, {"jobs": [ashby_job("1", "Account Executive")]})
+        self.server.encode = lambda raw: (gzip.compress(raw[:7]) + gzip.compress(raw[7:]) + b"\0\0", "gzip")
+        self.assertEqual([p.title for p in self.fetch_one()], ["Account Executive"])
+
     def test_a_plain_answer_is_read_as_sent(self):
         self.serve("acme", 200, {"jobs": [ashby_job("1", "Account Executive")]})
         self.server.encode = lambda raw: (raw, "identity")
@@ -314,6 +319,11 @@ class FetchBoardTest(unittest.TestCase):
             ("cut short", lambda raw: (whole[:len(whole) // 2], "gzip"), "malformed gzip: the stream ends early"),
             ("not asked for", lambda raw: (raw, "br"), "answer encoded 'br', not asked for"),
             ("too big", lambda raw: (gzip.compress(b" " * 2048 + raw), "gzip"), "answer inflates past 0 MB"),
+            ("too big in all", lambda raw: (gzip.compress(b" " * 600) + gzip.compress(b" " * 600 + raw), "gzip"),
+             "answer inflates past 0 MB"),
+            ("a later member broken", lambda raw: (gzip.compress(raw) + b"junk", "gzip"), "malformed gzip"),
+            ("a later member cut short", lambda raw: (gzip.compress(raw) + whole[:len(whole) // 2], "gzip"),
+             "malformed gzip: the stream ends early"),
         ]:
             with self.subTest(name), mock.patch.object(fetch, "MAX_BODY", 1024):
                 self.serve("acme", 200, {"jobs": []})
