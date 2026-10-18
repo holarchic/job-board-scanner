@@ -43,7 +43,8 @@ class _Kept:
 
 class Connections:
     """The kept connections of the threads sending through it. `close`, or leaving its `with`, closes them all; it
-    belongs after every such thread has finished."""
+    belongs after every such thread has finished. The one shared state is the kept connections by thread, under a
+    lock: a thread takes and puts back only its own, and none is ever used by two threads."""
 
     def __init__(self, timeout: float):
         self._timeout = timeout
