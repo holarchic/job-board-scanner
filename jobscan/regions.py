@@ -8,13 +8,14 @@ when a profile names it, so one left out costs nothing elsewhere; a profile nami
 table. Membership is generous where usage varies (Türkiye and Cyprus are European, the Nordics and Iberia in Western
 Europe): a wrong inclusion costs one tagged posting, a wrong exclusion hides a job. The EU and the EEA are exact,
 without the UK."""
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 
 # Every country by its name, with the other names ads and profiles give it. A name holding another country's name
 # is listed under its own country, so the longer name is read first: "New England" is never England, nor "New
 # South Wales" Wales.
-COUNTRIES: dict[str, tuple[str, ...]] = {
+COUNTRIES: Mapping[str, tuple[str, ...]] = MappingProxyType({
     # Europe
     "United Kingdom": ("UK", "U.K.", "Great Britain", "Britain", "GB", "GBR", "England", "Scotland", "Wales",
                        "Northern Ireland"),
@@ -35,27 +36,27 @@ COUNTRIES: dict[str, tuple[str, ...]] = {
     "Australia": ("New South Wales",), "New Zealand": (), "Japan": (), "South Korea": ("Korea", "Republic of Korea"),
     "China": (), "Hong Kong": (), "Taiwan": (), "Singapore": (), "Malaysia": (), "Indonesia": (),
     "Philippines": ("The Philippines",), "Thailand": (), "Vietnam": ("Viet Nam",), "India": (),
-}
+})
 
-_NORDICS = {"Denmark", "Norway", "Sweden", "Finland", "Iceland"}
-_BALTICS = {"Estonia", "Latvia", "Lithuania"}
-_BALKANS = {"Slovenia", "Croatia", "Bosnia and Herzegovina", "Serbia", "Montenegro", "North Macedonia", "Albania",
-            "Kosovo", "Bulgaria", "Romania", "Greece"}
-_EU = {"Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czechia", "Denmark", "Estonia", "Finland", "France",
-       "Germany", "Greece", "Hungary", "Ireland", "Italy", "Latvia", "Lithuania", "Luxembourg", "Malta", "Netherlands",
-       "Poland", "Portugal", "Romania", "Slovakia", "Slovenia", "Spain", "Sweden"}
-_WESTERN_EUROPE = ({"United Kingdom", "Ireland", "France", "Belgium", "Netherlands", "Luxembourg", "Germany",
-                    "Austria", "Switzerland", "Liechtenstein", "Monaco", "Spain", "Portugal", "Italy", "Greece",
-                    "Malta", "Andorra", "San Marino", "Vatican City", "Cyprus"} | _NORDICS)
-_EASTERN_EUROPE = ({"Poland", "Czechia", "Slovakia", "Hungary", "Romania", "Bulgaria", "Ukraine", "Moldova",
-                    "Belarus", "Russia"} | _BALTICS | _BALKANS - {"Greece"})
+_NORDICS = frozenset({"Denmark", "Norway", "Sweden", "Finland", "Iceland"})
+_BALTICS = frozenset({"Estonia", "Latvia", "Lithuania"})
+_BALKANS = frozenset({"Slovenia", "Croatia", "Bosnia and Herzegovina", "Serbia", "Montenegro", "North Macedonia",
+                     "Albania", "Kosovo", "Bulgaria", "Romania", "Greece"})
+_EU = frozenset({"Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czechia", "Denmark", "Estonia", "Finland",
+                 "France", "Germany", "Greece", "Hungary", "Ireland", "Italy", "Latvia", "Lithuania", "Luxembourg",
+                 "Malta", "Netherlands", "Poland", "Portugal", "Romania", "Slovakia", "Slovenia", "Spain", "Sweden"})
+_WESTERN_EUROPE = frozenset({"United Kingdom", "Ireland", "France", "Belgium", "Netherlands", "Luxembourg",
+                             "Germany", "Austria", "Switzerland", "Liechtenstein", "Monaco", "Spain", "Portugal",
+                             "Italy", "Greece", "Malta", "Andorra", "San Marino", "Vatican City", "Cyprus"} | _NORDICS)
+_EASTERN_EUROPE = frozenset({"Poland", "Czechia", "Slovakia", "Hungary", "Romania", "Bulgaria", "Ukraine", "Moldova",
+                             "Belarus", "Russia"} | _BALTICS | _BALKANS - {"Greece"})
 _EUROPE = _WESTERN_EUROPE | _EASTERN_EUROPE | {"Türkiye"}
-_NORTH_AMERICA = {"United States", "Canada"}
-_EAST_ASIA = {"Japan", "South Korea", "China", "Hong Kong", "Taiwan"}
-_SOUTHEAST_ASIA = {"Singapore", "Malaysia", "Indonesia", "Philippines", "Thailand", "Vietnam"}
-_OCEANIA = {"Australia", "New Zealand"}
+_NORTH_AMERICA = frozenset({"United States", "Canada"})
+_EAST_ASIA = frozenset({"Japan", "South Korea", "China", "Hong Kong", "Taiwan"})
+_SOUTHEAST_ASIA = frozenset({"Singapore", "Malaysia", "Indonesia", "Philippines", "Thailand", "Vietnam"})
+_OCEANIA = frozenset({"Australia", "New Zealand"})
 _APAC = _EAST_ASIA | _SOUTHEAST_ASIA | {"India"} | _OCEANIA
-_WESTERN_ASIA, _NORTH_ASIA = {"Türkiye", "Cyprus"}, {"Russia"}
+_WESTERN_ASIA, _NORTH_ASIA = frozenset({"Türkiye", "Cyprus"}), frozenset({"Russia"})
 _ASIA = _APAC - _OCEANIA | _WESTERN_ASIA | _NORTH_ASIA
 
 
@@ -117,7 +118,8 @@ REGIONS: tuple[Region, ...] = tuple(Region(names, frozenset(countries)) for name
     (("Oceania", "Australasia", "ANZ"), _OCEANIA),
 ))
 
-_BY_NAME = {name.casefold(): country for country, others in COUNTRIES.items() for name in (country, *others)}
+_BY_NAME = MappingProxyType({name.casefold(): country for country, others in COUNTRIES.items()
+                             for name in (country, *others)})
 
 # Every region and country name, case-folded, longest first: read in that order, "Eastern Europe" is never read as
 # "Europe", nor "Northern Ireland" as "Ireland".

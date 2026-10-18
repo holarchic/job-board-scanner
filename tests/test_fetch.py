@@ -240,13 +240,15 @@ class FetchBoardTest(unittest.TestCase):
 
     def test_each_ats_reads_in_its_own_lane_all_lanes_at_once(self):
         lock, running, peak = threading.Lock(), Counter(), Counter()
-        together = threading.Barrier(3, timeout=10)  # each lane's first board waits for the other two lanes'
+        # Each lane's first WORKERS boards wait until every worker of all three lanes is busy: one shared pool of
+        # WORKERS threads could never fill the barrier.
+        together = threading.Barrier(3 * fetch.WORKERS, timeout=10)
 
         def fake_fetch(board, places):
             with lock:
                 running[board.ats] += 1
                 peak[board.ats] = max(peak[board.ats], running[board.ats])
-            if board.slug.endswith("00"):
+            if int(board.slug[-2:]) < fetch.WORKERS:
                 together.wait()  # broken (a test error) unless all three lanes run at once
             time.sleep(0.002)
             with lock:
