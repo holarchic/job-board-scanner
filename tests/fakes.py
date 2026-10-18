@@ -31,7 +31,8 @@ class FakeServer:
     and returns (status, body). A bytes body is sent truncated: its Content-Length promises more than arrives, and the
     connection closes. `encode(raw)`, when set, gives the bytes sent and their Content-Encoding (None: no header).
     HTTP/1.0 (a connection per request) unless `keep_alive`; then a path in `drop_after` has its connection closed
-    after the answer, unannounced, and one in `hang_up` closes it unanswered.
+    after the answer, unannounced, and one in `hang_up` closes it unanswered. A path in `stall` sends its truncated
+    body, then holds the connection open until `released` is set.
     Every request is recorded in `requests` as (method, path, json_body), in `content_types` as a `ContentType`, its
     Accept-Encoding header in `accept_encodings`, and its client's port in `client_ports` (one per connection);
     `closed` counts connections ended."""
@@ -42,7 +43,8 @@ class FakeServer:
         self.content_types = []
         self.accept_encodings = []
         self.client_ports = []
-        self.drop_after, self.hang_up = set(), set()
+        self.drop_after, self.hang_up, self.stall = set(), set(), set()
+        self.released = threading.Event()
         self.closed = 0
         self.encode = None
         server, lock = self, threading.Lock()
@@ -94,6 +96,9 @@ class FakeServer:
                 self.send_header("Content-Length", str(len(raw) + (100 if truncated else 0)))
                 self.end_headers()
                 self.wfile.write(raw)
+                if self.path in server.stall:
+                    self.wfile.flush()
+                    server.released.wait(5)
 
             def log_message(self, *args):
                 pass

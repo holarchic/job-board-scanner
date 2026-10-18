@@ -7,7 +7,7 @@ import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-REDIRECTS = {301, 302, 303, 307, 308}
+REDIRECTS = frozenset({301, 302, 303, 307, 308})
 MAX_REDIRECTS = 10
 
 
@@ -21,8 +21,15 @@ class Answer:
 @dataclass(frozen=True)
 class _Origin:
     scheme: str
-    host: str
-    port: int | None
+    host: str  # an IPv6 address without its brackets
+    port: int  # the scheme's default when the URL names none
+
+
+@dataclass(frozen=True)
+class _Url:
+    origin: _Origin
+    target: str  # path and query, as the request line carries them
+    whole: str  # what a redirect's Location is read against
 
 
 class Connections:
@@ -48,49 +55,52 @@ class Connections:
 
     def send(self, url: str, body: bytes | None, headers: Mapping[str, str]) -> Answer:
         """A GET, or a POST of `body`. A GET's redirects to http(s) URLs are followed, up to MAX_REDIRECTS; any other
-        redirect, or one past them, is the answer. A URL that isn't http(s) with a host raises ValueError."""
+        redirect, or one past them, is the answer. A URL that isn't http(s) with a host and a valid port raises
+        ValueError."""
+        parsed = _parse(url)
+        if parsed is None:
+            raise ValueError(f"not an http(s) URL: {url!r}")
         for _ in range(MAX_REDIRECTS):
-            answer = self._exchange(url, body, headers)
-            target = _redirect(url, answer) if body is None else None
+            answer = self._exchange(parsed, body, headers)
+            target = _redirect(parsed, answer) if body is None else None
             if target is None:
                 return answer
-            url = target
-        return self._exchange(url, body, headers)
+            parsed = target
+        return self._exchange(parsed, body, headers)
 
-    def _exchange(self, url: str, body: bytes | None, headers: Mapping[str, str]) -> Answer:
-        parts = urllib.parse.urlsplit(url)
-        if parts.scheme not in ("http", "https") or not parts.hostname:
-            raise ValueError(f"not an http(s) URL: {url!r}")
-        origin = _Origin(parts.scheme, parts.hostname, parts.port)
-        target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+    def _exchange(self, url: _Url, body: bytes | None, headers: Mapping[str, str]) -> Answer:
         method = "GET" if body is None else "POST"
-        connection = self._take(origin)
+        connection = self._take(url.origin)
         reused = connection is not None
         if connection is None:
-            connection = self._open(origin)
+            connection = self._open(url.origin)
+        response = None
         try:
             try:
-                response = _ask(connection, method, target, body, headers)
+                response = _ask(connection, method, url.target, body, headers)
             except ConnectionError:
                 if not reused:
                     raise
-                # The server dropped it while it waited, before reading this request: once more on a new one.
+                # No answer came back (a reset while sending, or before the answer's headers were whole): the server
+                # dropped the connection while it waited. Every request here only reads, so once more on a new one.
                 connection.close()
-                connection = self._open(origin)
-                response = _ask(connection, method, target, body, headers)
+                connection = self._open(url.origin)
+                response = _ask(connection, method, url.target, body, headers)
             if response.status != 200:
                 response.close()
                 connection.close()
                 return Answer(response.status, response.headers, b"")
             data = response.read()
         except BaseException:
+            if response is not None:
+                response.close()  # once the server says it closes, the response, not the connection, holds the socket
             connection.close()
             raise
         if response.will_close:
             connection.close()
         else:
             with self._lock:
-                self._held[threading.get_ident()] = (origin, connection)
+                self._held[threading.get_ident()] = (url.origin, connection)
         return Answer(200, response.headers, data)
 
     def _take(self, origin: _Origin) -> http.client.HTTPConnection | None:
@@ -116,11 +126,21 @@ def _ask(connection: http.client.HTTPConnection, method: str, target: str, body:
     return connection.getresponse()
 
 
-def _redirect(url: str, answer: Answer) -> str | None:
+def _parse(url: str) -> _Url | None:
+    """An http(s) URL with a host and a valid port, or None."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port  # ValueError when malformed
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    default = http.client.HTTPS_PORT if parts.scheme == "https" else http.client.HTTP_PORT
+    origin = _Origin(parts.scheme, parts.hostname, default if port is None else port)
+    return _Url(origin, (parts.path or "/") + (f"?{parts.query}" if parts.query else ""), url)
+
+
+def _redirect(url: _Url, answer: Answer) -> _Url | None:
     """Where a redirect answer sends a GET, or None when it isn't one this client follows."""
     location = answer.headers.get("Location") if answer.status in REDIRECTS else None
-    if not location:
-        return None
-    target = urllib.parse.urljoin(url, location)
-    parts = urllib.parse.urlsplit(target)
-    return target if parts.scheme in ("http", "https") and parts.hostname else None
+    return _parse(urllib.parse.urljoin(url.whole, location)) if location else None
