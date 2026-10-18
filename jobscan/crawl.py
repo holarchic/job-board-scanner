@@ -14,7 +14,7 @@ import time
 import urllib.error
 import urllib.request
 import zlib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 BASE = "https://data.commoncrawl.org/"
@@ -180,13 +180,17 @@ def _size(url: str) -> int:
 
 
 def _range(url: str, start: int, end: int) -> bytes:
-    response = _request(url, headers={"Range": f"bytes={start}-{end}"}, limit=end - start + 1)
-    body, status = response.body, response.status
-    match = CONTENT_RANGE.fullmatch(response.headers.get("Content-Range") or "")
-    if status != 206 or not match or (int(match[1]), int(match[2])) != (start, end) or int(match[3]) <= end \
-            or len(body) != end - start + 1:
-        raise CrawlError(f"{url}: range {start}-{end} answered {status} with {len(body)} bytes")
-    return body
+    """The bytes start to end. An answer that isn't exactly that range is asked again, as a dropped connection is: a
+    connection closed early leaves a short body without an error (18 Oct: 1,027 of 335,556 bytes)."""
+    def refusal(response: Response) -> str | None:
+        body, status = response.body, response.status
+        match = CONTENT_RANGE.fullmatch(response.headers.get("Content-Range") or "")
+        if status != 206 or not match or (int(match[1]), int(match[2])) != (start, end) or int(match[3]) <= end \
+                or len(body) != end - start + 1:
+            return f"range {start}-{end} answered {status} with {len(body)} bytes"
+        return None
+
+    return _request(url, headers={"Range": f"bytes={start}-{end}"}, limit=end - start + 1, refuse=refusal).body
 
 
 def _get(url: str, limit: int) -> bytes:
@@ -196,8 +200,10 @@ def _get(url: str, limit: int) -> bytes:
     return response.body
 
 
-def _request(url: str, method: str = "GET", headers: dict | None = None, limit: int = 0) -> Response:
-    """One HTTP exchange, retrying 429/5xx and network errors. A body longer than `limit` is an error."""
+def _request(url: str, method: str = "GET", headers: dict | None = None, limit: int = 0,
+             refuse: Callable[[Response], str | None] | None = None) -> Response:
+    """One HTTP exchange, retrying 429/5xx, network errors and an answer `refuse` gives a reason against. A body
+    longer than `limit` is an error."""
     request = urllib.request.Request(url, headers=HEADERS | (headers or {}), method=method)
     for pause in (*RETRY_PAUSES, None):
         try:
@@ -205,7 +211,12 @@ def _request(url: str, method: str = "GET", headers: dict | None = None, limit: 
                 body = response.read(limit + 1) if method != "HEAD" else b""
                 if len(body) > limit:
                     raise CrawlError(f"{url}: response longer than {limit} bytes")
-                return Response(body=body, headers=response.headers, status=response.status)
+                answer = Response(body=body, headers=response.headers, status=response.status)
+            reason = refuse(answer) if refuse is not None else None
+            if reason is None:
+                return answer
+            if pause is None:
+                raise CrawlError(f"{url}: {reason}")
         except urllib.error.HTTPError as e:
             e.close()
             if e.code not in RETRYABLE or pause is None:

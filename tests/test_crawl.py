@@ -92,6 +92,21 @@ class CapturesTest(unittest.TestCase):
         with self.assertRaisesRegex(CrawlError, "HTTP 503"):
             self.captures()
 
+    def test_a_range_cut_short_is_asked_again(self):
+        self.serve(lines_around(ashby_urls(2), 2, 2))
+        self.server.cut[INDEXES + "cdx-00000.gz"] = [10]
+        self.assertEqual(len(self.captures()), 2)
+        ranges = [r for r in self.server.requests if r[1].endswith("cdx-00000.gz") and r[0] == "GET"]
+        self.assertEqual(ranges[0][2], ranges[1][2])  # the same range, asked twice
+
+    def test_a_range_cut_short_every_time_is_an_error(self):
+        self.serve(lines_around(ashby_urls(2), 2, 2))
+        self.server.cut[INDEXES + "cdx-00000.gz"] = [10] * 50
+        with self.assertRaisesRegex(CrawlError, r"cdx-00000\.gz: range \d+-\d+ answered 206 with 10 bytes"):
+            self.captures()
+        tries = [r for r in self.server.requests if r[1].endswith("cdx-00000.gz") and r[0] == "GET"]
+        self.assertEqual(len(tries), 1 + len(crawl.RETRY_PAUSES))
+
     def test_server_ignoring_range_is_an_error(self):
         self.serve(lines_around(ashby_urls(2), 2, 2))
         self.server.ignore_range = True
