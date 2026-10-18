@@ -59,7 +59,8 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(parse(teamtailor_item("1", "AE", places=()))[0].location, "")
 
     def test_fully_remote_jobs_say_so_once(self):
-        remote_only = Profile(name="r", titles=("AE",), exclude_titles=(), locations=("Remote",), eligible_where="",
+        # The United Kingdom by another name: a job there is in these places only when its location says remote.
+        remote_only = Profile(name="r", titles=("AE",), exclude_titles=(), locations=("GB",), eligible_where="",
                               tags=(), custom_tags=())
         for places, remote, expected in [([("London", "United Kingdom")], "fully", "London, United Kingdom / Remote"),
                                          ([("Remote", "United Kingdom")], "fully", "Remote, United Kingdom"),

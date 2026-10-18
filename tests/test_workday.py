@@ -1,8 +1,11 @@
 import json
 import unittest
+from dataclasses import replace
+from functools import partial
 from unittest import mock
 
-from jobscan import fetch, workday
+from jobscan import fetch, prefilter, workday
+from jobscan.config import Profile
 from jobscan.records import BoardError
 from tests.fakes import workday_detail, workday_job, workday_site
 
@@ -81,6 +84,23 @@ class ReadTest(unittest.TestCase):
         postings = self.read(workday_site(jobs, {"locations": ["Austin", "Paris"], "remoteType": ["Hybrid", "Remote"]}))
         self.assertEqual(self.filters_asked(), [{}, {"remoteType": ["id-Remote"]}])
         self.assertEqual({k: p.location for k, p in postings.items()}, {"job/R1": "Austin / Remote"})
+
+    def test_the_remote_work_value_through_the_profiles_place_test(self):
+        """A remote place queries the site's remote value: a job there in several places (its text `N Locations`,
+        dropped) reads as bare "Remote" and is in the places; one there in Austin isn't. Without a remote place the
+        value isn't queried."""
+        jobs = [workday_job("R1", "AE", ["Austin", "Remote"], text="Austin"),
+                workday_job("R3", "AE", ["Austin", "Denver", "Remote"])]
+        site = workday_site(jobs, {"locations": ["Austin", "Denver"], "remoteType": ["Remote"]})
+        with_remote = Profile(name="p", titles=("AE",), exclude_titles=(), locations=("London", "UK", "Remote"),
+                              eligible_where="", tags=(), custom_tags=())
+        postings = self.read(site, partial(prefilter.in_places, with_remote))
+        self.assertEqual({k: p.location for k, p in postings.items()},
+                         {"job/R1": "Austin / Remote", "job/R3": "Remote"})
+        self.assertEqual({k for k, p in postings.items() if prefilter.matches(p, with_remote)}, {"job/R3"})
+        without = replace(with_remote, locations=("London", "UK"))
+        self.assertEqual(self.read(site, partial(prefilter.in_places, without)), {})
+        self.assertEqual(self.filters_asked(), [{}])
 
     def test_no_value_matching_reads_as_an_empty_board_after_one_request(self):
         site = workday_site([workday_job("R1", "AE", ["Paris"])], {"locations": ["Paris"]})
