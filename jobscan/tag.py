@@ -456,12 +456,12 @@ PUNCT = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"
 
 
 def _normalise(text: str) -> str:
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text).translate(PUNCT)).strip()
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text).translate(PUNCT)).strip().casefold()
 
 
 def verify_quote(quote: str, posting: Posting) -> bool:
     """True when the quote appears within one of the posting's title, location or description (never spanning
-    two), ignoring Unicode compatibility forms, curly quotes, dash variants and whitespace runs.
+    two), ignoring case, Unicode compatibility forms, curly quotes, dash variants and whitespace runs.
     Blank quotes never verify."""
     needle = _normalise(quote)
     return bool(needle) and any(needle in _normalise(field)
