@@ -474,7 +474,8 @@ def tag_all(postings: list[Posting], defs: list[TagDef], model: ModelConfig, api
     """Tag postings in parallel, keyed by posting key. After STOP_AFTER_FAILURES consecutive failures (in
     completion order) no further postings start; in-flight results are kept. Unstarted postings are absent.
     `on_attempt(key, attempt)` runs in the caller's thread as each posting finishes, so a caller can save it
-    there and then: a run stopped part-way keeps what it has paid for."""
+    there and then: a run stopped part-way keeps what it has paid for. Anything raised here (the callback,
+    a worker, Ctrl+C) stops unstarted postings too, so only those in flight are still paid for."""
     stop = threading.Event()
 
     def work(posting: Posting) -> TagAttempt | None:  # None: not started because the breaker tripped
@@ -483,14 +484,18 @@ def tag_all(postings: list[Posting], defs: list[TagDef], model: ModelConfig, api
     attempts, consecutive_failures = {}, 0
     with ThreadPoolExecutor(WORKERS) as pool:
         futures = {pool.submit(work, p): p.key for p in postings}
-        for future in as_completed(futures):
-            attempt = future.result()
-            if attempt is None:
-                continue
-            attempts[futures[future]] = attempt
-            if on_attempt is not None:
-                on_attempt(futures[future], attempt)
-            consecutive_failures = 0 if isinstance(attempt, TagSuccess) else consecutive_failures + 1
-            if consecutive_failures >= STOP_AFTER_FAILURES:
-                stop.set()
+        try:
+            for future in as_completed(futures):
+                attempt = future.result()
+                if attempt is None:
+                    continue
+                attempts[futures[future]] = attempt
+                if on_attempt is not None:
+                    on_attempt(futures[future], attempt)
+                consecutive_failures = 0 if isinstance(attempt, TagSuccess) else consecutive_failures + 1
+                if consecutive_failures >= STOP_AFTER_FAILURES:
+                    stop.set()
+        except BaseException:
+            stop.set()  # the pool's exit waits for every queued posting; this makes the unstarted ones no-ops
+            raise
     return attempts

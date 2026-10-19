@@ -497,6 +497,18 @@ class TagPostingTest(unittest.TestCase):
         self.assertEqual(len(seen), 3)
         self.assertEqual({thread for *_, thread in seen}, {threading.get_ident()})
 
+    def test_a_failing_callback_stops_unstarted_postings(self):
+        self.server.routes["/chat/completions"] = (200, lambda payload: model_reply(json.loads(reply())))
+        postings = [Posting(**{**vars(POSTING), "key": f"ashby:acme:{n}"}) for n in range(5)]
+
+        def save_fails(key, attempt):
+            raise OSError("disk I/O error")
+
+        with mock.patch.object(tag, "WORKERS", 1), self.assertRaises(OSError):
+            tag.tag_all(postings, DEFS, self.model, None, on_attempt=save_fails)
+        # With one worker the next posting may already have started when the first is reported.
+        self.assertIn(len(self.server.requests), (1, 2))
+
 
 if __name__ == "__main__":
     unittest.main()
