@@ -34,6 +34,11 @@ class QuoteTest(unittest.TestCase):
         self.assertTrue(tag.verify_quote("You'll be our first sales hire - selling", POSTING))
         self.assertTrue(tag.verify_quote("our first sales hire", POSTING))
 
+    def test_quote_differing_only_in_case_verifies(self):
+        # A model often lowercases a sentence's first word when it quotes from mid-paragraph.
+        self.assertTrue(tag.verify_quote("founding account executive", POSTING))
+        self.assertTrue(tag.verify_quote("YOU'LL BE OUR FIRST SALES HIRE", POSTING))
+
     def test_fabricated_and_blank_quotes_fail(self):
         self.assertFalse(tag.verify_quote("you will be the first seller", POSTING))
         self.assertFalse(tag.verify_quote("   ", POSTING))
