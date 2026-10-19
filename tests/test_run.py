@@ -1130,6 +1130,79 @@ class CustomTagsTest(RunFixture):
         self.assertEqual(text.count('- motion ⓘ: **b2b** — "We sell software."'), 2)
 
 
+class RequireRunTest(RunFixture):
+    """`require`: a posting a required tag definitely rules out is listed under Left out, never as an entry, and
+    delivered only with a digest that lists it."""
+
+    def setUp(self):
+        super().setUp()
+        (self.home / "profiles" / "ae.toml").write_text(PROFILE + 'require = { language_required = "no" }\n')
+        self.jobs = [ashby_job("1", "Account Executive"), ashby_job("2", "Account Executive - German Speaking"),
+                     ashby_job("3", "Account Executive - Dutch, or so we say")]
+        self.down = set()  # titles the model fails on
+
+        def answering(payload):
+            tags = tags_quoting_the_posting(payload)
+            title = tags["founding"]["quote"]
+            if title in self.down:
+                return 503, {"error": "down"}
+            if "German" in title:
+                tags["language_required"] = {"value": "German", "quote": title}
+            if "Dutch" in title:  # an answer whose quote isn't in the posting: shown with ⚠, never hidden
+                tags["language_required"] = {"value": "Dutch", "quote": "Fluent Dutch required"}
+            return model_reply(tags)
+
+        self.model.routes["/chat/completions"] = (200, answering)
+
+    def test_a_ruled_out_posting_is_listed_once_under_left_out(self):
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        text = Path(path).read_text()
+        self.assertTrue(text.startswith(f"# ae — {Path(path).stem} · 2 new · 1 left out\n"))
+        self.assertIn("## Acme — Account Executive · London\n", text)
+        self.assertIn('- language_required: **Dutch** — "Fluent Dutch required" ⚠ quote not in posting', text)
+        self.assertNotIn("## Acme — Account Executive - German Speaking", text)
+        self.assertTrue(text.endswith(
+            "## Left out (1)\n" + digest.LEFT_OUT_NOTE + "\n- Acme — Account Executive - German Speaking · London · "
+            "language_required: German · https://jobs.ashbyhq.com/acme/2\n"))
+        self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
+        self.assertEqual(len(self.digests()), 1)
+
+    def test_left_out_alone_publishes_nothing_and_waits_for_the_next_digest(self):
+        self.jobs = [self.jobs[1]]
+        self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
+        self.assertEqual(self.digests(), [])
+        self.assertIn("left_out_pending profile=ae postings=1", (self.home / "runs.log").read_text())
+        calls = len(self.model.requests)
+        self.jobs.append(ashby_job("1", "Account Executive"))
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new, len(self.model.requests)), (0, "1", calls + 1))  # the held posting was cached
+        self.assertIn("## Left out (1)\n", Path(path).read_text())
+        self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
+
+    def test_a_failed_digest_write_delivers_neither_kind(self):
+        (self.home / "digests").mkdir()
+        (self.home / "digests" / "ae").write_text("a file where the directory should be")
+        self.assertEqual(self.run_cli()[0], 1)
+        (self.home / "digests" / "ae").unlink()
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        self.assertIn("## Left out (1)\n", Path(path).read_text())
+
+    def test_a_carried_over_digest_delivers_the_left_out_and_keeps_the_untagged(self):
+        self.jobs = self.jobs[:2]
+        self.down.add("Account Executive")
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (1, "0"))
+        text = Path(path).read_text()
+        self.assertTrue(text.startswith(f"# ae — {Path(path).stem} · 0 new · 1 untagged, carried over · 1 left out\n"))
+        self.assertIn("- Acme — Account Executive - German Speaking · London · language_required: German", text)
+        self.down.clear()
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "1"))
+        self.assertNotIn("Left out", Path(path).read_text())
+
+
 class AgentSetupTest(RunFixture):
     """The set-up an agent runs, with no terminal: every step by flags, secrets on stdin, then a run and a preview."""
 

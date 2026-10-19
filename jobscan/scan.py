@@ -1,4 +1,4 @@
-"""One scan for the install's profile: fetch → store → prefilter → describe → name → tag → digest."""
+"""One scan for the install's profile: fetch → store → prefilter → describe → name → tag → select → digest."""
 import logging
 import sqlite3
 import time
@@ -9,7 +9,7 @@ from functools import partial
 from pathlib import Path
 
 from jobscan import digest, discover, fetch, prefilter, store, tag
-from jobscan.config import Config, ConfigError, Profile
+from jobscan.config import Config, ConfigError, Profile, Requirement
 from jobscan.records import Board, Company, Places
 
 log = logging.getLogger("jobscan")
@@ -45,7 +45,8 @@ def scan(config: Config, profile: Profile, defs: list[tag.TagDef]) -> ScanOutcom
         companies = _companies(conn, {s.posting.board for s in matched}, fetched.eligible, started)
         matched = [_named(s, fetched.eligible[s.posting.board], companies.get(s.posting.board)) for s in matched]
         entries, tagged, usage = _tag(conn, matched, defs, config, {b: c.website for b, c in companies.items()})
-        outcome = _digest(conn, config, profile, entries, carried_over=len(matched) - len(entries),
+        shown, left_out = _select(entries, defs, profile.require)
+        outcome = _digest(conn, config, profile, shown, left_out, carried_over=len(matched) - len(entries),
                           unvalidated=frozenset(d.name for d in defs if not d.validated))
         store.record_run(conn, store.RunRecord(
             started=started, finished=_now(), boards_read=fetched.read, boards_failed=fetched.failed,
@@ -216,19 +217,36 @@ def _tag(conn: sqlite3.Connection, matched: list[store.StoredPosting], defs: lis
     return entries, tagged, usage
 
 
+def _select(entries: list[digest.DigestEntry], defs: list[tag.TagDef],
+            require: tuple[Requirement, ...]) -> tuple[list[digest.DigestEntry], list[digest.LeftOut]]:
+    """The entries the profile's `require` keeps, and the ones it leaves out with what ruled each out."""
+    shown, left_out = [], []
+    for entry in entries:
+        if missed := tag.misses(defs, require, entry.tags):
+            left_out.append(digest.LeftOut(entry, missed))
+        else:
+            shown.append(entry)
+    return shown, left_out
+
+
 def _digest(conn: sqlite3.Connection, config: Config, profile: Profile, entries: list[digest.DigestEntry],
-            carried_over: int, unvalidated: frozenset[str]) -> ScanOutcome:
+            left_out: list[digest.LeftOut], carried_over: int, unvalidated: frozenset[str]) -> ScanOutcome:
+    """Left-out postings are delivered with the digest that lists them. Alone they publish nothing: they stay pending,
+    their tags cached, until a digest has an entry or a carried-over count to report."""
     if not entries and not carried_over:
+        if left_out:
+            log.info("left_out_pending profile=%s postings=%d", profile.name, len(left_out))
         return ScanOutcome(profile.name, new=0, carried_over=0, digest_path=None, digest_failed=False)
     today = date.today().isoformat()
-    text = digest.render(profile.name, today, entries, carried_over, unvalidated)
+    text = digest.render(profile.name, today, entries, carried_over, unvalidated, left_out)
     try:
         path = digest.publish(config.home / "digests" / profile.name, today, text)
     except OSError as e:
         log.error("digest_write_failed profile=%s error=%r", profile.name, str(e))
         return ScanOutcome(profile.name, new=0, carried_over=carried_over, digest_path=None, digest_failed=True)
-    store.deliver(conn, profile.name, [e.posting.posting.key for e in entries], path)
-    log.info("digest profile=%s new=%d carried_over=%d path=%s", profile.name, len(entries), carried_over, path)
+    store.deliver(conn, profile.name, [e.posting.posting.key for e in [*entries, *(o.entry for o in left_out)]], path)
+    log.info("digest profile=%s new=%d carried_over=%d left_out=%d path=%s", profile.name, len(entries), carried_over,
+             len(left_out), path)
     return ScanOutcome(profile.name, new=len(entries), carried_over=carried_over, digest_path=path,
                        digest_failed=False)
 

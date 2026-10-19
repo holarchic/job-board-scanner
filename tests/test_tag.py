@@ -198,8 +198,9 @@ class RequireTest(unittest.TestCase):
         self.assertEqual(self.missed({"language_required": "no"}), ())  # the default, unquoted
         self.assertEqual(self.missed({"language_required": "no"}, language_required={"value": "No", "quote": None}),
                          ())
+        self.assertEqual(self.missed({"language_required": "NO"}), ())
         self.assertEqual(self.missed({"language_required": "no"},
-                                     language_required={"value": "Unknown", "quote": None}), ())
+                                     language_required={"value": "Unknown", "quote": quoted}), ())
         self.assertEqual(self.missed({"language_required": "no"},
                                      language_required={"value": "German", "quote": quoted}),
                          (Requirement("language_required", "no"),))
