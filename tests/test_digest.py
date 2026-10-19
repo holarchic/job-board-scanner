@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest import mock
 
 from jobscan import digest
+from jobscan.config import Requirement
 from jobscan.records import Posting
 from jobscan.store import StoredPosting
 from jobscan.tag import TagResult
@@ -63,6 +64,21 @@ class RenderTest(unittest.TestCase):
     def test_header_counts_carry_over(self):
         text = digest.render("david-ae", "2026-10-12", [], carried_over=3)
         self.assertEqual(text, "# david-ae — 2026-10-12 · 0 new · 3 untagged, carried over\n")
+
+    def test_left_out_postings_follow_the_entries_one_line_each(self):
+        german = {"founding": TagResult(value="no", quote=None, verified=False, warn=False),
+                  "segment": TagResult(value=(), quote=None, verified=False, warn=False),
+                  "language_required": TagResult(value="German", quote="German speaker", verified=True, warn=False)}
+        left = [digest.LeftOut(entry("2", "Account Executive - German Speaking", tags=german),
+                               (Requirement("founding", "yes"), Requirement("language_required", "no")))]
+        text = digest.render("ae", "2026-10-12", [entry()], carried_over=1, unvalidated=frozenset({"segment"}),
+                             left_out=left)
+        self.assertTrue(text.startswith("# ae — 2026-10-12 · 1 new · 1 untagged, carried over · 1 left out\n\n## "))
+        self.assertTrue(text.endswith(
+            "\n\n## Left out (1)\n" + digest.LEFT_OUT_NOTE + "\n"
+            "- Acme AI — Account Executive - German Speaking · London · founding: no · language_required: German · "
+            "https://jobs.ashbyhq.com/acme/2\n"))
+        self.assertNotIn(digest.LEGEND, text)  # the legend keys on entries' tags, not the left-out ones'
 
 
 class PublishTest(unittest.TestCase):

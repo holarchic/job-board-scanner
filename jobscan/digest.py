@@ -4,6 +4,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from jobscan.config import Requirement
 from jobscan.fetch import ADAPTERS
 from jobscan.store import StoredPosting
 from jobscan.tag import TagResult
@@ -17,16 +18,26 @@ class DigestEntry:
     website: str | None = None  # the company's site, when its ATS gives one
 
 
+@dataclass(frozen=True)
+class LeftOut:
+    """A tagged posting a required tag rules out (`tag.misses`): listed on one line after the entries."""
+    entry: DigestEntry
+    misses: tuple[Requirement, ...]
+
+
 UNVALIDATED = "ⓘ"
 LEGEND = f"{UNVALIDATED} marks a tag that hasn't been validated against labelled postings."
+LEFT_OUT_NOTE = "A required tag answers otherwise for these (`require` in your profile)."
 
 
 def render(profile: str, date: str, entries: list[DigestEntry], carried_over: int,
-           unvalidated: frozenset[str] = frozenset()) -> str:
-    """`unvalidated` names the tags shown with ⓘ; the legend appears only when one of them does."""
+           unvalidated: frozenset[str] = frozenset(), left_out: list[LeftOut] = ()) -> str:
+    """`unvalidated` names the tags shown with ⓘ; the legend appears only when one of them does on an entry."""
     header = f"# {profile} — {date} · {len(entries)} new"
     if carried_over:
         header += f" · {carried_over} untagged, carried over"
+    if left_out:
+        header += f" · {len(left_out)} left out"
     blocks = [header]
     if any(name in unvalidated for entry in entries for name in entry.tags):
         blocks.append(LEGEND)
@@ -40,11 +51,24 @@ def render(profile: str, date: str, entries: list[DigestEntry], carried_over: in
             *(_tag_line(name + (f" {UNVALIDATED}" if name in unvalidated else ""), result)
               for name, result in entry.tags.items()),
         ]))
+    if left_out:
+        blocks.append("\n".join([f"## Left out ({len(left_out)})", LEFT_OUT_NOTE,
+                                 *map(_left_out_line, left_out)]))
     return "\n\n".join(blocks) + "\n"
 
 
+def _left_out_line(left: LeftOut) -> str:
+    p = left.entry.posting.posting
+    answers = " · ".join(f"{r.tag}: {_shown(left.entry.tags[r.tag])}" for r in left.misses)
+    return f"- {p.company} — {p.title} · {p.location or 'location not given'} · {answers} · {p.url}"
+
+
+def _shown(result: TagResult) -> str:
+    return (", ".join(result.value) or "unknown") if isinstance(result.value, tuple) else result.value
+
+
 def _tag_line(label: str, result: TagResult) -> str:
-    shown = (", ".join(result.value) or "unknown") if isinstance(result.value, tuple) else result.value
+    shown = _shown(result)
     if result.quote is None and not result.warn:  # unknown, empty or the tag's default: nothing to cite
         return f"- {label}: {shown}"
     if result.quote is None:
