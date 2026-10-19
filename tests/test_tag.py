@@ -239,7 +239,8 @@ class RequireTest(unittest.TestCase):
     def test_requirements_a_tag_cant_answer_are_refused(self):
         for tag_name, value in [("climate", "yes"), ("location_eligible", "unknown"), ("location_eligible", "maybe"),
                                 ("language_required", "Unknown"), ("language_required", "no\nGerman"),
-                                ("language_required", " no"), ("motion", "b2b"), ("channels", "unknown")]:
+                                ("language_required", " no"), ("language_required", "Fr\x00ench"), ("motion", "b2b"),
+                                ("channels", "unknown")]:
             with self.subTest(tag=tag_name, value=value), self.assertRaises(ConfigError):
                 tag.profile_definitions(profile(require=(Requirement(tag_name, value),), custom=(MOTION, CHANNELS)))
         self.assertEqual(len(tag.profile_definitions(profile(

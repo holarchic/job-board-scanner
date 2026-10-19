@@ -277,8 +277,9 @@ class InitFlagsTest(CliHome):
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(load_profile(self.home).require,
                          (Requirement("language_required", "no"), Requirement("location_eligible", "yes")))
+        _, out, _ = self.cli("check")
         self.assertIn("hidden when a tag definitely answers other than: language_required no; location_eligible yes",
-                      self.cli("check")[1])
+                      out)
 
     def test_require_alone_is_flags_and_asks_nothing(self):
         with mock.patch("builtins.input") as typed:
