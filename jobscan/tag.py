@@ -55,6 +55,12 @@ class TagResult:
     verified: bool  # quote found in the posting text
     warn: bool  # a quote was needed and is missing or not found: shown with ⚠
 
+    @property
+    def flagged(self) -> bool:
+        """Shown with ⚠: a needed quote missing, or any quote given and not found (a default answer needs none, so
+        one that brings a quote that isn't there doesn't `warn`, yet can't be trusted either)."""
+        return self.warn or (self.quote is not None and not self.verified)
+
 
 @dataclass(frozen=True)
 class Usage:
@@ -195,7 +201,7 @@ def misses(defs: list[TagDef], require: tuple[Requirement, ...],
 
 
 def _misses(d: TagDef, wanted: str, result: TagResult) -> bool:
-    if result.warn or (result.quote is not None and not result.verified):
+    if result.flagged:
         return False
     if d.multi:
         return any(v != UNKNOWN for v in result.value) and wanted not in result.value
