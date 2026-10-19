@@ -43,7 +43,7 @@ It works best where a few titles narrow the field and the posting answers the re
 **Limits:**
 
 - No Lever or job sites. Teamtailor and Personio boards on a company's own domain aren't found either, nor are Workday sites outside myworkdayjobs.com or Oracle sites outside oraclecloud.com. Oracle sites with more than 10,000 jobs (Kroger, Marriott, AutoZone and a few others) can't be read. Companies that embed Greenhouse in their own careers page, such as Fivetran and Wiz, need the boards file.
-- Tags label matches; they don't filter the digest. There's no spend cap.
+- Tags label matches; only the ones you `require` hide any, and a hidden posting is still listed in one line. Every match is tagged, so there's no saving there, and no spend cap.
 - Tests cover AE and PM postings only, with just 8 founding roles. In the five-tag test, 8 of 11 `founding: yes` answers were right.
 - No funding stage or company age; the open-role count is a rough read on size.
 - One search per install.
@@ -154,12 +154,15 @@ exclude_titles = ["Product Marketing", "Project Manager", "Program Manager"]
 locations = ["London", "United Kingdom", "UK", "Remote"]
 eligible_where = "the UK, working from London"
 tags = ["founding", "location_eligible", "language_required", "tech_company"]
+require = { location_eligible = "yes", language_required = "no" }   # optional
 
 [custom_tags.b2b]
 definition = "The company sells to businesses, not consumers."
 ```
 
 `locations` is checked against the posting's location field only. `"Remote"` keeps remote jobs that name no place. A remote job that names a country you list, by any of its names, or a region holding one, is kept too, so with `"UK"` you get "Remote - GB" and "Remote - EMEA" but not "Remote - US" or "Remote - EU". `eligible_where` is what `location_eligible` asks the model about.
+
+`require` moves a posting out of the digest's entries when one of those tags definitely answers otherwise: a German-speaking role with `language_required = "no"`. An `unknown`, or an answer shown with ⚠, never hides one. Hidden postings are listed one line each under "Left out" at the end of the digest, with the answer and the link, so a wrong answer costs you a line, not the job. A day with only hidden postings writes no digest; they wait for the next one. The set-up page keeps `require` as it is but has no control for it.
 
 Your own tags run on every matching posting. They needn't be listed in `tags`. Say what each answer means; `jobscan tags NAME` shows a built-in one's definition as an example. `values` defaults to yes, no, unknown; `multi = true` answers a list; `default` is the answer when the posting is silent.
 

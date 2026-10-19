@@ -5,7 +5,7 @@ from types import MappingProxyType
 
 from jobscan import fetch, tag
 from jobscan.boards import Added, Entry
-from jobscan.config import KEY_FILE, Profile
+from jobscan.config import KEY_FILE, Profile, Requirement
 from jobscan.install import Install
 from jobscan.preview import Preview, Sample
 from jobscan.schedule import ScheduleError, State
@@ -65,6 +65,8 @@ def install(checked: Install, scheduled: State | ScheduleError | None) -> list[s
         f"  locations: {_items(profile.locations)}",
         f"  where you can work from: {profile.eligible_where}",
         f"  tags: {', '.join(profile.tags) or '(none)'}{custom}",
+        f"  hidden when a tag definitely answers other than: {_required(profile.require)}" if profile.require
+        else "  nothing hidden (no require)",
         f"Model: {config.model.slug} at {config.model.base_url} (key: {KEY_SOURCES[checked.key_source]})",
         f"Email: digests to {email.to} from {email.sender} ({email.host}:{email.port})" if email
         else "Email: off (`jobscan email` sets it up)",
@@ -102,6 +104,10 @@ def schedule_line(state: State | ScheduleError | None) -> str:
     return f"Schedule: every day at {state.at:%H:%M} (launchd)"
 
 
+def _required(require: tuple[Requirement, ...]) -> str:
+    return "; ".join(f"{r.tag} {r.value}" for r in require)
+
+
 def _items(values: tuple[str, ...]) -> str:
     return "; ".join(values) or "(none)"
 
@@ -124,7 +130,8 @@ def boards_added(file: Path, outcome: Added) -> list[str]:
     return lines
 
 
-def preview_lines(search: str, p: Preview) -> list[str]:
+def preview_lines(search: str, p: Preview, require: tuple[Requirement, ...]) -> list[str]:
+    """`require` isn't counted here (preview reads no tags): the run lists what it rules out at the digest's end."""
     lines = [
         f"{search}, against the {p.open:,} open postings stored for the boards the next run reads:",
         f"  matching your titles and locations: {p.matched:,} postings",
@@ -132,6 +139,9 @@ def preview_lines(search: str, p: Preview) -> list[str]:
         f"  already sent to you: {p.sent:,}",
         f"  left out by your excluded titles: {p.excluded:,}",
     ]
+    if require:
+        lines.append(f"Hidden when a tag definitely answers other than {_required(require)}: tagged as usual, then "
+                     "listed under Left out at the digest's end (not counted here).")
     if p.new_samples:
         lines += ["New jobs, newest first:", *map(_sample, p.new_samples)]
     if p.excluded_samples:

@@ -16,6 +16,7 @@ from jobscan.config import (
     CustomTag,
     EmailConfig,
     Profile,
+    Requirement,
     custom_tag,
     usable_key,
 )
@@ -66,6 +67,7 @@ class Form:
     eligible_where: str = ""
     tags: frozenset[str] = frozenset()
     custom: tuple[CustomRow, ...] = ()
+    require: tuple[Requirement, ...] = ()  # the profile's, kept as it is: no step shows or posts it
     email_to: str = ""
     email_from: str = ""
     email_host: str = ""
@@ -143,7 +145,7 @@ def form_from_profile(profile: Profile, email: EmailConfig | None) -> Form:
     return Form(name=profile.name, titles="\n".join(profile.titles), exclude_titles="\n".join(profile.exclude_titles),
                 locations="\n".join(profile.locations), eligible_where=profile.eligible_where,
                 tags=frozenset(profile.tags), custom=tuple(row(c) for c in profile.custom_tags),
-                email_to=email.to if email else "", email_from=email.sender if email else "",
+                require=profile.require, email_to=email.to if email else "", email_from=email.sender if email else "",
                 email_host=email.host if email else "", email_port=str(email.port) if email else "")
 
 
@@ -379,7 +381,7 @@ def to_profile(form: Form) -> Checked:
     custom, _ = _custom_tags(form)
     profile = Profile(name=form.name, titles=_lines(form.titles), exclude_titles=_lines(form.exclude_titles),
                       locations=_lines(form.locations), eligible_where=form.eligible_where,
-                      tags=tuple(sorted(form.tags, key=_tag_order)), custom_tags=custom)
+                      tags=tuple(sorted(form.tags, key=_tag_order)), custom_tags=custom, require=form.require)
     # Measured as the page would show the profile, not as typed (a vertical tab posts smaller than the line break it
     # becomes): one rule for saving and for offering a profile, so the page can always reopen what it saved, with room
     # left for the email settings and the browser's encoding.
@@ -504,7 +506,7 @@ def render(view: View) -> str:
     parts.append(_buttons(view))
     parts.append("</form>")
     if view.step == "summary" and view.previewed:
-        lines = report.preview_lines(view.form.name, view.preview) if view.preview \
+        lines = report.preview_lines(view.form.name, view.preview, view.form.require) if view.preview \
             else ["No postings yet: after the first `jobscan run`, Preview counts what your search matches."]
         parts.append("<h2>Preview</h2><pre>" + _x("\n".join(lines)) + "</pre>")
     parts.append("</main></body></html>")
