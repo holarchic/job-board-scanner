@@ -3,6 +3,7 @@ import json
 import socket
 import ssl
 import tempfile
+import threading
 import unittest
 import urllib.error
 from dataclasses import replace
@@ -485,6 +486,16 @@ class TagPostingTest(unittest.TestCase):
         # The breaker trips in completion order, so with one worker the next posting may already have started.
         self.assertIn(len(attempts), (3, 4))
         self.assertEqual(len(self.server.requests), len(attempts) * tag.TRIES)
+
+    def test_each_finished_posting_is_reported_in_the_callers_thread(self):
+        self.server.routes["/chat/completions"] = (200, lambda payload: model_reply(json.loads(reply())))
+        postings = [Posting(**{**vars(POSTING), "key": f"ashby:acme:{n}"}) for n in range(3)]
+        seen = []
+        attempts = tag.tag_all(postings, DEFS, self.model, None,
+                               on_attempt=lambda key, attempt: seen.append((key, attempt, threading.get_ident())))
+        self.assertEqual({key: attempt for key, attempt, _ in seen}, attempts)
+        self.assertEqual(len(seen), 3)
+        self.assertEqual({thread for *_, thread in seen}, {threading.get_ident()})
 
 
 if __name__ == "__main__":

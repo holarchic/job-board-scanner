@@ -13,6 +13,7 @@ from jobscan.config import Config, ConfigError, Profile, Requirement
 from jobscan.records import Board, Company, Places
 
 log = logging.getLogger("jobscan")
+PROGRESS_EVERY = 100  # a tag_progress line every this many postings, so a long tagging run shows it is alive
 
 
 @dataclass(frozen=True)
@@ -194,18 +195,24 @@ def _tag(conn: sqlite3.Connection, matched: list[store.StoredPosting], defs: lis
     results = {s.posting.key: store.cached_results(conn, s, defs, model_id) for s in matched}
     needed = [s for s in matched if len(results[s.posting.key]) < len(defs)]
     log.info("tag_start matched=%d cached=%d to_tag=%d", len(matched), len(matched) - len(needed), len(needed))
-    attempts = tag.tag_all([s.posting for s in needed], defs, config.model, config.api_key)
-    for s in needed:
-        attempt = attempts.get(s.posting.key)
-        if attempt is None:
-            continue
+    by_key = {s.posting.key: s for s in needed}
+    done, spent = 0, tag.Usage()
+
+    def record(key: str, attempt: tag.TagAttempt) -> None:
+        """Each posting is saved as it finishes, so a run stopped part-way keeps what it has paid for."""
+        nonlocal done, spent
+        done, spent = done + 1, spent + attempt.usage
         if isinstance(attempt, tag.TagFailure):
             # Auth and billing failures need the operator; anything else may clear by the next run.
             level = logging.ERROR if attempt.http_status in (401, 402, 403) else logging.WARNING
-            log.log(level, "tag_failed posting=%s error=%r", s.posting.key, attempt.error)
-            continue
-        store.save_results(conn, s, defs, model_id, attempt.results)
-        results[s.posting.key] = attempt.results
+            log.log(level, "tag_failed posting=%s error=%r", key, attempt.error)
+        else:
+            store.save_results(conn, by_key[key], defs, model_id, attempt.results)
+            results[key] = attempt.results
+        if done % PROGRESS_EVERY == 0:
+            log.info("tag_progress done=%d of=%d cost=%.4f", done, len(needed), spent.cost)
+
+    attempts = tag.tag_all([s.posting for s in needed], defs, config.model, config.api_key, on_attempt=record)
     tagged = sum(1 for a in attempts.values() if isinstance(a, tag.TagSuccess))
     usage = sum((a.usage for a in attempts.values()), tag.Usage())
     if len(attempts) < len(needed):
