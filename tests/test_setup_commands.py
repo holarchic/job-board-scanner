@@ -283,13 +283,20 @@ class InitFlagsTest(CliHome):
         self.assertIn("hidden when a tag definitely answers other than: language_required no; location_eligible yes",
                       out)
 
-    def test_require_alone_is_flags_and_asks_nothing(self):
-        with mock.patch("builtins.input") as typed:
-            code, _, err = self.cli("init", "--require", "language_required=no", terminal=True)
-        typed.assert_not_called()
-        self.assertEqual(code, 2)
-        self.assertIn("missing --name, --title, --location, --eligible-where", err)
-        self.assertFalse(self.home.exists())
+    def test_include_agencies_by_flag(self):
+        self.assertEqual(self.cli("init", *FLAGS, "--include-agencies", "--key-stdin", stdin="sk-or-v1-abc\n")[0], 0)
+        self.assertTrue(load_profile(self.home).include_agencies)
+        _, out, _ = self.cli("check")
+        self.assertIn("  agency postings: kept (include_agencies = true)", out)
+
+    def test_require_or_include_agencies_alone_is_flags_and_asks_nothing(self):
+        for flags in (("--require", "language_required=no"), ("--include-agencies",)):
+            with mock.patch("builtins.input") as typed:
+                code, _, err = self.cli("init", *flags, terminal=True)
+            typed.assert_not_called()
+            self.assertEqual(code, 2, flags)
+            self.assertIn("missing --name, --title, --location, --eligible-where", err)
+            self.assertFalse(self.home.exists())
 
     def test_a_title_holding_a_comma_stays_one_title(self):
         self.cli("init", *FLAGS, "--title", "Head of Sales, EMEA", "--key-stdin", stdin="sk-or-v1-abc\n")

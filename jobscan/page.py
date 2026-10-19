@@ -69,6 +69,7 @@ class Form:
     custom: tuple[CustomRow, ...] = ()
     require: tuple[Requirement, ...] = ()  # built-in tags' from the tags step's selects; the person's own tags', kept
     # as the file has them
+    include_agencies: bool = False  # the tags step's tick: keep postings the agency check says an agency posted
     email_to: str = ""
     email_from: str = ""
     email_host: str = ""
@@ -146,7 +147,8 @@ def form_from_profile(profile: Profile, email: EmailConfig | None) -> Form:
     return Form(name=profile.name, titles="\n".join(profile.titles), exclude_titles="\n".join(profile.exclude_titles),
                 locations="\n".join(profile.locations), eligible_where=profile.eligible_where,
                 tags=frozenset(profile.tags), custom=tuple(row(c) for c in profile.custom_tags),
-                require=profile.require, email_to=email.to if email else "", email_from=email.sender if email else "",
+                require=profile.require, include_agencies=profile.include_agencies,
+                email_to=email.to if email else "", email_from=email.sender if email else "",
                 email_host=email.host if email else "", email_port=str(email.port) if email else "")
 
 
@@ -217,6 +219,7 @@ def read_step(step: str, fields: Mapping[str, list[str]], form: Form, offers: Of
             changes["require"] = tuple(Requirement(name, value) for name in tag.builtin_names()
                                        if (value := one(f"require-{name}", "tags"))) \
                 + tuple(r for r in form.require if r.tag not in tag.builtin_names())
+            changes["include_agencies"] = one("include_agencies") == "on"
         case "email":
             changes.update(email_to=one("email_to").strip(), email_from=one("email_from").strip(),
                            email_host=one("email_host").strip(), email_port=one("email_port").strip(),
@@ -397,7 +400,8 @@ def to_profile(form: Form) -> Checked:
     custom, _ = _custom_tags(form)
     profile = Profile(name=form.name, titles=_lines(form.titles), exclude_titles=_lines(form.exclude_titles),
                       locations=_lines(form.locations), eligible_where=form.eligible_where,
-                      tags=tuple(sorted(form.tags, key=_tag_order)), custom_tags=custom, require=form.require)
+                      tags=tuple(sorted(form.tags, key=_tag_order)), custom_tags=custom, require=form.require,
+                      include_agencies=form.include_agencies)
     # Measured as the page would show the profile, not as typed (a vertical tab posts smaller than the line break it
     # becomes): one rule for saving and for offering a profile, so the page can always reopen what it saved, with room
     # left for the email settings and the browser's encoding.
@@ -523,7 +527,8 @@ def render(view: View) -> str:
     parts.append(_buttons(view))
     parts.append("</form>")
     if view.step == "summary" and view.previewed:
-        lines = report.preview_lines(view.form.name, view.preview, view.form.require) if view.preview \
+        hidden = tag.requirements(view.form.require, view.form.include_agencies)
+        lines = report.preview_lines(view.form.name, view.preview, hidden) if view.preview \
             else ["No postings yet: after the first `jobscan run`, Preview counts what your search matches."]
         parts.append("<h2>Preview</h2><pre>" + _x("\n".join(lines)) + "</pre>")
     parts.append("</main></body></html>")
@@ -646,6 +651,10 @@ def _tags_body(view: View) -> str:
             "then a posting it definitely answers otherwise is moved to a short list at the digest's end (an unknown, "
             "or an answer marked ⚠, stays). Tick the questions you'd like answered when you skim.</p>"
             + "<fieldset><legend>Built-in tags</legend>" + "".join(rows) + "</fieldset>" + carried + _err("tags", e)
+            + '<fieldset><legend>Agencies</legend><label class="choice"><input type="checkbox" name="include_agencies"'
+            + (" checked" if form.include_agencies else "") + "> <span><b>Include jobs posted by recruitment and "
+            "staffing agencies</b> for their clients <i>(unticked: jobscan asks of every posting, and lists those at "
+            "the digest's end)</i></span></label></fieldset>"
             + suggested + _custom(form, e))
 
 
@@ -769,7 +778,8 @@ def _summary_body(view: View) -> str:
              "tags": ("Tags", (", ".join([*(t.name for t in view.catalogue if t.name in f.tags), *custom]) or "none")
                       + ("; hides postings a tag definitely answers otherwise than: "
                          + ", ".join(f"{r.tag} {r.value}" for r in f.require) + " (unknown and ⚠ answers stay)"
-                         if f.require else "")),
+                         if f.require else "")
+                      + ("; agency postings kept" if f.include_agencies else "; agency postings left out")),
              "email": ("Email", email), "schedule": ("When to run", when)}
     rows = []
     for step, (label, value) in ((s, shown[s]) for s in EDITABLE):

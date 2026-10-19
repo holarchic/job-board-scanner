@@ -202,10 +202,10 @@ def profile_definitions(profile: Profile) -> list[TagDef]:
     return defs if profile.include_agencies else [*defs, agency_definition()]
 
 
-def requirements(profile: Profile) -> tuple[Requirement, ...]:
-    """What a posting must not definitely contradict: the profile's `require`, then the agency check's no unless the
-    profile includes agencies."""
-    return profile.require + (() if profile.include_agencies else (Requirement(AGENCY, "no"),))
+def requirements(require: tuple[Requirement, ...], include_agencies: bool) -> tuple[Requirement, ...]:
+    """What a posting must not definitely contradict: a profile's (or the page's draft's) `require`, then the agency
+    check's no unless it includes agencies."""
+    return require + (() if include_agencies else (Requirement(AGENCY, "no"),))
 
 
 def check_require(defs: list[TagDef], require: tuple[Requirement, ...]) -> None:

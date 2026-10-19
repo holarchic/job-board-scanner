@@ -199,7 +199,8 @@ def _email(home: Path, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-INIT_FLAGS = ("name", "title", "exclude_title", "location", "eligible_where", "tag", "require", "key_stdin")
+INIT_FLAGS = ("name", "title", "exclude_title", "location", "eligible_where", "tag", "require", "include_agencies",
+              "key_stdin")
 
 
 def _given(value) -> bool:
@@ -248,7 +249,8 @@ def _init_answers(args: argparse.Namespace) -> init.Answers:
             raise ConfigError("no OpenRouter key: pipe it in with --key-stdin, or set OPENROUTER_API_KEY")
     return init.Answers(name=args.name, titles=args.title, exclude_titles=args.exclude_title,
                         locations=args.location, eligible_where=args.eligible_where,
-                        tags=args.tag or list(tag.builtin_names()), key=key, require=_requirements(args.require))
+                        tags=args.tag or list(tag.builtin_names()), key=key, require=_requirements(args.require),
+                        include_agencies=args.include_agencies)
 
 
 def _requirements(given: list[str]) -> tuple[Requirement, ...]:
@@ -316,7 +318,8 @@ def _preview(home: Path) -> int:
     if result is None:
         print("No postings yet: `jobscan run` fetches them, then `jobscan preview` can count them.")
     else:
-        print("\n".join(report.preview_lines(profile.name, result, tag.requirements(profile))))
+        hidden = tag.requirements(profile.require, profile.include_agencies)
+        print("\n".join(report.preview_lines(profile.name, result, hidden)))
     return EXIT_OK
 
 

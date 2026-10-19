@@ -255,9 +255,9 @@ class AgencyCheckTest(unittest.TestCase):
         self.assertEqual(tag.profile_definitions(profile())[-1], tag.agency_definition())
         self.assertNotIn(tag.AGENCY, [d.name for d in tag.profile_definitions(replace(profile(),
                                                                                       include_agencies=True))])
-        self.assertEqual(tag.requirements(profile(require=(Requirement("founding", "yes"),))),
+        self.assertEqual(tag.requirements((Requirement("founding", "yes"),), False),
                          (Requirement("founding", "yes"), Requirement(tag.AGENCY, "no")))
-        self.assertEqual(tag.requirements(replace(profile(), include_agencies=True)), ())
+        self.assertEqual(tag.requirements((), True), ())
 
     def test_the_name_is_reserved_whatever_the_flag(self):
         own = CustomTag(name="agency", definition="Mine.", values=("yes", "no"), multi=False, default=None)
@@ -283,7 +283,7 @@ class AgencyCheckTest(unittest.TestCase):
                           ({"value": "no", "quote": None}, False)]:
             results = tag.parse_reply(json.dumps(base | {"agency": cell}), defs, POSTING)
             with self.subTest(cell=cell):
-                self.assertEqual(bool(tag.misses(defs, tag.requirements(profile()), results)), out)
+                self.assertEqual(bool(tag.misses(defs, tag.requirements((), False), results)), out)
 
 
 class RequirableTest(unittest.TestCase):

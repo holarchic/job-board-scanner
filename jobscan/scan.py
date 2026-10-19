@@ -45,7 +45,7 @@ def scan(config: Config, profile: Profile, defs: list[tag.TagDef]) -> ScanOutcom
         companies = _companies(conn, {s.posting.board for s in matched}, fetched.eligible, started)
         matched = [_named(s, fetched.eligible[s.posting.board], companies.get(s.posting.board)) for s in matched]
         entries, tagged, usage = _tag(conn, matched, defs, config, {b: c.website for b, c in companies.items()})
-        shown, left_out = _select(entries, defs, tag.requirements(profile))
+        shown, left_out = _select(entries, defs, tag.requirements(profile.require, profile.include_agencies))
         named = {*profile.tags, *(c.name for c in profile.custom_tags)}
         outcome = _digest(conn, config, profile, shown, left_out, carried_over=len(matched) - len(entries),
                           unvalidated=frozenset(d.name for d in defs if not d.validated),

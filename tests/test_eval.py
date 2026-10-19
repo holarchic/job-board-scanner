@@ -78,13 +78,14 @@ class EvalCommandTest(unittest.TestCase):
             "founding": {"value": "yes", "quote": "Our first sales hire."},
             "location_eligible": {"value": "no", "quote": "Berlin"},
             "segment": {"value": [], "quote": None}, "language_required": {"value": "no", "quote": None},
-            "tech_company": {"value": "unknown", "quote": None}}))
+            "tech_company": {"value": "unknown", "quote": None}, "agency": {"value": "no", "quote": None}}))
         out = io.StringIO()
         with mock.patch.dict(os.environ, {"JOBSCAN_HOME": str(home)}), contextlib.redirect_stdout(out):
             code = cli.main(["eval", str(home / "set.json")])
         self.assertEqual(code, 0)
         (_, _, body), = model.requests
-        self.assertEqual(set(body["response_format"]["json_schema"]["schema"]["required"]), set(tag.builtin_names()))
+        self.assertEqual(set(body["response_format"]["json_schema"]["schema"]["required"]),
+                         {*tag.builtin_names(), tag.AGENCY})
         self.assertIn("work from the UK", body["messages"][0]["content"])
         self.assertIn("G2 bar: FAIL", out.getvalue())  # language_required has no minority answer in a 1-posting set
         self.assertEqual(len(list((home / "eval").glob("*.jsonl"))), 1)

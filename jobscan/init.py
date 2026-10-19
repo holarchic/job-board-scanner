@@ -112,12 +112,13 @@ class Answers:
     key: str = field(repr=False)  # always written to the key file: a scheduled run has no shell environment
     custom_tags: tuple[CustomTag, ...] = ()
     require: tuple[Requirement, ...] = ()
+    include_agencies: bool = False
 
     @property
     def profile(self) -> Profile:
         return Profile(name=self.name, titles=tuple(self.titles), exclude_titles=tuple(self.exclude_titles),
                        locations=tuple(self.locations), eligible_where=self.eligible_where, tags=tuple(self.tags),
-                       custom_tags=self.custom_tags, require=self.require)
+                       custom_tags=self.custom_tags, require=self.require, include_agencies=self.include_agencies)
 
 
 def init(home: Path) -> Setup:

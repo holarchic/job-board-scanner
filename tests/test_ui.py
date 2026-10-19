@@ -279,7 +279,8 @@ class NewInstallTest(UiTest):
         text = self.press("next", ticked={"place": ["UK"]})
         self.assertEqual((checked(text, "tag"), checked(text, "add_custom")), (["founding", "location_eligible"], []))
         self.assertIn('name="add_custom" value="salary_stated">', text)  # offered, one click to add
-        self.press("next", ticked={"add_custom": ["salary_stated"]}, **{"require-location_eligible": "yes"})
+        self.press("next", ticked={"add_custom": ["salary_stated"], "include_agencies": ["on"]},
+                   **{"require-location_eligible": "yes"})
         text = self.press("next", email_to="me@gmail.com", password="abcd efgh ijkl mnop")
         self.assertEqual((self.step(), checked(text, "schedule_on"), checked(text, "schedule_at")),
                          ("schedule", ["on"], ["08:00"]))  # a daily run, ticked
@@ -305,6 +306,7 @@ class NewInstallTest(UiTest):
         self.assertEqual((profile.tags, [c.name for c in profile.custom_tags], profile.require),
                          (("founding", "location_eligible"), ["salary_stated"],
                           (Requirement("location_eligible", "yes"),)))
+        self.assertTrue(profile.include_agencies)
         key = self.home / "openrouter.key"
         self.assertEqual((key.read_text(), stat.S_IMODE(key.stat().st_mode)), ("sk-or-v1-fresh\n", 0o600))
         self.assertEqual(load_email(self.home).password, "abcdefghijklmnop")
@@ -507,7 +509,8 @@ class ExistingInstallTest(UiTest):
 
     def test_every_step_done_unchanged_saves_the_same_profile(self):
         self.install(profile='titles = ["AE", "ae", "AE"]\nlocations = ["London"]\neligible_where = "the UK"\n'
-                             'tags = ["founding"]\nrequire = { founding = "yes", buyer = "smb" }\n\n'
+                             'tags = ["founding"]\nrequire = { founding = "yes", buyer = "smb" }\n'
+                             'include_agencies = true\n\n'
                              '[custom_tags.buyer]\ndefinition = "Who buys.\\nSay smb or '
                              'enterprise."\nvalues = ["smb", "enterprise"]\n')
         before = load_profile(self.home)
