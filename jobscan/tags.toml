@@ -3,7 +3,21 @@
 # with a list of values (empty = the posting doesn't say). `default` is the answer when the posting is silent,
 # which needs no quote. founding and language_required follow the G2 labelling guide v2.1.0. `validated` says
 # whether `eval` has passed the tag; "uk" means only when the profile's `eligible_where` names the UK, the only
-# eligibility G2 tested. `summary` is the one line `jobscan init` shows; the model never sees it.
+# eligibility G2 tested. `summary` is the one line `jobscan init` shows; the model never sees it. A `check` is no tag
+# to pick: jobscan asks it itself (the agency check, unless a profile sets `include_agencies = true`).
+
+[agency]
+check = true
+summary = "Is it posted by a recruitment or staffing agency for a client?"
+validated = false
+values = ["yes", "no", "unknown"]
+default = "no"
+definition = """
+The job is advertised by a recruitment, staffing or executive-search agency, or a talent marketplace, hiring for another employer (its client) rather than by the employer itself.
+- **yes:** the poster recruits for someone else: "our client is hiring", "on behalf of our client", "one of our clients", the employer unnamed or named as the poster's client.
+- **no:** the employer advertises its own job. "Our clients" meaning the company's customers is `no`; so is an agency advertising a job on its own staff (a recruiter, or a seller of its services), and a company selling recruiting software.
+- **Default `no`:** a posting that doesn't say it is hiring for a client.
+"""
 
 [founding]
 summary = "Is this the first and only hire in the role at the company?"

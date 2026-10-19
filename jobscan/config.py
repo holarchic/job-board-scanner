@@ -63,6 +63,7 @@ class Profile:
     tags: tuple[str, ...]  # built-in tag names
     custom_tags: tuple[CustomTag, ...]  # tagged after `tags`, in file order
     require: tuple[Requirement, ...] = ()  # in file order; names and values checked by `tag.profile_definitions`
+    include_agencies: bool = False  # False: the agency check is asked and its yes leaves a posting out
 
 
 @dataclass(frozen=True)
@@ -242,6 +243,7 @@ def load_profile(home: Path) -> Profile:
         tags=tags,
         custom_tags=custom,
         require=_require(data, path),
+        include_agencies=_boolean(data, "include_agencies", path),
     )
 
 
@@ -252,6 +254,8 @@ def profile_toml(profile: Profile) -> str:
              f"tags = {toml_list(profile.tags)}"]
     if profile.require:  # tag names are bare keys (CUSTOM_TAG_NAME, and the built-ins' alike)
         lines.append("require = { " + ", ".join(f"{r.tag} = {toml_string(r.value)}" for r in profile.require) + " }")
+    if profile.include_agencies:
+        lines.append("include_agencies = true")
     for c in profile.custom_tags:
         lines += ["", f"[custom_tags.{c.name}]", f"definition = {toml_string(c.definition)}"]
         if c.values != CUSTOM_TAG_VALUES:
@@ -271,6 +275,13 @@ def toml_string(value: str) -> str:
 
 def toml_list(values) -> str:
     return "[" + ", ".join(toml_string(v) for v in values) + "]"
+
+
+def _boolean(data: dict, key: str, path: Path) -> bool:
+    value = data.get(key, False)
+    if not isinstance(value, bool):
+        raise ConfigError(f"{path}: `{key}` must be true or false")
+    return value
 
 
 def _require(data: dict, path: Path) -> tuple[Requirement, ...]:

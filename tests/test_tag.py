@@ -5,6 +5,7 @@ import ssl
 import tempfile
 import unittest
 import urllib.error
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -177,7 +178,8 @@ class RequireTest(unittest.TestCase):
 
     def missed(self, required, **cells):
         cells = json.loads(reply()) | {"motion": {"value": "unknown", "quote": None},
-                                       "channels": {"value": [], "quote": None}} | cells
+                                       "channels": {"value": [], "quote": None},
+                                       "agency": {"value": "no", "quote": None}} | cells
         results = tag.parse_reply(json.dumps(cells), self.defs, POSTING)
         return tag.misses(self.defs, tuple(Requirement(t, v) for t, v in required.items()), results)
 
@@ -245,7 +247,43 @@ class RequireTest(unittest.TestCase):
                 tag.profile_definitions(profile(require=(Requirement(tag_name, value),), custom=(MOTION, CHANNELS)))
         self.assertEqual(len(tag.profile_definitions(profile(
             require=(Requirement("language_required", "French"), Requirement("channels", "web")),
-            custom=(MOTION, CHANNELS)))), 7)
+            custom=(MOTION, CHANNELS)))), 8)  # the agency check last
+
+
+class AgencyCheckTest(unittest.TestCase):
+    def test_asked_unless_the_profile_includes_agencies(self):
+        self.assertEqual(tag.profile_definitions(profile())[-1], tag.agency_definition())
+        self.assertNotIn(tag.AGENCY, [d.name for d in tag.profile_definitions(replace(profile(),
+                                                                                      include_agencies=True))])
+        self.assertEqual(tag.requirements(profile(require=(Requirement("founding", "yes"),))),
+                         (Requirement("founding", "yes"), Requirement(tag.AGENCY, "no")))
+        self.assertEqual(tag.requirements(replace(profile(), include_agencies=True)), ())
+
+    def test_the_name_is_reserved_whatever_the_flag(self):
+        own = CustomTag(name="agency", definition="Mine.", values=("yes", "no"), multi=False, default=None)
+        for include in (False, True):
+            for refused, message in [(profile(custom=(own,)), "jobscan's agency check"),
+                                     (replace(profile(), tags=(*ALL, "agency")), "unknown tags"),
+                                     (profile(require=(Requirement("agency", "no"),)), "require can't name")]:
+                with self.subTest(include=include, message=message), self.assertRaisesRegex(ConfigError, message):
+                    tag.profile_definitions(replace(refused, include_agencies=include))
+
+    def test_it_is_no_tag_to_pick(self):
+        self.assertNotIn(tag.AGENCY, tag.builtin_names())
+        self.assertNotIn(tag.AGENCY, [t.name for t in tag.builtins()])
+        d = tag.agency_definition()
+        self.assertEqual((d.values, d.default, d.validated), (("yes", "no", "unknown"), "no", False))
+
+    def test_only_a_quoted_yes_leaves_a_posting_out(self):
+        defs = tag.profile_definitions(profile())
+        base = json.loads(reply()) | {"agency": {"value": "no", "quote": None}}
+        for cell, out in [({"value": "yes", "quote": "our first sales hire"}, True),
+                          ({"value": "yes", "quote": "our client is hiring"}, False),  # not in the posting: ⚠
+                          ({"value": "yes", "quote": None}, False), ({"value": "unknown", "quote": None}, False),
+                          ({"value": "no", "quote": None}, False)]:
+            results = tag.parse_reply(json.dumps(base | {"agency": cell}), defs, POSTING)
+            with self.subTest(cell=cell):
+                self.assertEqual(bool(tag.misses(defs, tag.requirements(profile()), results)), out)
 
 
 class RequirableTest(unittest.TestCase):

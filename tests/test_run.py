@@ -1105,7 +1105,7 @@ class CustomTagsTest(RunFixture):
         def answering(payload):
             tags = tags_quoting_the_posting(payload)
             return model_reply({"founding": tags["founding"], "location_eligible": tags["location_eligible"],
-                                "motion": {"value": ["b2b"], "quote": "We sell software."}})
+                                "motion": {"value": ["b2b"], "quote": "We sell software."}, "agency": tags["agency"]})
 
         self.model.routes["/chat/completions"] = (200, answering)
 

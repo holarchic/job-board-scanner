@@ -130,7 +130,8 @@ def _custom(raw: list[dict]) -> tuple[CustomTag, ...]:
     for item in raw:
         name, question = item["name"].strip(), one_line(item["question"]) if encodable(item["question"]) else ""
         answers = [one_line(a) if encodable(a) else "" for a in item["answers"]]
-        if not (CUSTOM_TAG_NAME.fullmatch(name) and len(name) <= LONGEST_NAME and name not in tag.builtin_names()
+        if not (CUSTOM_TAG_NAME.fullmatch(name) and len(name) <= LONGEST_NAME
+                and name not in (*tag.builtin_names(), tag.AGENCY)
                 and name not in {k.name for k in kept} and question and len(question) <= LONGEST_QUESTION
                 and question.casefold() not in {k.definition.casefold() for k in kept}
                 and FEWEST_ANSWERS <= len(answers) <= MOST_ANSWERS
