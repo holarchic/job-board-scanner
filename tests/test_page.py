@@ -6,7 +6,7 @@ from dataclasses import replace
 from unittest import mock
 
 from jobscan import page, tag
-from jobscan.config import EmailConfig, custom_tag
+from jobscan.config import EmailConfig, Requirement, custom_tag
 from jobscan.titles import Counted, Outcome, Suggested
 
 DRAFT = page.Form(name="ae", titles="Account Executive\nSales Executive", locations="London\nUK",
@@ -170,6 +170,15 @@ class ToProfileTest(unittest.TestCase):
             self.assertIsNotNone(page.unrepresentable(changed), changed)
         buyer = replace(profile.custom_tags[1], values=("small\nmedium", "large"))
         self.assertIsNotNone(page.unrepresentable(replace(profile, custom_tags=(buyer,))))
+
+    def test_require_goes_through_the_page_unchanged(self):
+        required = (Requirement("founding", "yes"),)
+        profile = replace(page.to_profile(DRAFT).profile, require=required)
+        self.assertEqual(page.form_from_profile(profile, None).require, required)
+        self.assertEqual(page.to_profile(page.form_from_profile(profile, None)).profile, profile)
+        self.assertIsNone(page.unrepresentable(profile))
+        unticked = replace(page.form_from_profile(profile, None), tags=frozenset())
+        self.assertIn("require names `founding`, which the profile doesn't tag", page.to_profile(unticked).errors[""])
 
     def test_a_profile_too_long_or_too_large_for_the_page_is_not_offered(self):
         profile = page.to_profile(DRAFT).profile
