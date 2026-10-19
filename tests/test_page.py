@@ -239,7 +239,7 @@ class RenderTest(unittest.TestCase):
         self.assertIn("From your words.", html)
 
     def test_the_tags_step_says_tags_never_filter(self):
-        self.assertIn("Tags never hide a posting", page.render(self.view("tags")))
+        self.assertIn("Tags label postings; they don't hide them.", page.render(self.view("tags")))
 
     def test_every_built_in_tag_is_a_tick_box_and_offered_custom_tags_too(self):
         offered = (page.CustomRow(name="salary_stated", definition="Salary stated?"),

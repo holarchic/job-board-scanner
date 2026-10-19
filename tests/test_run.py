@@ -1150,6 +1150,8 @@ class RequireRunTest(RunFixture):
                 tags["language_required"] = {"value": "German", "quote": title}
             if "Dutch" in title:  # an answer whose quote isn't in the posting: shown with ⚠, never hidden
                 tags["language_required"] = {"value": "Dutch", "quote": "Fluent Dutch required"}
+            if "Spanish" in title:  # a free-text answer spanning lines still lists on one
+                tags["language_required"] = {"value": "Spanish\n\n## Not a heading", "quote": title}
             return model_reply(tags)
 
         self.model.routes["/chat/completions"] = (200, answering)
@@ -1167,6 +1169,13 @@ class RequireRunTest(RunFixture):
             "language_required: German · https://jobs.ashbyhq.com/acme/2\n"))
         self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
         self.assertEqual(len(self.digests()), 1)
+
+    def test_a_left_out_posting_lists_on_one_line_whatever_its_answer_holds(self):
+        self.jobs.append(ashby_job("4", "Account Executive - Spanish"))
+        text = Path(self.run_cli()[1][2]).read_text()
+        self.assertIn("\n- Acme — Account Executive - Spanish · London · language_required: Spanish ## Not a heading · "
+                      "https://jobs.ashbyhq.com/acme/4\n", text)
+        self.assertEqual(text.count("\n## "), 3)  # the two entries and Left out
 
     def test_left_out_alone_publishes_nothing_and_waits_for_the_next_digest(self):
         self.jobs = [self.jobs[1]]

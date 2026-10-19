@@ -291,6 +291,7 @@ def _check(home: Path) -> int:
 def _preview(home: Path) -> int:
     try:
         profile = load_profile(home)
+        tag.profile_definitions(profile)  # its `require` is shown: never one a run would refuse
         result = preview.for_home(load_config(home), profile)
     except ConfigError as e:
         print(f"jobscan: {e}", file=sys.stderr)

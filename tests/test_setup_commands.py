@@ -143,6 +143,7 @@ class CheckTest(CliHome):
         code, out, err = self.cli("check")
         self.assertEqual((code, out), (2, ""))
         self.assertIn("require names `location_eligible`, which the profile doesn't tag", err)
+        self.assertEqual(self.cli("preview")[0], 2)
 
     def test_the_daily_run_as_launchd_and_its_plist_have_it(self):
         self.write_install()

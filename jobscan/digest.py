@@ -1,11 +1,13 @@
 """Markdown digest of a profile's new postings: pure rendering plus a never-overwrite publish."""
 import os
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from jobscan.config import Requirement
 from jobscan.fetch import ADAPTERS
+from jobscan.payload import one_line
 from jobscan.store import StoredPosting
 from jobscan.tag import TagResult
 
@@ -31,7 +33,7 @@ LEFT_OUT_NOTE = "A required tag answers otherwise for these (`require` in your p
 
 
 def render(profile: str, date: str, entries: list[DigestEntry], carried_over: int,
-           unvalidated: frozenset[str] = frozenset(), left_out: list[LeftOut] = ()) -> str:
+           unvalidated: frozenset[str] = frozenset(), left_out: Sequence[LeftOut] = ()) -> str:
     """`unvalidated` names the tags shown with ⓘ; the legend appears only when one of them does on an entry."""
     header = f"# {profile} — {date} · {len(entries)} new"
     if carried_over:
@@ -58,9 +60,10 @@ def render(profile: str, date: str, entries: list[DigestEntry], carried_over: in
 
 
 def _left_out_line(left: LeftOut) -> str:
+    """One physical line however its parts read: a free-text answer or a title can hold line breaks."""
     p = left.entry.posting.posting
     answers = " · ".join(f"{r.tag}: {_shown(left.entry.tags[r.tag])}" for r in left.misses)
-    return f"- {p.company} — {p.title} · {p.location or 'location not given'} · {answers} · {p.url}"
+    return one_line(f"- {p.company} — {p.title} · {p.location or 'location not given'} · {answers} · {p.url}")
 
 
 def _shown(result: TagResult) -> str:
@@ -73,7 +76,7 @@ def _tag_line(label: str, result: TagResult) -> str:
         return f"- {label}: {shown}"
     if result.quote is None:
         return f"- {label}: **{shown}** ⚠ no quote"
-    return f'- {label}: **{shown}** — "{result.quote}"' + ("" if result.verified else " ⚠ quote not in posting")
+    return f'- {label}: **{shown}** — "{result.quote}"' + (" ⚠ quote not in posting" if result.flagged else "")
 
 
 def publish(directory: Path, date: str, text: str) -> Path:

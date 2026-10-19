@@ -621,8 +621,10 @@ def _tags_body(view: View) -> str:
         for r in offered) + "</fieldset>") if offered else ""
     return ("<p>Tags are questions about each posting, answered beside it in your digest with a quote from the ad: "
             "is it a founding role? can you work it from where you are?</p>"
-            '<p class="notice">Tags never hide a posting. Every posting that matches your titles and places is in '
-            "your digest, whatever its answers; tick the questions you'd like answered when you skim.</p>"
+            '<p class="notice">Tags label postings; they don\'t hide them. Every posting that matches your titles and '
+            "places is in your digest, whatever its answers (unless your profile file has a <code>require</code> line: "
+            "postings it rules out are listed at the digest's end); tick the questions you'd like answered when you "
+            "skim.</p>"
             + "<fieldset><legend>Built-in tags</legend>" + "".join(rows) + "</fieldset>" + _err("tags", e)
             + suggested + _custom(form, e))
 
