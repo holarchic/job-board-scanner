@@ -29,19 +29,22 @@ class LeftOut:
 
 UNVALIDATED = "ⓘ"
 LEGEND = f"{UNVALIDATED} marks a tag that hasn't been validated against labelled postings."
-LEFT_OUT_NOTE = "A required tag answers otherwise for these (`require` in your profile)."
+LEFT_OUT_NOTE = ("A required tag answers otherwise for these (`require` in your profile), or the agency check "
+                 "says an agency posted them for a client (`include_agencies = true` keeps those).")
 
 
 def render(profile: str, date: str, entries: list[DigestEntry], carried_over: int,
-           unvalidated: frozenset[str] = frozenset(), left_out: Sequence[LeftOut] = ()) -> str:
-    """`unvalidated` names the tags shown with ⓘ; the legend appears only when one of them does on an entry."""
+           unvalidated: frozenset[str] = frozenset(), left_out: Sequence[LeftOut] = (),
+           quiet: frozenset[str] = frozenset()) -> str:
+    """`unvalidated` names the tags shown with ⓘ; the legend appears only when one of them does on an entry. `quiet`
+    names tags asked but not shown on entries (the agency check): only a left-out row names one."""
     header = f"# {profile} — {date} · {len(entries)} new"
     if carried_over:
         header += f" · {carried_over} untagged, carried over"
     if left_out:
         header += f" · {len(left_out)} left out"
     blocks = [header]
-    if any(name in unvalidated for entry in entries for name in entry.tags):
+    if any(name in unvalidated and name not in quiet for entry in entries for name in entry.tags):
         blocks.append(LEGEND)
     for entry in entries:
         p = entry.posting.posting
@@ -51,7 +54,7 @@ def render(profile: str, date: str, entries: list[DigestEntry], carried_over: in
             f"{entry.open_roles} open role{'' if entry.open_roles == 1 else 's'}",
             *([f"Company: {p.company} · {entry.website}"] if entry.website else []),
             *(_tag_line(name + (f" {UNVALIDATED}" if name in unvalidated else ""), result)
-              for name, result in entry.tags.items()),
+              for name, result in entry.tags.items() if name not in quiet),
         ]))
     if left_out:
         blocks.append("\n".join([f"## Left out ({len(left_out)})", LEFT_OUT_NOTE,

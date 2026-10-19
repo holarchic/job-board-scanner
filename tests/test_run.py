@@ -47,6 +47,7 @@ from tests.fakes import (
     StatefulLaunchctl,
     anywhere,
     ashby_job,
+    asked,
     cdx_line,
     crawl_files,
     crawl_list,
@@ -1210,6 +1211,45 @@ class RequireRunTest(RunFixture):
         code, (_, new, path) = self.run_cli()
         self.assertEqual((code, new), (0, "1"))
         self.assertNotIn("Left out", Path(path).read_text())
+
+
+class AgencyRunTest(RunFixture):
+    """The agency check: asked unless the profile includes agencies, never shown on entries, a quoted yes left out."""
+
+    def setUp(self):
+        super().setUp()
+        self.jobs = [ashby_job("1", "Account Executive"),
+                     ashby_job("2", "Account Executive", description="Our client, a SaaS scale-up, is hiring."),
+                     ashby_job("3", "Account Executive - Recruiter says so")]
+
+        def answering(payload):
+            tags = tags_quoting_the_posting(payload)
+            text = payload["messages"][0]["content"]
+            if "agency" in asked(payload) and "Our client" in text:
+                tags["agency"] = {"value": "yes", "quote": "Our client, a SaaS scale-up, is hiring."}
+            if "agency" in asked(payload) and "Recruiter says so" in text:  # a yes it can't quote: ⚠, kept
+                tags["agency"] = {"value": "yes", "quote": "placed by our agency"}
+            return model_reply(tags)
+
+        self.model.routes["/chat/completions"] = (200, answering)
+
+    def test_an_agency_posting_is_left_out_and_no_entry_shows_the_check(self):
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        text = Path(path).read_text()
+        self.assertNotIn("- agency", text)
+        entries, left = text.split("## Left out (1)\n")
+        self.assertNotIn("acme/2", entries)
+        self.assertIn("· agency: yes · https://jobs.ashbyhq.com/acme/2\n", left)
+        self.assertIn("acme/3", entries)
+
+    def test_include_agencies_asks_nothing_and_keeps_them(self):
+        (self.home / "profiles" / "ae.toml").write_text(PROFILE + "include_agencies = true\n")
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "3"))
+        self.assertNotIn("Left out", Path(path).read_text())
+        self.assertFalse(any("agency" in asked(body) for _, path_, body in self.model.requests
+                             if path_ == "/chat/completions"))
 
 
 class AgentSetupTest(RunFixture):

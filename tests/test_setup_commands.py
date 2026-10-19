@@ -125,7 +125,9 @@ class CheckTest(CliHome):
         for line in ["Profile: " + str(self.home / "profiles" / "ae.toml"), "  titles: Account Executive",
                      "  excluded titles: (none)", "  tags: founding, location_eligible; custom: climate",
                      "(key: openrouter.key)", "Email: off", "Boards file: none", "Schedule: none",
-                     "  nothing hidden (no require)", "OK: `jobscan run` can start."]:
+                     "  no require: no tag of yours hides a posting",
+                     "  agency postings: left out (include_agencies = true keeps them)",
+                     "OK: `jobscan run` can start."]:
             self.assertIn(line, out)
         self.assertNotIn("Warning", out)
         self.assertEqual(self.files(), before)
@@ -581,12 +583,19 @@ class PreviewTest(CliHome):
                                "  wd.wd3.ext — Account Executive — London, UK",
                                "  Acme AI — Account Executive — London, UK"])
         self.assertIn("  Acme AI — Account Executive Assistant — London, UK", out)
-        self.assertNotIn("Hidden when", out)
+        self.assertIn("Left out at the digest's end, tagged as usual and not counted here: agency postings.\n", out)
         self.write_profile(PROFILE.replace('tags = ["founding", "location_eligible"]',
                                            'tags = ["founding", "location_eligible"]\n'
                                            'require = { location_eligible = "yes" }'))
-        self.assertIn("Hidden when a tag definitely answers other than location_eligible yes: tagged as usual, then "
-                      "listed under Left out at the digest's end (not counted here).\n", self.cli("preview")[1])
+        _, out, _ = self.cli("preview")
+        self.assertIn("Left out at the digest's end, tagged as usual and not counted here: postings a tag definitely "
+                      "answers other than location_eligible yes and agency postings.\n", out)
+        self.write_profile(PROFILE.replace('tags = ["founding", "location_eligible"]',
+                                           'tags = ["founding", "location_eligible"]\ninclude_agencies = true'))
+        _, out, _ = self.cli("preview")
+        self.assertNotIn("Left out at the digest's end", out)
+        _, out, _ = self.cli("check")
+        self.assertIn("  agency postings: kept (include_agencies = true)", out)
 
     def test_before_any_run_it_says_so_and_creates_nothing(self):
         before = self.files()
