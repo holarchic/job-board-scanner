@@ -247,6 +247,17 @@ class RequireTest(unittest.TestCase):
             custom=(MOTION, CHANNELS)))), 7)
 
 
+class RequirableTest(unittest.TestCase):
+    def test_each_built_in_offers_the_answers_require_can_ask(self):
+        self.assertEqual({t.name: t.requirable for t in tag.builtins()},
+                         {"founding": ("yes", "no"), "location_eligible": ("yes", "no"),
+                          "segment": ("enterprise", "mid_market", "smb"), "language_required": ("no",),
+                          "tech_company": ("yes", "no")})
+        for t in tag.builtins():  # every one offered is one the check accepts
+            for value in t.requirable:
+                tag.check_require(tag.definitions((t.name,), "the UK"), (Requirement(t.name, value),))
+
+
 class CacheIdentityTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

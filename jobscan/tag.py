@@ -123,6 +123,7 @@ class BuiltinTag:
     name: str
     summary: str
     validated: str  # "yes", "no", or "uk": validated only when `eligible_where` names the UK
+    requirable: tuple[str, ...]  # the answers `require` can ask of it: its values but unknown; free text its default
 
 
 def builtins() -> tuple[BuiltinTag, ...]:
@@ -148,8 +149,10 @@ def lookup(name: str, eligible_where: str, custom: tuple[CustomTag, ...] = ()) -
 
 def _builtin_tag(name: str, spec: dict) -> BuiltinTag:
     validated = spec.get("validated", False)
+    values = spec.get("values", [spec["default"]] if "default" in spec else [])
     return BuiltinTag(name=name, summary=spec["summary"],
-                      validated="uk" if validated == "uk" else "yes" if validated is True else "no")
+                      validated="uk" if validated == "uk" else "yes" if validated is True else "no",
+                      requirable=tuple(v for v in values if v != UNKNOWN))
 
 
 def _builtins() -> dict:
@@ -179,8 +182,15 @@ def profile_definitions(profile: Profile) -> list[TagDef]:
     """The profile's tags (`definitions`), its `require` checked against them: each a tag it tags, with one value
     that tag can answer, other than unknown."""
     defs = definitions(profile.tags, profile.eligible_where, profile.custom_tags)
+    check_require(defs, profile.require)
+    return defs
+
+
+def check_require(defs: list[TagDef], require: tuple[Requirement, ...]) -> None:
+    """Each requirement names one of these tags, with one value that tag can answer, other than unknown; else
+    ConfigError. The page checks a draft's with it."""
     by_name = {d.name: d for d in defs}
-    for r in profile.require:
+    for r in require:
         d = by_name.get(r.tag)
         if d is None:
             raise ConfigError(f"require names `{r.tag}`, which the profile doesn't tag")
@@ -188,7 +198,6 @@ def profile_definitions(profile: Profile) -> list[TagDef]:
                 or (d.values is not None and r.value not in d.values):
             choices = f": one of {[v for v in d.values if v != UNKNOWN]}" if d.values else ""
             raise ConfigError(f"require `{r.tag}`: {r.value!r} isn't an answer it can require{choices}")
-    return defs
 
 
 def misses(defs: list[TagDef], require: tuple[Requirement, ...],

@@ -16,7 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 from jobscan import boards, cli, init, lock, schedule, store, tag
-from jobscan.config import load_config, load_email, load_profile
+from jobscan.config import Requirement, load_config, load_email, load_profile
 from jobscan.records import Board, Company, Posting
 from tests.fakes import StatefulLaunchctl, patch_smtp
 
@@ -271,6 +271,23 @@ class InitFlagsTest(CliHome):
         self.assertEqual((self.home / "openrouter.key").read_text(), "sk-or-v1-env\n")
         self.assertEqual(len(load_profile(self.home).tags), len(tag.builtin_names()))
 
+    def test_require_by_flags_reaches_the_profile(self):
+        code, _, err = self.cli("init", *FLAGS, "--require", "language_required=no", "--require",
+                                "location_eligible=yes", "--key-stdin", stdin="sk-or-v1-abc\n")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(load_profile(self.home).require,
+                         (Requirement("language_required", "no"), Requirement("location_eligible", "yes")))
+        self.assertIn("hidden when a tag definitely answers other than: language_required no; location_eligible yes",
+                      self.cli("check")[1])
+
+    def test_require_alone_is_flags_and_asks_nothing(self):
+        with mock.patch("builtins.input") as typed:
+            code, _, err = self.cli("init", "--require", "language_required=no", terminal=True)
+        typed.assert_not_called()
+        self.assertEqual(code, 2)
+        self.assertIn("missing --name, --title, --location, --eligible-where", err)
+        self.assertFalse(self.home.exists())
+
     def test_a_title_holding_a_comma_stays_one_title(self):
         self.cli("init", *FLAGS, "--title", "Head of Sales, EMEA", "--key-stdin", stdin="sk-or-v1-abc\n")
         self.assertIn("Head of Sales, EMEA", load_profile(self.home).titles)
@@ -285,6 +302,13 @@ class InitFlagsTest(CliHome):
             (("--location", "", "--key-stdin"), "locations: ''", "sk-or-v1-abc\n"),
             (("--tag", "founder", "--key-stdin"), "unknown tags ['founder']", "sk-or-v1-abc\n"),
             (("--tag", "founding", "--tag", "founding", "--key-stdin"), "tags", "sk-or-v1-abc\n"),
+            (("--require", "language_required", "--key-stdin"), "write it TAG=VALUE", "sk-or-v1-abc\n"),
+            (("--require", "=no", "--key-stdin"), "write it TAG=VALUE", "sk-or-v1-abc\n"),
+            (("--require", "founding=yes", "--require", "founding=no", "--key-stdin"), "names `founding` twice",
+             "sk-or-v1-abc\n"),
+            (("--tag", "founding", "--require", "language_required=no", "--key-stdin"),
+             "require names `language_required`, which the profile doesn't tag", "sk-or-v1-abc\n"),
+            (("--require", "founding=maybe", "--key-stdin"), "isn't an answer it can require", "sk-or-v1-abc\n"),
         ]
         for extra, message, stdin in cases:
             code, out, err = self.cli("init", *FLAGS, *extra, stdin=stdin)
