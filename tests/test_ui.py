@@ -22,7 +22,7 @@ from unittest import mock
 from urllib.parse import urlencode
 
 from jobscan import init, lock, page, schedule, tag, ui
-from jobscan.config import ModelConfig, custom_tag, load_config, load_email, load_profile
+from jobscan.config import ModelConfig, Requirement, custom_tag, load_config, load_email, load_profile
 from jobscan.describe import Described
 from tests.fakes import FakeServer, StatefulLaunchctl, model_reply, patch_smtp
 
@@ -43,12 +43,14 @@ def answers(payload):
 
 class Fields(HTMLParser):
     """What a browser would post from a page: inputs with their values (a checkbox only when ticked; a password box
-    empty), and textareas with their text."""
+    empty), textareas with their text, and selects with the selected option (else the first)."""
 
     def __init__(self, text: str):
         super().__init__(convert_charrefs=True)
         self.fields: dict[str, list[str]] = {}
         self.area: str | None = None
+        self.select: str | None = None
+        self.options: list[tuple[str, bool]] = []
         self.feed(text)
 
     def handle_starttag(self, name, attrs):
@@ -61,6 +63,10 @@ class Fields(HTMLParser):
         elif name == "textarea":
             self.area = a["name"]
             self.fields.setdefault(self.area, []).append("")
+        elif name == "select":
+            self.select, self.options = a["name"], []
+        elif name == "option" and self.select:
+            self.options.append((a.get("value", ""), "selected" in a))
 
     def handle_data(self, data):
         if self.area:
@@ -69,6 +75,10 @@ class Fields(HTMLParser):
     def handle_endtag(self, name):
         if name == "textarea":
             self.area = None
+        elif name == "select" and self.select:
+            chosen = next((v for v, selected in self.options if selected), self.options[0][0] if self.options else "")
+            self.fields.setdefault(self.select, []).append(chosen)
+            self.select = None
 
 
 class UiTest(unittest.TestCase):
@@ -265,7 +275,7 @@ class NewInstallTest(UiTest):
         text = self.press("next", ticked={"place": ["UK"]})
         self.assertEqual((checked(text, "tag"), checked(text, "add_custom")), (["founding", "location_eligible"], []))
         self.assertIn('name="add_custom" value="salary_stated">', text)  # offered, one click to add
-        self.press("next", ticked={"add_custom": ["salary_stated"]})
+        self.press("next", ticked={"add_custom": ["salary_stated"]}, **{"require-location_eligible": "yes"})
         text = self.press("next", email_to="me@gmail.com", password="abcd efgh ijkl mnop")
         self.assertEqual((self.step(), checked(text, "schedule_on"), checked(text, "schedule_at")),
                          ("schedule", ["on"], ["08:00"]))  # a daily run, ticked
@@ -288,8 +298,9 @@ class NewInstallTest(UiTest):
         self.assertEqual((profile.name, profile.titles, profile.exclude_titles, profile.locations),
                          ("account-executive", ("Account Executive", "Sales Executive", "AE"),
                           ("Account Executive Assistant",), ("London", "Remote", "UK")))
-        self.assertEqual((profile.tags, [c.name for c in profile.custom_tags]),
-                         (("founding", "location_eligible"), ["salary_stated"]))
+        self.assertEqual((profile.tags, [c.name for c in profile.custom_tags], profile.require),
+                         (("founding", "location_eligible"), ["salary_stated"],
+                          (Requirement("location_eligible", "yes"),)))
         key = self.home / "openrouter.key"
         self.assertEqual((key.read_text(), stat.S_IMODE(key.stat().st_mode)), ("sk-or-v1-fresh\n", 0o600))
         self.assertEqual(load_email(self.home).password, "abcdefghijklmnop")
@@ -492,9 +503,11 @@ class ExistingInstallTest(UiTest):
 
     def test_every_step_done_unchanged_saves_the_same_profile(self):
         self.install(profile='titles = ["AE", "ae", "AE"]\nlocations = ["London"]\neligible_where = "the UK"\n'
-                             'tags = ["founding"]\n\n[custom_tags.buyer]\ndefinition = "Who buys.\\nSay smb or '
+                             'tags = ["founding"]\nrequire = { founding = "yes", buyer = "smb" }\n\n'
+                             '[custom_tags.buyer]\ndefinition = "Who buys.\\nSay smb or '
                              'enterprise."\nvalues = ["smb", "enterprise"]\n')
         before = load_profile(self.home)
+        self.assertEqual(before.require, (Requirement("founding", "yes"), Requirement("buyer", "smb")))
         self.open()
         for step in page.EXISTING_STEPS[:-1]:
             self.press(f"goto:{step}")

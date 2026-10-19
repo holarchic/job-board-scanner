@@ -232,7 +232,8 @@ class Site:
                 init.init_from(self.home, init.Answers(
                     name=profile.name, titles=list(profile.titles), exclude_titles=list(profile.exclude_titles),
                     locations=list(profile.locations), eligible_where=profile.eligible_where,
-                    tags=list(profile.tags), key=self.drafts.key, custom_tags=profile.custom_tags))
+                    tags=list(profile.tags), key=self.drafts.key, custom_tags=profile.custom_tags,
+                    require=profile.require))
             else:
                 init.save_profile(self.home, profile)
         except ConfigError as e:

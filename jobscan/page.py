@@ -211,6 +211,11 @@ def read_step(step: str, fields: Mapping[str, list[str]], form: Form, offers: Of
             changes["tags"] = frozenset(fields.get("tag", []))
             changes["custom"] = _rows(fields, one, offers)
             changes["too_many"] = len(changes["custom"]) > MOST_TAGS
+            # A built-in's select, in catalogue order; requirements on the person's own tags, which the page has no
+            # control for, kept as they are.
+            changes["require"] = tuple(Requirement(name, value) for name in tag.builtin_names()
+                                       if (value := one(f"require-{name}", "tags"))) \
+                + tuple(r for r in form.require if r.tag not in tag.builtin_names())
         case "email":
             changes.update(email_to=one("email_to").strip(), email_from=one("email_from").strip(),
                            email_host=one("email_host").strip(), email_port=one("email_port").strip(),
@@ -330,10 +335,18 @@ def _tag_errors(form: Form) -> dict[str, str]:
     twice = sorted({n for n in names if names.count(n) > 1})
     if twice:
         return {"tags": f"{', '.join(twice)} named twice."}
+    unticked = [r.tag for r in form.require if r.tag in tag.builtin_names() and r.tag not in form.tags]
+    if unticked:
+        return {"tags": f"Tick {', '.join(unticked)} to hide postings by its answer, or set it back to —."}
     try:
-        tag.definitions(tuple(sorted(form.tags, key=_tag_order)), form.eligible_where or WHERE_UNSAID, custom)
+        defs = tag.definitions(tuple(sorted(form.tags, key=_tag_order)), form.eligible_where or WHERE_UNSAID, custom)
+        tag.check_require(defs, tuple(r for r in form.require if r.tag in tag.builtin_names()))
     except ConfigError as e:
         return {"tags": str(e)}
+    try:
+        tag.check_require(defs, tuple(r for r in form.require if r.tag not in tag.builtin_names()))
+    except ConfigError as e:
+        return {"tags": f"{e}: edit `require` in your profile file, which the page has no control for"}
     return {}
 
 
@@ -606,12 +619,16 @@ def _places_body(view: View) -> str:
 
 def _tags_body(view: View) -> str:
     form, e = view.form, view.errors
+    required = {r.tag: r.value for r in form.require}
     rows = []
     for t in view.catalogue:
         checked = " checked" if t.name in form.tags else ""
         rows.append(f'<label class="choice"><input type="checkbox" name="tag" value="{_x(t.name)}"{checked}> '
                     f'<span><b>{_x(t.name)}</b>: {_x(t.summary)} <i>({_x(report.VALIDATED[t.validated])})</i>'
-                    "</span></label>")
+                    "</span></label>" + _hide(t, required.get(t.name, "")))
+    own = [r for r in form.require if r.tag not in {t.name for t in view.catalogue}]
+    carried = (f'<p class="hint">Also hidden by your profile file\'s <code>require</code>: '
+               f'{_x("; ".join(f"{r.tag} {r.value}" for r in own))}.</p>') if own else ""
     named = {r.name for r in form.custom}
     offered = [r for r in view.offers.custom if r.name not in named]  # once ticked, a tag is an editable row
     suggested = ("<fieldset><legend>Suggested tags of your own: tick to add</legend>" + "".join(
@@ -621,12 +638,21 @@ def _tags_body(view: View) -> str:
         for r in offered) + "</fieldset>") if offered else ""
     return ("<p>Tags are questions about each posting, answered beside it in your digest with a quote from the ad: "
             "is it a founding role? can you work it from where you are?</p>"
-            '<p class="notice">Tags label postings; they don\'t hide them. Every posting that matches your titles and '
-            "places is in your digest, whatever its answers (unless your profile file has a <code>require</code> line: "
-            "postings it rules out are listed at the digest's end); tick the questions you'd like answered when you "
-            "skim.</p>"
-            + "<fieldset><legend>Built-in tags</legend>" + "".join(rows) + "</fieldset>" + _err("tags", e)
+            '<p class="notice">Tags label postings; they don\'t hide them, unless you pick an answer beside one: '
+            "then a posting it definitely answers otherwise is moved to a short list at the digest's end (an unknown, "
+            "or an answer marked ⚠, stays). Tick the questions you'd like answered when you skim.</p>"
+            + "<fieldset><legend>Built-in tags</legend>" + "".join(rows) + "</fieldset>" + carried + _err("tags", e)
             + suggested + _custom(form, e))
+
+
+def _hide(t: tag.BuiltinTag, current: str) -> str:
+    """The answer a posting must not definitely contradict, if any; one the file holds that the tag doesn't offer
+    (free text) is offered too, so the page never changes it."""
+    answers = t.requirable + ((current,) if current and current not in t.requirable else ())
+    options = "".join(f'<option value="{_x(a)}"{" selected" if a == current else ""}>{_x(a)}</option>'
+                      for a in answers)
+    return (f'<label class="hide">Hide postings it definitely answers other than <select name="require-{_x(t.name)}">'
+            f'<option value="">— (hide nothing)</option>{options}</select></label>')
 
 
 def _custom(form: Form, e: Mapping[str, str]) -> str:
@@ -736,7 +762,10 @@ def _summary_body(view: View) -> str:
     shown = {"key": ("OpenRouter key", key), "titles": ("Titles", "; ".join(_lines(f.titles))),
              "exclude": ("Left out", "; ".join(_lines(f.exclude_titles)) or "none"),
              "places": ("Places", "; ".join(_lines(f.locations)) + f" (you can work from: {f.eligible_where})"),
-             "tags": ("Tags", ", ".join([*(t.name for t in view.catalogue if t.name in f.tags), *custom]) or "none"),
+             "tags": ("Tags", (", ".join([*(t.name for t in view.catalogue if t.name in f.tags), *custom]) or "none")
+                      + ("; hides postings a tag definitely answers otherwise than: "
+                         + ", ".join(f"{r.tag} {r.value}" for r in f.require) + " (unknown and ⚠ answers stay)"
+                         if f.require else "")),
              "email": ("Email", email), "schedule": ("When to run", when)}
     rows = []
     for step, (label, value) in ((s, shown[s]) for s in EDITABLE):
@@ -855,6 +884,7 @@ details fieldset{margin:.4rem 0}
 .custom{padding:.9rem 0;border-top:1px dashed var(--line)}.custom label{font-size:15px;color:var(--muted)}
 .custom input:not([type]),.custom textarea{font-size:1.05rem;color:var(--ink)}
 .custom .choice{display:inline-flex;padding:.3rem .7rem}
+.hide{margin:-.2rem 0 .9rem 2.85rem;font-size:15px;color:var(--muted)}.hide select{font:inherit;color:var(--ink)}
 </style></head><body><header>jobscan</header>"""
 
 # Checked 17 Oct 2026 against support.google.com/accounts/answer/185833, support.apple.com/102654 and /102525.
