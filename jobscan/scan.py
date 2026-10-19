@@ -221,7 +221,8 @@ def _tag(conn: sqlite3.Connection, matched: list[store.StoredPosting], defs: lis
 
 def _select(entries: list[digest.DigestEntry], defs: list[tag.TagDef],
             require: tuple[Requirement, ...]) -> tuple[list[digest.DigestEntry], list[digest.LeftOut]]:
-    """The entries the profile's `require` keeps, and the ones it leaves out with what ruled each out."""
+    """The entries `require` (`tag.requirements`: the profile's, and the agency check's unless it includes agencies)
+    keeps, and the ones it leaves out with what ruled each out."""
     shown, left_out = [], []
     for entry in entries:
         if missed := tag.misses(defs, require, entry.tags):
