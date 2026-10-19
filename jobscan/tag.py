@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
-from jobscan.config import ConfigError, CustomTag, ModelConfig
+from jobscan.config import ConfigError, CustomTag, ModelConfig, Profile, Requirement
 from jobscan.records import Posting
 
 TRIES = 3
@@ -167,6 +167,41 @@ def definitions(tag_names: tuple[str, ...], eligible_where: str, custom: tuple[C
             raise ConfigError(f"tag `{d.name}` asks the same question as `{asked[d.hash]}`")
         asked[d.hash] = d.name
     return defs
+
+
+def profile_definitions(profile: Profile) -> list[TagDef]:
+    """The profile's tags (`definitions`), its `require` checked against them: each a tag it tags, with one value
+    that tag can answer, other than unknown."""
+    defs = definitions(profile.tags, profile.eligible_where, profile.custom_tags)
+    by_name = {d.name: d for d in defs}
+    for r in profile.require:
+        d = by_name.get(r.tag)
+        if d is None:
+            raise ConfigError(f"require names `{r.tag}`, which the profile doesn't tag")
+        if len(r.value.splitlines()) != 1 or r.value.strip() != r.value or r.value.casefold() == UNKNOWN \
+                or (d.values is not None and r.value not in d.values):
+            choices = f": one of {[v for v in d.values if v != UNKNOWN]}" if d.values else ""
+            raise ConfigError(f"require `{r.tag}`: {r.value!r} isn't an answer it can require{choices}")
+    return defs
+
+
+def misses(defs: list[TagDef], require: tuple[Requirement, ...],
+           results: dict[str, TagResult]) -> tuple[Requirement, ...]:
+    """The requirements these results rule out. Only a definite answer rules one out: never unknown, an empty or
+    unknown-only list, or an answer shown with ⚠ (a needed quote missing, or any quote given and not found). A
+    default answer without a quote is the posting's answer."""
+    by_name = {d.name: d for d in defs}
+    return tuple(r for r in require if _misses(by_name[r.tag], r.value, results[r.tag]))
+
+
+def _misses(d: TagDef, wanted: str, result: TagResult) -> bool:
+    if result.warn or (result.quote is not None and not result.verified):
+        return False
+    if d.multi:
+        return any(v != UNKNOWN for v in result.value) and wanted not in result.value
+    if d.values is None:  # free text, as the model wrote it
+        return result.value.casefold() not in (wanted.casefold(), UNKNOWN)
+    return result.value not in (wanted, UNKNOWN)
 
 
 def _builtin(name: str, spec: dict, eligible_where: str) -> TagDef:

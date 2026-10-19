@@ -46,6 +46,14 @@ class CustomTag:
 
 
 @dataclass(frozen=True)
+class Requirement:
+    """A posting whose `tag` definitely answers other than `value` is left out of the digest's entries
+    (`tag.misses`)."""
+    tag: str
+    value: str
+
+
+@dataclass(frozen=True)
 class Profile:
     name: str
     titles: tuple[str, ...]
@@ -54,6 +62,7 @@ class Profile:
     eligible_where: str
     tags: tuple[str, ...]  # built-in tag names
     custom_tags: tuple[CustomTag, ...]  # tagged after `tags`, in file order
+    require: tuple[Requirement, ...] = ()  # in file order; names and values checked by `tag.profile_definitions`
 
 
 @dataclass(frozen=True)
@@ -232,6 +241,7 @@ def load_profile(home: Path) -> Profile:
         eligible_where=_string(data, "eligible_where", path),
         tags=tags,
         custom_tags=custom,
+        require=_require(data, path),
     )
 
 
@@ -240,6 +250,8 @@ def profile_toml(profile: Profile) -> str:
     lines = [f"titles = {toml_list(profile.titles)}", f"exclude_titles = {toml_list(profile.exclude_titles)}",
              f"locations = {toml_list(profile.locations)}", f"eligible_where = {toml_string(profile.eligible_where)}",
              f"tags = {toml_list(profile.tags)}"]
+    if profile.require:  # tag names are bare keys (CUSTOM_TAG_NAME, and the built-ins' alike)
+        lines.append("require = { " + ", ".join(f"{r.tag} = {toml_string(r.value)}" for r in profile.require) + " }")
     for c in profile.custom_tags:
         lines += ["", f"[custom_tags.{c.name}]", f"definition = {toml_string(c.definition)}"]
         if c.values != CUSTOM_TAG_VALUES:
@@ -259,6 +271,14 @@ def toml_string(value: str) -> str:
 
 def toml_list(values) -> str:
     return "[" + ", ".join(toml_string(v) for v in values) + "]"
+
+
+def _require(data: dict, path: Path) -> tuple[Requirement, ...]:
+    table = data.get("require", {})
+    if not isinstance(table, dict) or not all(isinstance(v, str) and v.strip() for v in table.values()):
+        raise ConfigError(f"{path}: `require` must be a table of tag names to values, like "
+                          '{ language_required = "no" }')
+    return tuple(Requirement(tag=name, value=value) for name, value in table.items())
 
 
 def _custom_tags(data: dict, path: Path) -> tuple[CustomTag, ...]:

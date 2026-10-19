@@ -159,8 +159,8 @@ def check_values(label: str, values: tuple[str, ...]) -> None:
 
 
 def validate_profile(profile: Profile) -> None:
-    """A profile `load_profile` and `tag.definitions` accept, checked before anything is written; the name before
-    any path is built from it. Custom tags may stand in for built-in ones."""
+    """A profile `load_profile` and `tag.profile_definitions` accept, checked before anything is written; the name
+    before any path is built from it. Custom tags may stand in for built-in ones."""
     if not PROFILE_NAME.fullmatch(profile.name):
         raise ConfigError(f"profile name {profile.name!r}: use lower-case letters, digits and -, starting with a "
                           "letter or digit")
@@ -179,7 +179,7 @@ def validate_profile(profile: Profile) -> None:
     twice = sorted({n for n in names if names.count(n) > 1})
     if twice:
         raise ConfigError(f"tags: {', '.join(twice)} given twice")
-    tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
+    tag.profile_definitions(profile)
 
 
 def _refuse_existing(home: Path) -> None:

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from jobscan import init
-from jobscan.config import ConfigError, CustomTag, Profile, custom_tag, load_profile, profile_toml
+from jobscan.config import ConfigError, CustomTag, Profile, Requirement, custom_tag, load_profile, profile_toml
 
 CLIMATE = custom_tag("climate", {"definition": 'Cuts "emissions"\\n- yes: says so'}, "test")
 SEGMENT = custom_tag("buyer", {"definition": "Who buys.", "values": ["smb", "enterprise"], "multi": True}, "test")
@@ -29,6 +29,22 @@ class ProfileTomlTest(Home):
         (self.home / "profiles" / "ae.toml").write_text(profile_toml(PROFILE))
         self.assertEqual(load_profile(self.home), PROFILE)
 
+    def test_the_writer_and_the_reader_agree_on_require(self):
+        required = Profile(**{**vars(PROFILE), "require": (Requirement("founding", "yes"),
+                                                            Requirement("buyer", "smb"))})
+        text = profile_toml(required)
+        self.assertIn('require = { founding = "yes", buyer = "smb" }', text)
+        (self.home / "profiles" / "ae.toml").write_text(text)
+        self.assertEqual(load_profile(self.home), required)
+        self.assertNotIn("require", profile_toml(PROFILE))
+
+    def test_a_require_that_isnt_a_table_of_strings_is_refused(self):
+        for line in ['require = "founding"', "require = { founding = true }", 'require = { founding = "" }']:
+            (self.home / "profiles" / "ae.toml").write_text(profile_toml(PROFILE).replace(
+                'tags = ["founding"]', f'tags = ["founding"]\n{line}'))
+            with self.subTest(line=line), self.assertRaisesRegex(ConfigError, "`require` must be a table"):
+                load_profile(self.home)
+
     def test_init_without_custom_tags_keeps_its_commented_example(self):
         answers = init.Answers(name="ae", titles=["AE"], exclude_titles=[], locations=["London"],
                                eligible_where="the UK", tags=["founding"], key="sk-or-v1-abc")
@@ -50,6 +66,8 @@ class ValidateProfileTest(unittest.TestCase):
             "asks the same question": {"custom_tags": (CLIMATE, CustomTag("climate2", CLIMATE.definition,
                                                                          CLIMATE.values, False, None))},
             "profile name": {"name": "../x"},
+            "which the profile doesn't tag": {"require": (Requirement("segment", "smb"),)},
+            "isn't an answer it can require": {"require": (Requirement("founding", "maybe"),)},
         }
         for message, change in cases.items():
             with self.assertRaisesRegex(ConfigError, message):
