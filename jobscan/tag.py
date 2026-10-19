@@ -194,7 +194,8 @@ def check_require(defs: list[TagDef], require: tuple[Requirement, ...]) -> None:
         d = by_name.get(r.tag)
         if d is None:
             raise ConfigError(f"require names `{r.tag}`, which the profile doesn't tag")
-        if len(r.value.splitlines()) != 1 or r.value.strip() != r.value or r.value.casefold() == UNKNOWN \
+        # Printable: a control character (NUL) wouldn't come back from the set-up page's select unchanged.
+        if not r.value.isprintable() or r.value.strip() != r.value or r.value.casefold() == UNKNOWN \
                 or (d.values is not None and r.value not in d.values):
             choices = f": one of {[v for v in d.values if v != UNKNOWN]}" if d.values else ""
             raise ConfigError(f"require `{r.tag}`: {r.value!r} isn't an answer it can require{choices}")
