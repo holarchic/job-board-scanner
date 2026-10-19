@@ -35,6 +35,17 @@ class ReadStepTest(unittest.TestCase):
         typed, _ = page.read_step("titles", {"title_more": ["AE\nae\nAE"]}, page.Form(), page.Offers())
         self.assertEqual(typed.titles, "AE")
 
+    def test_the_tags_step_reads_each_picked_answer_and_keeps_the_files_own(self):
+        form = replace(DRAFT, require=(Requirement("climate", "no"), Requirement("founding", "yes")))
+        fields = {"tag": ["founding", "language_required"], "require-language_required": ["no"],
+                  "require-founding": [""], "require-segment": ["smb"], "require-nope": ["x"],
+                  "custom-0-name": ["climate"], "custom-0-definition": ["Cuts emissions."]}
+        read, _ = page.read_step("tags", fields, form, page.Offers())
+        self.assertEqual(read.require, (Requirement("segment", "smb"), Requirement("language_required", "no"),
+                                        Requirement("climate", "no")))  # catalogue order, then the file's own
+        self.assertIn("Tick segment to hide postings by its answer", checks("tags", read)["tags"])
+        self.assertEqual(checks("tags", replace(read, tags=read.tags | {"segment"})), {})
+
     def test_each_step_merges_only_its_own_fields(self):
         fields = {"title": ["X"], "place": ["Paris"], "eligible_where": [" France "], "tag": ["segment"],
                   "email_to": [" me@gmail.com "], "description": [" words "], "name": [" n "]}
@@ -121,6 +132,10 @@ class CheckStepTest(unittest.TestCase):
         self.assertIn("asks the same question", checks("tags", replace(DRAFT, custom=twice))["tags"])
         named = (page.CustomRow(name="a", definition="One?"), page.CustomRow(name="a", definition="Two?"))
         self.assertIn("named twice", checks("tags", replace(DRAFT, custom=named))["tags"])
+        refused = replace(DRAFT, require=(Requirement("founding", "maybe"),))
+        self.assertIn("isn't an answer it can require", checks("tags", refused)["tags"])
+        gone = replace(DRAFT, custom=DRAFT.custom[1:], require=(Requirement("climate", "no"),))
+        self.assertIn("edit `require` in your profile file", checks("tags", gone)["tags"])
         bad = (page.CustomRow(name="ok", definition="Fine."), page.CustomRow(name="x", definition=""))
         self.assertEqual(set(checks("tags", replace(DRAFT, custom=bad))), {"custom-1"})
 
@@ -177,8 +192,8 @@ class ToProfileTest(unittest.TestCase):
         self.assertEqual(page.form_from_profile(profile, None).require, required)
         self.assertEqual(page.to_profile(page.form_from_profile(profile, None)).profile, profile)
         self.assertIsNone(page.unrepresentable(profile))
-        unticked = replace(page.form_from_profile(profile, None), tags=frozenset())
-        self.assertIn("require names `founding`, which the profile doesn't tag", page.to_profile(unticked).errors[""])
+        unticked = replace(page.form_from_profile(profile, None), tags=frozenset({"segment"}))
+        self.assertIn("Tick founding to hide postings by its answer", page.to_profile(unticked).errors["tags"])
 
     def test_a_profile_too_long_or_too_large_for_the_page_is_not_offered(self):
         profile = page.to_profile(DRAFT).profile
@@ -238,8 +253,24 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(html.count('value="AE"'), 1)
         self.assertIn("From your words.", html)
 
-    def test_the_tags_step_says_tags_never_filter(self):
-        self.assertIn("Tags label postings; they don't hide them.", page.render(self.view("tags")))
+    def test_the_tags_step_says_tags_hide_only_by_a_picked_answer(self):
+        self.assertIn("Tags label postings; they don't hide them, unless you pick an answer beside one",
+                      page.render(self.view("tags")))
+
+    def test_each_built_in_tag_offers_the_answers_it_can_hide_by(self):
+        form = replace(DRAFT, tags=frozenset({"founding", "language_required"}),
+                       require=(Requirement("language_required", "French"), Requirement("founding", "yes"),
+                                Requirement("climate", "no")))
+        html = page.render(self.view("tags", form=form))
+        self.assertIn('<select name="require-location_eligible"><option value="">— (hide nothing)</option>'
+                      '<option value="yes">yes</option><option value="no">no</option></select>', html)
+        self.assertIn('<option value="yes" selected>yes</option>', html)
+        # A free-text answer the file holds is offered beside the one the tag offers, selected.
+        self.assertIn('<select name="require-language_required"><option value="">— (hide nothing)</option>'
+                      '<option value="no">no</option><option value="French" selected>French</option></select>', html)
+        self.assertIn("Also hidden by your profile file's <code>require</code>: climate no.", html)
+        self.assertIn("hides postings a tag definitely answers otherwise than: language_required French, founding yes, "
+                      "climate no (unknown and ⚠ answers stay)", page.render(self.view("summary", form=form)))
 
     def test_every_built_in_tag_is_a_tick_box_and_offered_custom_tags_too(self):
         offered = (page.CustomRow(name="salary_stated", definition="Salary stated?"),
