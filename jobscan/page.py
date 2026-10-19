@@ -67,7 +67,8 @@ class Form:
     eligible_where: str = ""
     tags: frozenset[str] = frozenset()
     custom: tuple[CustomRow, ...] = ()
-    require: tuple[Requirement, ...] = ()  # the profile's, kept as it is: no step shows or posts it
+    require: tuple[Requirement, ...] = ()  # built-in tags' from the tags step's selects; the person's own tags', kept
+    # as the file has them
     email_to: str = ""
     email_from: str = ""
     email_host: str = ""
@@ -327,6 +328,8 @@ def _tag_errors(form: Form) -> dict[str, str]:
     custom, errors = _custom_tags(form)
     if form.too_many:
         errors["tags"] = f"More than {MOST_TAGS} custom tags: edit them in your profile file instead."
+    if any(len(r.value) > TEXT_LIMIT for r in form.require):  # checked on the draft: `too_long` lasts one post
+        errors["tags"] = f"An answer to hide by is too long: over {TEXT_LIMIT:,} characters."
     if errors:
         return errors
     if not form.tags and not custom:
@@ -445,7 +448,8 @@ def unrepresentable(profile: Profile) -> str | None:
 def _posted_size(form: Form) -> int:
     """Roughly what a browser posts for this form: every value percent-encoded, line breaks as CRLF."""
     values = [form.name, form.titles, form.exclude_titles, form.locations, form.eligible_where,
-              *(v for r in form.custom for v in (r.name, r.definition, r.values, r.default))]
+              *(v for r in form.custom for v in (r.name, r.definition, r.values, r.default)),
+              *(r.value for r in form.require)]
     return sum(len(quote_plus(v.replace("\n", "\r\n"))) + 32 for v in values)
 
 

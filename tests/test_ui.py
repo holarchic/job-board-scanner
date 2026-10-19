@@ -49,8 +49,9 @@ class Fields(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.fields: dict[str, list[str]] = {}
         self.area: str | None = None
-        self.select: str | None = None
-        self.options: list[tuple[str, bool]] = []
+        self.select: str | None = None  # the open select's name, while its options are read
+        self.first: str | None = None  # its first option's value: what a browser posts when none is selected
+        self.chosen: str | None = None  # its selected option's value
         self.feed(text)
 
     def handle_starttag(self, name, attrs):
@@ -64,9 +65,12 @@ class Fields(HTMLParser):
             self.area = a["name"]
             self.fields.setdefault(self.area, []).append("")
         elif name == "select":
-            self.select, self.options = a["name"], []
+            self.select, self.first, self.chosen = a["name"], None, None
         elif name == "option" and self.select:
-            self.options.append((a.get("value", ""), "selected" in a))
+            if self.first is None:
+                self.first = a.get("value", "")
+            if "selected" in a:
+                self.chosen = a.get("value", "")
 
     def handle_data(self, data):
         if self.area:
@@ -76,8 +80,8 @@ class Fields(HTMLParser):
         if name == "textarea":
             self.area = None
         elif name == "select" and self.select:
-            chosen = next((v for v, selected in self.options if selected), self.options[0][0] if self.options else "")
-            self.fields.setdefault(self.select, []).append(chosen)
+            chosen = self.chosen if self.chosen is not None else self.first
+            self.fields.setdefault(self.select, []).append(chosen or "")
             self.select = None
 
 
