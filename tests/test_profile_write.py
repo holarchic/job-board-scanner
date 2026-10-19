@@ -38,6 +38,16 @@ class ProfileTomlTest(Home):
         self.assertEqual(load_profile(self.home), required)
         self.assertNotIn("require", profile_toml(PROFILE))
 
+    def test_include_agencies_is_written_only_when_true_and_read_back(self):
+        self.assertNotIn("include_agencies", profile_toml(PROFILE))
+        including = Profile(**{**vars(PROFILE), "include_agencies": True})
+        self.assertIn("include_agencies = true", profile_toml(including))
+        (self.home / "profiles" / "ae.toml").write_text(profile_toml(including))
+        self.assertEqual(load_profile(self.home), including)
+        (self.home / "profiles" / "ae.toml").write_text('include_agencies = "yes"\n' + profile_toml(PROFILE))
+        with self.assertRaisesRegex(ConfigError, "`include_agencies` must be true or false"):
+            load_profile(self.home)
+
     def test_a_require_that_isnt_a_table_of_strings_is_refused(self):
         for line in ['require = "founding"', "require = { founding = true }", 'require = { founding = "" }']:
             (self.home / "profiles" / "ae.toml").write_text(profile_toml(PROFILE).replace(

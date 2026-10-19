@@ -371,7 +371,8 @@ def model_reply(tags: dict, cost: float = 0.0005):
 
 
 def tags_quoting_the_posting(payload):
-    """A well-behaved model: founding yes quoting the title, location_eligible yes quoting the location."""
+    """A well-behaved model: founding yes quoting the title, location_eligible yes quoting the location; the agency
+    check, when asked, no."""
     text = payload["messages"][0]["content"]
     title = text.split("<title>", 1)[1].split("</title>", 1)[0]
     location = text.split("<location>", 1)[1].split("</location>", 1)[0]
@@ -379,7 +380,13 @@ def tags_quoting_the_posting(payload):
             "location_eligible": {"value": "yes", "quote": location},
             "segment": {"value": [], "quote": None},
             "language_required": {"value": "no", "quote": None},
-            "tech_company": {"value": "unknown", "quote": None}}
+            "tech_company": {"value": "unknown", "quote": None},
+            **({"agency": {"value": "no", "quote": None}} if "agency" in asked(payload) else {})}
+
+
+def asked(payload) -> set[str]:
+    """The tags a tagging request asks, from its schema."""
+    return set(payload["response_format"]["json_schema"]["schema"]["properties"])
 
 
 def fake_smtp(calls: list, fail: dict | None = None, *, tls: bool):

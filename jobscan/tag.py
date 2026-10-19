@@ -28,6 +28,7 @@ TIMEOUT = 300
 WORKERS = 4
 STOP_AFTER_FAILURES = 3  # consecutive failed postings → treat the model as unavailable
 UNKNOWN = "unknown"
+AGENCY = "agency"  # the check jobscan asks itself (tags.toml `check = true`): a reserved name, never a tag to pick
 # G2 validated `location_eligible` for UK eligibility only.
 UK = re.compile(r"(?<!\w)(UK|U\.K\.|United Kingdom|Britain|England|Scotland|Wales|Northern Ireland|London)(?!\w)",
                 re.IGNORECASE)
@@ -156,7 +157,17 @@ def _builtin_tag(name: str, spec: dict) -> BuiltinTag:
 
 
 def _builtins() -> dict:
+    """The tag catalogue: every tags.toml entry but the checks jobscan asks itself."""
+    return {name: spec for name, spec in _tags_file().items() if not spec.get("check")}
+
+
+def _tags_file() -> dict:
     return tomllib.loads((Path(__file__).parent / "tags.toml").read_text())
+
+
+def agency_definition() -> TagDef:
+    """The agency check, asked of every posting of a profile without `include_agencies`."""
+    return _builtin(AGENCY, _tags_file()[AGENCY], "")
 
 
 def definitions(tag_names: tuple[str, ...], eligible_where: str, custom: tuple[CustomTag, ...] = ()) -> list[TagDef]:
@@ -166,6 +177,8 @@ def definitions(tag_names: tuple[str, ...], eligible_where: str, custom: tuple[C
     unknown = [n for n in tag_names if n not in builtins]
     if unknown:
         raise ConfigError(f"unknown tags {unknown}; built-ins are {sorted(builtins)}")
+    if any(c.name == AGENCY for c in custom):
+        raise ConfigError(f"custom tag `{AGENCY}`: the name is jobscan's agency check (`include_agencies` controls it)")
     shadowing = [c.name for c in custom if c.name in builtins]
     if shadowing:
         raise ConfigError(f"custom tags {shadowing} use built-in names")
@@ -180,10 +193,19 @@ def definitions(tag_names: tuple[str, ...], eligible_where: str, custom: tuple[C
 
 def profile_definitions(profile: Profile) -> list[TagDef]:
     """The profile's tags (`definitions`), its `require` checked against them: each a tag it tags, with one value
-    that tag can answer, other than unknown."""
+    that tag can answer, other than unknown; then the agency check unless the profile includes agencies."""
     defs = definitions(profile.tags, profile.eligible_where, profile.custom_tags)
+    if any(r.tag == AGENCY for r in profile.require):
+        raise ConfigError(f"require can't name `{AGENCY}`: agency postings are left out unless the profile sets "
+                          "`include_agencies = true`")
     check_require(defs, profile.require)
-    return defs
+    return defs if profile.include_agencies else [*defs, agency_definition()]
+
+
+def requirements(profile: Profile) -> tuple[Requirement, ...]:
+    """What a posting must not definitely contradict: the profile's `require`, then the agency check's no unless the
+    profile includes agencies."""
+    return profile.require + (() if profile.include_agencies else (Requirement(AGENCY, "no"),))
 
 
 def check_require(defs: list[TagDef], require: tuple[Requirement, ...]) -> None:
