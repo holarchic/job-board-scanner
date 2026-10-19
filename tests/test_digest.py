@@ -80,6 +80,18 @@ class RenderTest(unittest.TestCase):
             "https://jobs.ashbyhq.com/acme/2\n"))
         self.assertNotIn(digest.LEGEND, text)  # the legend keys on entries' tags, not the left-out ones'
 
+    def test_a_quiet_tag_shows_only_on_a_left_out_row(self):
+        tags = {"founding": TagResult(value="no", quote=None, verified=False, warn=False),
+                "agency": TagResult(value="no", quote=None, verified=False, warn=False)}
+        agency = {**tags, "agency": TagResult(value="yes", quote="Our client", verified=True, warn=False)}
+        text = digest.render("ae", "2026-10-12", [entry(tags=tags)], carried_over=0, unvalidated=frozenset({"agency"}),
+                             left_out=[digest.LeftOut(entry("2", tags=agency), (Requirement("agency", "no"),))],
+                             quiet=frozenset({"agency"}))
+        self.assertNotIn("- agency", text)
+        self.assertNotIn(digest.LEGEND, text)  # a quiet unvalidated tag shows no ⓘ on entries, so no legend
+        self.assertIn("· London · agency: yes · https://jobs.ashbyhq.com/acme/2\n", text)
+        self.assertIn("- founding: no", text)
+
 
 class PublishTest(unittest.TestCase):
     def setUp(self):

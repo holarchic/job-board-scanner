@@ -45,9 +45,11 @@ def scan(config: Config, profile: Profile, defs: list[tag.TagDef]) -> ScanOutcom
         companies = _companies(conn, {s.posting.board for s in matched}, fetched.eligible, started)
         matched = [_named(s, fetched.eligible[s.posting.board], companies.get(s.posting.board)) for s in matched]
         entries, tagged, usage = _tag(conn, matched, defs, config, {b: c.website for b, c in companies.items()})
-        shown, left_out = _select(entries, defs, profile.require)
+        shown, left_out = _select(entries, defs, tag.requirements(profile))
+        named = {*profile.tags, *(c.name for c in profile.custom_tags)}
         outcome = _digest(conn, config, profile, shown, left_out, carried_over=len(matched) - len(entries),
-                          unvalidated=frozenset(d.name for d in defs if not d.validated))
+                          unvalidated=frozenset(d.name for d in defs if not d.validated),
+                          quiet=frozenset(d.name for d in defs if d.name not in named))
         store.record_run(conn, store.RunRecord(
             started=started, finished=_now(), boards_read=fetched.read, boards_failed=fetched.failed,
             new=outcome.new, tagged=tagged, carried_over=outcome.carried_over, cost=usage.cost,
@@ -230,7 +232,8 @@ def _select(entries: list[digest.DigestEntry], defs: list[tag.TagDef],
 
 
 def _digest(conn: sqlite3.Connection, config: Config, profile: Profile, entries: list[digest.DigestEntry],
-            left_out: list[digest.LeftOut], carried_over: int, unvalidated: frozenset[str]) -> ScanOutcome:
+            left_out: list[digest.LeftOut], carried_over: int, unvalidated: frozenset[str],
+            quiet: frozenset[str]) -> ScanOutcome:
     """Left-out postings are delivered with the digest that lists them. Alone they publish nothing: they stay pending,
     their tags cached, until a digest has an entry or a carried-over count to report."""
     if not entries and not carried_over:
@@ -238,7 +241,7 @@ def _digest(conn: sqlite3.Connection, config: Config, profile: Profile, entries:
             log.info("left_out_pending profile=%s postings=%d", profile.name, len(left_out))
         return ScanOutcome(profile.name, new=0, carried_over=0, digest_path=None, digest_failed=False)
     today = date.today().isoformat()
-    text = digest.render(profile.name, today, entries, carried_over, unvalidated, left_out)
+    text = digest.render(profile.name, today, entries, carried_over, unvalidated, left_out, quiet)
     try:
         path = digest.publish(config.home / "digests" / profile.name, today, text)
     except OSError as e:

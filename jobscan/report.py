@@ -28,6 +28,8 @@ def tag_list(catalogue: tuple[tag.BuiltinTag, ...], profile: Profile | None) -> 
     else:
         lines.append("Your own tags go in the profile as [custom_tags.NAME]: `jobscan --help` shows how.")
     lines.append("`jobscan tags NAME` shows a tag's full definition, as the model reads it.")
+    lines.append(f"Also asked of every posting: {tag.AGENCY} (posted by an agency for a client?); a yes leaves it out "
+                 "unless your profile sets include_agencies = true.")
     return lines
 
 
@@ -66,7 +68,9 @@ def install(checked: Install, scheduled: State | ScheduleError | None) -> list[s
         f"  where you can work from: {profile.eligible_where}",
         f"  tags: {', '.join(profile.tags) or '(none)'}{custom}",
         f"  hidden when a tag definitely answers other than: {_required(profile.require)}" if profile.require
-        else "  nothing hidden (no require)",
+        else "  no require: no tag of yours hides a posting",
+        "  agency postings: kept (include_agencies = true)" if profile.include_agencies
+        else "  agency postings: left out (include_agencies = true keeps them)",
         f"Model: {config.model.slug} at {config.model.base_url} (key: {KEY_SOURCES[checked.key_source]})",
         f"Email: digests to {email.to} from {email.sender} ({email.host}:{email.port})" if email
         else "Email: off (`jobscan email` sets it up)",
@@ -130,8 +134,9 @@ def boards_added(file: Path, outcome: Added) -> list[str]:
     return lines
 
 
-def preview_lines(search: str, p: Preview, require: tuple[Requirement, ...]) -> list[str]:
-    """`require` isn't counted here (preview reads no tags): the run lists what it rules out at the digest's end."""
+def preview_lines(search: str, p: Preview, requirements: tuple[Requirement, ...]) -> list[str]:
+    """`requirements` (`tag.requirements`, the agency check's included) aren't counted here (preview reads no tags):
+    the run lists what they rule out at the digest's end."""
     lines = [
         f"{search}, against the {p.open:,} open postings stored for the boards the next run reads:",
         f"  matching your titles and locations: {p.matched:,} postings",
@@ -139,9 +144,11 @@ def preview_lines(search: str, p: Preview, require: tuple[Requirement, ...]) -> 
         f"  already sent to you: {p.sent:,}",
         f"  left out by your excluded titles: {p.excluded:,}",
     ]
-    if require:
-        lines.append(f"Hidden when a tag definitely answers other than {_required(require)}: tagged as usual, then "
-                     "listed under Left out at the digest's end (not counted here).")
+    own = tuple(r for r in requirements if r.tag != tag.AGENCY)
+    hidden = [*([f"postings a tag definitely answers other than {_required(own)}"] if own else []),
+              *(["agency postings"] if len(own) < len(requirements) else [])]
+    if hidden:
+        lines.append(f"Left out at the digest's end, tagged as usual and not counted here: {' and '.join(hidden)}.")
     if p.new_samples:
         lines += ["New jobs, newest first:", *map(_sample, p.new_samples)]
     if p.excluded_samples:
