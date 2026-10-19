@@ -1219,16 +1219,23 @@ class AgencyRunTest(RunFixture):
     def setUp(self):
         super().setUp()
         self.jobs = [ashby_job("1", "Account Executive"),
-                     ashby_job("2", "Account Executive", description="Our client, a SaaS scale-up, is hiring."),
+                     ashby_job("2", "Account Executive, client role",
+                               description="Our client, a SaaS scale-up, is hiring."),
                      ashby_job("3", "Account Executive - Recruiter says so")]
+
+        self.answered = {}  # title → the agency answer the fake gave
 
         def answering(payload):
             tags = tags_quoting_the_posting(payload)
-            text = payload["messages"][0]["content"]
-            if "agency" in asked(payload) and "Our client" in text:
+            # The posting alone: the check's own definition mentions "our clients" too.
+            posting = payload["messages"][0]["content"].split("<description>", 1)[1]
+            title = tags["founding"]["quote"]
+            if "agency" in asked(payload) and "Our client" in posting:
                 tags["agency"] = {"value": "yes", "quote": "Our client, a SaaS scale-up, is hiring."}
-            if "agency" in asked(payload) and "Recruiter says so" in text:  # a yes it can't quote: ⚠, kept
+            if "agency" in asked(payload) and "Recruiter says so" in title:  # a yes it can't quote: ⚠, kept
                 tags["agency"] = {"value": "yes", "quote": "placed by our agency"}
+            if "agency" in tags:
+                self.answered[title] = tags["agency"]["value"]
             return model_reply(tags)
 
         self.model.routes["/chat/completions"] = (200, answering)
@@ -1242,6 +1249,9 @@ class AgencyRunTest(RunFixture):
         self.assertNotIn("acme/2", entries)
         self.assertIn("· agency: yes · https://jobs.ashbyhq.com/acme/2\n", left)
         self.assertIn("acme/3", entries)
+        # Each path taken: a plain no (kept), a quoted yes (left out), a yes it couldn't quote (⚠, kept).
+        self.assertEqual(self.answered, {"Account Executive": "no", "Account Executive, client role": "yes",
+                                         "Account Executive - Recruiter says so": "yes"})
 
     def test_include_agencies_asks_nothing_and_keeps_them(self):
         (self.home / "profiles" / "ae.toml").write_text(PROFILE + "include_agencies = true\n")

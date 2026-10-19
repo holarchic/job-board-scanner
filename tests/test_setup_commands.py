@@ -75,6 +75,13 @@ class TagsTest(CliHome):
         self.assertNotIn("*", out.splitlines()[1])
         self.assertFalse(self.home.exists())  # nothing written
 
+    def test_the_agency_check_is_named_and_whether_it_is_asked(self):
+        self.assertIn("Also asked of every posting by default: agency", self.cli("tags")[1])
+        self.assertNotIn("    agency ", self.cli("tags")[1])  # no tag to pick
+        self.write_profile(PROFILE.replace('tags = ["founding", "location_eligible"]',
+                                           'tags = ["founding", "location_eligible"]\ninclude_agencies = true'))
+        self.assertIn("Not asked: agency", self.cli("tags")[1])
+
     def test_the_profiles_tags_are_marked_and_its_custom_ones_listed(self):
         self.write_profile()
         code, out, _ = self.cli("tags")

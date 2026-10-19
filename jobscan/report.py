@@ -28,8 +28,12 @@ def tag_list(catalogue: tuple[tag.BuiltinTag, ...], profile: Profile | None) -> 
     else:
         lines.append("Your own tags go in the profile as [custom_tags.NAME]: `jobscan --help` shows how.")
     lines.append("`jobscan tags NAME` shows a tag's full definition, as the model reads it.")
-    lines.append(f"Also asked of every posting: {tag.AGENCY} (posted by an agency for a client?); a yes leaves it out "
-                 "unless your profile sets include_agencies = true.")
+    if profile and profile.include_agencies:
+        lines.append(f"Not asked: {tag.AGENCY} (posted by an agency for a client?), since your profile sets "
+                     "include_agencies = true.")
+    else:
+        lines.append(f"Also asked of every posting by default: {tag.AGENCY} (posted by an agency for a client?); a yes "
+                     "leaves it out. include_agencies = true in the profile turns the question off.")
     return lines
 
 

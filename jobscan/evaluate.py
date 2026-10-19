@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from jobscan import tag
-from jobscan.config import Config, ConfigError
+from jobscan.config import Config, ConfigError, Profile
 from jobscan.records import Posting
 
 ELIGIBLE_WHERE = "the UK"  # the G2 set's labels answer UK eligibility
@@ -81,7 +81,8 @@ def run_eval(items: list[LabelledPosting], config: Config) -> EvalReport:
     """Tags every posting with all built-in tags and the agency check in one call each (the production prompt of a
     profile asking them all), scores the gate tags,
     and keeps the raw predictions under $JOBSCAN_HOME/eval/ for inspection."""
-    defs = [*tag.definitions(tag.builtin_names(), ELIGIBLE_WHERE), tag.agency_definition()]  # a profile's default
+    defs = tag.profile_definitions(Profile(name="eval", titles=(), exclude_titles=(), locations=(),
+                                           eligible_where=ELIGIBLE_WHERE, tags=tag.builtin_names(), custom_tags=()))
     attempts = tag.tag_all([i.posting for i in items], defs, config.model, config.api_key)
     predictions = {key: a.results for key, a in attempts.items() if isinstance(a, tag.TagSuccess)}
     _save(config.home, items, attempts)
