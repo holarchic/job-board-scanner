@@ -164,6 +164,8 @@ definition = "The company sells to businesses, not consumers."
 
 `require` moves a posting out of the digest's entries when one of those tags definitely answers otherwise: a German-speaking role with `language_required = "no"`. An `unknown`, or an answer shown with ⚠, never hides one. Hidden postings are listed one line each under "Left out" at the end of the digest, with the answer and the link, so a wrong answer costs you a line, not the job. A day with only hidden postings writes no digest; they wait for the next one. On the set-up page, pick the answer beside a built-in tag; with flags, `jobscan init --require language_required=no`. Requirements on your own tags are set in the file only.
 
+**Agency jobs are left out by default.** Every posting is also asked whether a recruitment, staffing or executive-search agency posted it for a client; a quoted yes moves it to "Left out" the same way. To keep them, set `include_agencies = true` in the profile, tick "Include jobs posted by recruitment and staffing agencies" on the page, or pass `jobscan init --include-agencies`. In my own digests about 1 posting in 200 was an agency's.
+
 Your own tags run on every matching posting. They needn't be listed in `tags`. Say what each answer means; `jobscan tags NAME` shows a built-in one's definition as an example. `values` defaults to yes, no, unknown; `multi = true` answers a list; `default` is the answer when the posting is silent.
 
 To add companies discovery misses, or your Workable boards, run `jobscan boards add <url>`. It writes `~/.jobscan/boards.json`, which every run reads. To keep the file elsewhere, put `boards_file` above `[model]` in `config.toml`:

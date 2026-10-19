@@ -46,6 +46,15 @@ class ReadStepTest(unittest.TestCase):
         self.assertIn("Tick segment to hide postings by its answer", checks("tags", read)["tags"])
         self.assertEqual(checks("tags", replace(read, tags=read.tags | {"segment"})), {})
 
+    def test_the_tags_step_reads_the_agency_tick(self):
+        read, _ = page.read_step("tags", {"tag": ["founding"], "include_agencies": ["on"]}, DRAFT, page.Offers())
+        self.assertTrue(read.include_agencies)
+        read, _ = page.read_step("tags", {"tag": ["founding"]}, read, page.Offers())
+        self.assertFalse(read.include_agencies)
+        including = replace(page.to_profile(DRAFT).profile, include_agencies=True)
+        self.assertEqual(page.to_profile(page.form_from_profile(including, None)).profile, including)
+        self.assertIsNone(page.unrepresentable(including))
+
     def test_each_step_merges_only_its_own_fields(self):
         fields = {"title": ["X"], "place": ["Paris"], "eligible_where": [" France "], "tag": ["segment"],
                   "email_to": [" me@gmail.com "], "description": [" words "], "name": [" n "]}
@@ -261,6 +270,13 @@ class RenderTest(unittest.TestCase):
     def test_the_tags_step_says_tags_hide_only_by_a_picked_answer(self):
         self.assertIn("Tags label postings; they don't hide them, unless you pick an answer beside one",
                       page.render(self.view("tags")))
+
+    def test_the_agency_tick_and_the_summary_say_which(self):
+        html = page.render(self.view("tags"))
+        self.assertIn('name="include_agencies"> <span><b>Include jobs posted by recruitment', html)
+        self.assertIn('name="include_agencies" checked>',
+                      page.render(self.view("tags", form=replace(DRAFT, include_agencies=True))))
+        self.assertIn("; agency postings left out", page.render(self.view("summary")))
 
     def test_each_built_in_tag_offers_the_answers_it_can_hide_by(self):
         form = replace(DRAFT, tags=frozenset({"founding", "language_required"}),

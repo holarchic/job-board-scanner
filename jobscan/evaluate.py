@@ -78,9 +78,10 @@ def _labelled(path: Path, n: int, row) -> LabelledPosting:
 
 
 def run_eval(items: list[LabelledPosting], config: Config) -> EvalReport:
-    """Tags every posting with all built-in tags in one call each (the production prompt), scores the gate tags,
+    """Tags every posting with all built-in tags and the agency check in one call each (the production prompt of a
+    profile asking them all), scores the gate tags,
     and keeps the raw predictions under $JOBSCAN_HOME/eval/ for inspection."""
-    defs = tag.definitions(tag.builtin_names(), ELIGIBLE_WHERE)
+    defs = [*tag.definitions(tag.builtin_names(), ELIGIBLE_WHERE), tag.agency_definition()]  # a profile's default
     attempts = tag.tag_all([i.posting for i in items], defs, config.model, config.api_key)
     predictions = {key: a.results for key, a in attempts.items() if isinstance(a, tag.TagSuccess)}
     _save(config.home, items, attempts)

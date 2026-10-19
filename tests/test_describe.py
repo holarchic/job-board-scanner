@@ -26,6 +26,7 @@ REPLY = {
         suggestion("work_policy", "Where is the job done: remote, hybrid or onsite?", ["remote", "hybrid", "onsite",
                                                                                       "unknown"]),
         suggestion("founding", "Is it founding?"),  # a built-in's name
+        suggestion("agency", "Is it posted by an agency?"),  # the agency check's name
         suggestion("salary_stated", "Another question."),  # a name twice
         suggestion("pay", "Does the posting state a SALARY range?"),  # a question twice
         suggestion("Bad Name", "Is it bad?"),

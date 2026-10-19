@@ -39,6 +39,8 @@ The profile is profiles/NAME.toml: edit it by hand, then `jobscan check`. For ex
   require = { location_eligible = "yes" }
                                      # optional: a posting a tag definitely answers otherwise is listed at the
                                      # digest's end, not as an entry; unknown answers stay
+  include_agencies = true            # optional: keep jobs agencies post for clients; by default jobscan asks
+                                     # of every posting and lists those at the digest's end
   [custom_tags.work_policy]          # your own tag: asked of every match, without listing it in `tags`
   definition = "Where the job is done: remote, hybrid or onsite, as the posting states it."
   values = ["remote", "hybrid", "onsite", "unknown"]
@@ -98,7 +100,8 @@ def _init(commands) -> None:
          "    --location London --location UK --location Remote \\",
          "    --eligible-where 'the UK, working from London' --key-stdin",
          "OPENROUTER_API_KEY=... jobscan init --name pm --title 'Product Manager' --location Berlin \\",
-         "    --eligible-where 'Germany' --tag founding --tag location_eligible --require location_eligible=yes"])
+         "    --eligible-where 'Germany' --tag founding --tag location_eligible --require location_eligible=yes \\",
+         "    --include-agencies"])
     command.add_argument("--name", help="the search's name: lower-case letters, digits and -")
     command.add_argument("--title", action="append", default=[], metavar="TITLE",
                          help="a job title to look for (repeat for each)")
@@ -114,6 +117,9 @@ def _init(commands) -> None:
     command.add_argument("--require", action="append", default=[], metavar="TAG=VALUE",
                          help="hide a posting when this tag definitely answers otherwise, listing it at the digest's "
                               "end instead (repeat for each; e.g. language_required=no; unknown answers stay)")
+    command.add_argument("--include-agencies", action="store_true",
+                         help="keep jobs recruitment and staffing agencies post for clients (default: each is listed "
+                              "at the digest's end instead)")
     command.add_argument("--key-stdin", action="store_true", help="read the OpenRouter key from stdin")
 
 
