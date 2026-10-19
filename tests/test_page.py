@@ -197,6 +197,11 @@ class ToProfileTest(unittest.TestCase):
 
     def test_a_profile_too_long_or_too_large_for_the_page_is_not_offered(self):
         profile = page.to_profile(DRAFT).profile
+        long = replace(profile, tags=("language_required",), require=(Requirement("language_required", "x" * 20_001),))
+        self.assertIn("An answer to hide by is too long", page.unrepresentable(long))
+        self.assertIn("An answer to hide by is too long", checks("tags", page.form_from_profile(long, None))["tags"])
+        wide = replace(profile, tags=("language_required",), require=(Requirement("language_required", "😀" * 19_000),))
+        self.assertIn("Too large for one page", page.unrepresentable(wide))
         self.assertIn("Too long", page.unrepresentable(replace(profile, locations=("x" * 20_001,))))
         defined = replace(profile.custom_tags[0], definition="x" * 19_000)
         big = replace(profile, custom_tags=tuple(replace(defined, name=f"t{i}", definition=f"{i}" + defined.definition)
