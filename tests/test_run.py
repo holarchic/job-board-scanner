@@ -232,6 +232,28 @@ class RunTest(RunFixture):
         self.run_cli()
         self.assertEqual(len(self.model.requests), calls + 1)
 
+    def test_a_run_stopped_while_tagging_keeps_the_postings_already_tagged(self):
+        real, calls = tag.tag_posting, []
+
+        def tag_one_then_crash(*args):
+            calls.append(args)
+            if len(calls) > 1:
+                raise RuntimeError("stopped part-way")
+            return real(*args)
+
+        with mock.patch.object(tag, "WORKERS", 1), mock.patch.object(tag, "tag_posting", tag_one_then_crash), \
+                self.assertRaises(RuntimeError):
+            self.run_cli()
+        self.assertEqual(len(self.model.requests), 1)
+        code, (_, new, _) = self.run_cli()
+        self.assertEqual((code, new, len(self.model.requests)), (0, "2", 2))  # only the untagged one is asked again
+
+    def test_tagging_logs_its_progress(self):
+        with mock.patch.object(scan, "PROGRESS_EVERY", 1):
+            self.run_cli()
+        self.assert_logged_in_order(r"tag_start .*to_tag=2", r"tag_progress done=1 of=2 cost=",
+                                    r"tag_progress done=2 of=2 cost=", r"tag_done tagged=2")
+
     def test_digest_write_failure_leaves_postings_pending(self):
         (self.home / "digests").mkdir()
         (self.home / "digests" / "ae").write_text("a file where the directory should be")

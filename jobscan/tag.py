@@ -12,6 +12,7 @@ import tomllib
 import unicodedata
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -469,9 +470,11 @@ def verify_quote(quote: str, posting: Posting) -> bool:
 
 
 def tag_all(postings: list[Posting], defs: list[TagDef], model: ModelConfig, api_key: str | None,
-            ) -> dict[str, TagAttempt]:
+            on_attempt: Callable[[str, TagAttempt], None] | None = None) -> dict[str, TagAttempt]:
     """Tag postings in parallel, keyed by posting key. After STOP_AFTER_FAILURES consecutive failures (in
-    completion order) no further postings start; in-flight results are kept. Unstarted postings are absent."""
+    completion order) no further postings start; in-flight results are kept. Unstarted postings are absent.
+    `on_attempt(key, attempt)` runs in the caller's thread as each posting finishes, so a caller can save it
+    there and then: a run stopped part-way keeps what it has paid for."""
     stop = threading.Event()
 
     def work(posting: Posting) -> TagAttempt | None:  # None: not started because the breaker tripped
@@ -485,6 +488,8 @@ def tag_all(postings: list[Posting], defs: list[TagDef], model: ModelConfig, api
             if attempt is None:
                 continue
             attempts[futures[future]] = attempt
+            if on_attempt is not None:
+                on_attempt(futures[future], attempt)
             consecutive_failures = 0 if isinstance(attempt, TagSuccess) else consecutive_failures + 1
             if consecutive_failures >= STOP_AFTER_FAILURES:
                 stop.set()
