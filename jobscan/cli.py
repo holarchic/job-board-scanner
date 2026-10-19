@@ -81,7 +81,7 @@ def _run(home: Path, notifying: bool) -> int:
         config = load_config(home)
         email = load_email(home)
         profile = load_profile(home)
-        defs = tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
+        defs = tag.profile_definitions(profile)
         _setup_logging(home)
         with run_lock(home):
             log.info("run_start profile=%s setup_seconds=%.1f", profile.name, monotonic() - entered)
@@ -142,8 +142,7 @@ def _schedule(home: Path, at: time | None) -> int:
         try:
             load_config(home, environ={})
             load_email(home)
-            profile = load_profile(home)
-            tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
+            tag.profile_definitions(load_profile(home))
         except ConfigError as e:
             print(f"jobscan: {e}", file=sys.stderr)
             return EXIT_USAGE

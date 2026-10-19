@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from jobscan import store, tag
-from jobscan.config import ConfigError, CustomTag, ModelConfig
+from jobscan.config import ConfigError, CustomTag, ModelConfig, Profile, Requirement
 from jobscan.records import Posting
 from tests.fakes import FakeServer, model_reply
 
@@ -158,6 +158,92 @@ class DefinitionsTest(unittest.TestCase):
         self.assertEqual(props["founding"]["properties"]["value"], {"type": "string", "enum": ["yes", "no"]})
         self.assertEqual(props["language_required"]["properties"]["value"], {"type": "string"})
         self.assertEqual(props["segment"]["properties"]["value"]["type"], "array")
+
+
+def profile(require=(), custom=()):
+    return Profile(name="ae", titles=("AE",), exclude_titles=(), locations=("London",), eligible_where="the UK",
+                   tags=ALL, custom_tags=custom, require=require)
+
+
+MOTION = CustomTag(name="motion", definition="Who it sells to.", values=("B2B", "b2c", "unknown"), multi=False,
+                   default=None)
+CHANNELS = CustomTag(name="channels", definition="Where it sells.", values=("web", "store", "unknown"), multi=True,
+                     default=None)
+
+
+class RequireTest(unittest.TestCase):
+    """`misses` by tag kind, through `parse_reply` so the results are what the run stores."""
+    defs = tag.profile_definitions(profile(custom=(MOTION, CHANNELS)))
+
+    def missed(self, required, **cells):
+        cells = json.loads(reply()) | {"motion": {"value": "unknown", "quote": None},
+                                       "channels": {"value": [], "quote": None}} | cells
+        results = tag.parse_reply(json.dumps(cells), self.defs, POSTING)
+        return tag.misses(self.defs, tuple(Requirement(t, v) for t, v in required.items()), results)
+
+    def test_listed_values_compare_exactly_and_unknown_never_misses(self):
+        quoted = "our first sales hire"
+        self.assertEqual(self.missed({"location_eligible": "yes"},
+                                     location_eligible={"value": "no", "quote": quoted}),
+                         (Requirement("location_eligible", "yes"),))
+        self.assertEqual(self.missed({"location_eligible": "yes"},
+                                     location_eligible={"value": "yes", "quote": quoted}), ())
+        self.assertEqual(self.missed({"location_eligible": "yes"}), ())  # unknown
+        self.assertEqual(self.missed({"motion": "B2B"}, motion={"value": "b2c", "quote": quoted}),
+                         (Requirement("motion", "B2B"),))
+        self.assertEqual(self.missed({"motion": "B2B"}, motion={"value": "B2B", "quote": quoted}), ())
+
+    def test_free_text_compares_case_folded(self):
+        quoted = "our first sales hire"
+        self.assertEqual(self.missed({"language_required": "no"}), ())  # the default, unquoted
+        self.assertEqual(self.missed({"language_required": "no"}, language_required={"value": "No", "quote": None}),
+                         ())
+        self.assertEqual(self.missed({"language_required": "no"},
+                                     language_required={"value": "Unknown", "quote": None}), ())
+        self.assertEqual(self.missed({"language_required": "no"},
+                                     language_required={"value": "German", "quote": quoted}),
+                         (Requirement("language_required", "no"),))
+
+    def test_lists_miss_only_holding_a_known_value_and_not_the_one_required(self):
+        quoted = "our first sales hire"
+        self.assertEqual(self.missed({"segment": "smb"}), ())  # empty
+        self.assertEqual(self.missed({"segment": "smb"}, segment={"value": ["mid_market", "smb"], "quote": quoted}),
+                         ())
+        self.assertEqual(self.missed({"segment": "smb"}, segment={"value": ["mid_market"], "quote": quoted}),
+                         (Requirement("segment", "smb"),))
+        self.assertEqual(self.missed({"channels": "web"}, channels={"value": ["unknown"], "quote": quoted}), ())
+        self.assertEqual(self.missed({"channels": "web"}, channels={"value": ["store"], "quote": quoted}),
+                         (Requirement("channels", "web"),))
+
+    def test_an_answer_shown_with_a_warning_never_misses(self):
+        self.assertEqual(self.missed({"location_eligible": "yes"},
+                                     location_eligible={"value": "no", "quote": None}), ())  # warn: no quote
+        self.assertEqual(self.missed({"location_eligible": "yes"},
+                                     location_eligible={"value": "no", "quote": "never in the posting"}), ())
+        # A default answer needs no quote, so one given and not found doesn't warn; it is still shown with ⚠.
+        self.assertEqual(self.missed({"founding": "yes"}, founding={"value": "no", "quote": "never in the posting"}),
+                         ())
+
+    def test_a_default_answer_without_a_quote_misses(self):
+        self.assertEqual(self.missed({"founding": "yes"}), (Requirement("founding", "yes"),))
+
+    def test_every_miss_is_named_in_file_order(self):
+        quoted = "our first sales hire"
+        self.assertEqual(self.missed({"location_eligible": "yes", "founding": "yes", "language_required": "no"},
+                                     location_eligible={"value": "no", "quote": quoted},
+                                     language_required={"value": "German", "quote": quoted}),
+                         (Requirement("location_eligible", "yes"), Requirement("founding", "yes"),
+                          Requirement("language_required", "no")))
+
+    def test_requirements_a_tag_cant_answer_are_refused(self):
+        for tag_name, value in [("climate", "yes"), ("location_eligible", "unknown"), ("location_eligible", "maybe"),
+                                ("language_required", "Unknown"), ("language_required", "no\nGerman"),
+                                ("language_required", " no"), ("motion", "b2b"), ("channels", "unknown")]:
+            with self.subTest(tag=tag_name, value=value), self.assertRaises(ConfigError):
+                tag.profile_definitions(profile(require=(Requirement(tag_name, value),), custom=(MOTION, CHANNELS)))
+        self.assertEqual(len(tag.profile_definitions(profile(
+            require=(Requirement("language_required", "French"), Requirement("channels", "web")),
+            custom=(MOTION, CHANNELS)))), 7)
 
 
 class CacheIdentityTest(unittest.TestCase):

@@ -34,7 +34,7 @@ def check(home: Path) -> Install:
     a key file a scheduled run couldn't use."""
     config = load_config(home)
     profile = load_profile(home)
-    tag.definitions(profile.tags, profile.eligible_where, profile.custom_tags)
+    tag.profile_definitions(profile)
     email = load_email(home)
     listed, unrecognised = fetch.load_boards(config.boards_file) if config.boards_file else (None, 0)
     return Install(config=config, profile=profile, email=email, listed=None if listed is None else len(listed),
