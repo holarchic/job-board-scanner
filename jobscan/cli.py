@@ -30,6 +30,7 @@ from jobscan.config import (
     ConfigError,
     EmailConfig,
     Profile,
+    Requirement,
     jobscan_home,
     load_config,
     load_email,
@@ -198,7 +199,7 @@ def _email(home: Path, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-INIT_FLAGS = ("name", "title", "exclude_title", "location", "eligible_where", "tag", "key_stdin")
+INIT_FLAGS = ("name", "title", "exclude_title", "location", "eligible_where", "tag", "require", "key_stdin")
 
 
 def _given(value) -> bool:
@@ -247,7 +248,20 @@ def _init_answers(args: argparse.Namespace) -> init.Answers:
             raise ConfigError("no OpenRouter key: pipe it in with --key-stdin, or set OPENROUTER_API_KEY")
     return init.Answers(name=args.name, titles=args.title, exclude_titles=args.exclude_title,
                         locations=args.location, eligible_where=args.eligible_where,
-                        tags=args.tag or list(tag.builtin_names()), key=key)
+                        tags=args.tag or list(tag.builtin_names()), key=key, require=_requirements(args.require))
+
+
+def _requirements(given: list[str]) -> tuple[Requirement, ...]:
+    """`--require TAG=VALUE`, split at the first `=`; whether the tag can answer VALUE is `tag.check_require`'s."""
+    require = []
+    for text in given:
+        name, equals, value = text.partition("=")
+        if not (name and equals and value):
+            raise ConfigError(f"--require {text!r}: write it TAG=VALUE, like language_required=no")
+        if name in {r.tag for r in require}:
+            raise ConfigError(f"--require names `{name}` twice")
+        require.append(Requirement(tag=name, value=value))
+    return tuple(require)
 
 
 def _discover(home: Path) -> int:

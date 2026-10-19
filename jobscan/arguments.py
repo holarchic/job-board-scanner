@@ -36,12 +36,16 @@ The profile is profiles/NAME.toml: edit it by hand, then `jobscan check`. For ex
   eligible_where = "the UK"          # where you can work from: what location_eligible asks about
   tags = ["location_eligible"]       # built-in tags to ask: `jobscan tags` lists them, `jobscan tags NAME`
                                      # shows one
+  require = { location_eligible = "yes" }
+                                     # optional: a posting a tag definitely answers otherwise is listed at the
+                                     # digest's end, not as an entry; unknown answers stay
   [custom_tags.work_policy]          # your own tag: asked of every match, without listing it in `tags`
   definition = "Where the job is done: remote, hybrid or onsite, as the posting states it."
   values = ["remote", "hybrid", "onsite", "unknown"]
                                      # values defaults to yes, no, unknown; `multi = true` answers a list;
                                      # `default = "unknown"` (one of values) answers when the posting is silent
-Tags label each posting in the digest; they never filter it. `jobscan titles` suggests titles to add or leave out.
+Tags label each posting in the digest; they hide one only as `require` says. `jobscan titles` suggests titles to
+add or leave out.
 Secrets never go on the command line: the key comes from stdin or OPENROUTER_API_KEY, the app password from stdin.
 Exit codes: 0 done; 1 finished with something left undone (untagged postings carried over, a digest not written or
 emailed, a test email refused, a run holding the database); 2 a config or usage error, before any work.
@@ -94,7 +98,7 @@ def _init(commands) -> None:
          "    --location London --location UK --location Remote \\",
          "    --eligible-where 'the UK, working from London' --key-stdin",
          "OPENROUTER_API_KEY=... jobscan init --name pm --title 'Product Manager' --location Berlin \\",
-         "    --eligible-where 'Germany' --tag founding --tag location_eligible"])
+         "    --eligible-where 'Germany' --tag founding --tag location_eligible --require location_eligible=yes"])
     command.add_argument("--name", help="the search's name: lower-case letters, digits and -")
     command.add_argument("--title", action="append", default=[], metavar="TITLE",
                          help="a job title to look for (repeat for each)")
@@ -107,6 +111,9 @@ def _init(commands) -> None:
     command.add_argument("--tag", action="append", default=[], metavar="NAME",
                          help="a built-in tag to ask (repeat for each; default: all; see `jobscan tags`); your own "
                               "tags go in the profile file (`jobscan --help` shows how)")
+    command.add_argument("--require", action="append", default=[], metavar="TAG=VALUE",
+                         help="hide a posting when this tag definitely answers otherwise, listing it at the digest's "
+                              "end instead (repeat for each; e.g. language_required=no; unknown answers stay)")
     command.add_argument("--key-stdin", action="store_true", help="read the OpenRouter key from stdin")
 
 
