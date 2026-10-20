@@ -48,7 +48,7 @@ It works best where a few titles narrow the field and the posting answers the re
 **Limits:**
 
 - No Lever or job sites. Teamtailor and Personio boards on a company's own domain aren't found either, nor are Workday sites outside myworkdayjobs.com or Oracle sites outside oraclecloud.com. Oracle sites with more than 10,000 jobs (Kroger, Marriott, AutoZone and a few others) can't be read. Companies that embed Greenhouse in their own careers page, such as Fivetran and Wiz, need the boards file.
-- Tags label matches; only the ones you `require` hide any, and a hidden posting is still listed in one line. Every match is tagged, so there's no saving there, and no spend cap.
+- Tags label matches; only the ones you `require` hide any, and a hidden posting is still listed in one line. Every match is tagged in the end, so hiding saves nothing.
 - Tests cover AE and PM postings only, with just 8 founding roles. In the five-tag test, 8 of 11 `founding: yes` answers were right.
 - No funding stage or company age; the open-role count is a rough read on size.
 - One search per install.
@@ -57,6 +57,7 @@ It works best where a few titles narrow the field and the posting answers the re
 
 - **One digest per posting.** A posting appears in one digest only; a repost under a new ID is new, and a role posted separately per city appears once per city.
 - **Untagged matches wait.** Matches the model couldn't tag go into a later run's digest.
+- **Big backlogs take a few runs.** A run tags at most 500 matches and starts no more once it has spent $1.00; both are yours to change. It takes the newest first; on a first run, where every match is new, it takes one per company in turn. The rest wait for later runs (a run still exits 0), and the digest's first line and the notification say how many. Postings already being tagged when the dollar limit is reached finish, so a run can end a little past it.
 - **No new matches, no file.** A second digest on the same day gets `-2`, `-3`.
 - **Company names** come from each job site, looked up once per board the first time it has a match. Ashby also gives the company's website, shown under the posting. Some Personio boards name no company and show the board name (`ddock`). A company you list in a boards file keeps your name.
 - **Demo jobs** on Gem's trial and sandbox boards are skipped.
@@ -72,7 +73,7 @@ It works best where a few titles narrow the field and the posting answers the re
 - **Fetch:** every board's public job API or feed, eight at a time on each job site, every site at once. One board's failure never stops the run.
 - **Filter:** titles and locations match whole words, ignoring case, before any model call. A remote job counts when it names one of your places, a country you list by another name, or a region holding one.
 - **Describe:** SmartRecruiters, Rippling, Workday and Oracle list jobs without descriptions, so each match's description is fetched on its own. If that fails, the posting waits for the next run.
-- **Tag:** one model call per posting with all your tags, a strict JSON schema, and each quote checked against the posting text.
+- **Tag:** one model call per posting with all your tags, a strict JSON schema, and each quote checked against the posting text; up to your limits each run, newest first.
 - **Store:** everything in one SQLite file under `~/.jobscan`; no runtime dependencies beyond standard-library Python.
 
 ## Requirements
@@ -113,7 +114,7 @@ pipx ensurepath                # puts jobscan on your PATH for new windows
 
 Then open a new terminal window and carry on with `jobscan ui`. `PIPX_DEFAULT_BACKEND=pip` keeps pipx from using uv, which it does by default when uv is installed (pipx 1.12 and later; older pipx ignores the setting and uses pip anyway). To update, run `pipx reinstall jobscan`: `pipx upgrade` skips it, because the version number doesn't change between updates. The same command fixes daily runs that stop after Homebrew updates its Python.
 
-**In a browser.** `jobscan ui` opens a page on your own machine that asks one thing at a time. It starts by saying how jobscan works. Paste your OpenRouter key, then type what you're looking for in your own words ("account executive jobs with founding teams in London, happy to be remote"). One model call, a fraction of a cent, fills in the next steps: titles, titles to leave out, places and tags, each a tick box, with suggestions you may have missed beside them. Tick, add a few, set up email if you like (the page says how to get an app password), and choose when it runs: every day at 08:00 unless you change it. Save writes everything, checks it loads, sets up the daily run on a Mac (elsewhere it gives you a cron line), and then says what now: the command for a first run, where digests land, and how to report a problem or contribute. Run it again later to edit any step from a summary; after a first run, Preview shows what your search matches. The page runs only on 127.0.0.1, behind a one-time link, and never shows your key or password back to you.
+**In a browser.** `jobscan ui` opens a page on your own machine that asks one thing at a time. It starts by saying how jobscan works. Paste your OpenRouter key, then type what you're looking for in your own words ("account executive jobs with founding teams in London, happy to be remote"). One model call, a fraction of a cent, fills in the next steps: titles, titles to leave out, places and tags, each a tick box, with suggestions you may have missed beside them. Tick, add a few, choose how much a run tags (500 postings and $1.00 unless you change them), set up email if you like (the page says how to get an app password), and choose when it runs: every day at 08:00 unless you change it. Save writes everything, checks it loads, sets up the daily run on a Mac (elsewhere it gives you a cron line), and then says what now: the command for a first run, where digests land, and how to report a problem or contribute. Run it again later to edit any step from a summary; after a first run, Preview shows what your search matches. The page runs only on 127.0.0.1, behind a one-time link, and never shows your key or password back to you.
 
 **With an agent.** Every step also works without a terminal, so a coding agent can set it up for you: point it at this repo and have it read `jobscan --help`, which lists the steps in order with examples. `init` and `email` take flags instead of asking, the key and the app password are read from stdin, and `jobscan check` confirms the install loads. After the first run, `jobscan titles` suggests titles to add or leave out and `jobscan preview` shows what your titles match among the stored postings, so you can tune them without another run.
 
@@ -124,7 +125,7 @@ Then open a new terminal window and carry on with `jobscan ui`. `PIPX_DEFAULT_BA
 | `jobscan ui` | A local page that sets everything up one step at a time from a sentence about what you want, the daily run included, or edits it from a summary |
 | `jobscan init` | Asks for your search, your OpenRouter key and, optionally, an email account; writes `~/.jobscan`. With flags (`--name`, `--title`, `--location`, `--eligible-where`, `--key-stdin`…) it asks nothing |
 | `jobscan check` | Loads the install as a run would and shows what it holds, the daily run included, or the first problem |
-| `jobscan preview` | What your search matches among the postings the last run stored: new jobs, the cost to tag them, samples |
+| `jobscan preview` | What your search matches among the postings the last run stored: new jobs waiting to be tagged, their cost, what one run tags, samples |
 | `jobscan titles` | The model suggests other titles your jobs go by and near-misses to leave out, each with how many stored postings it would add or drop. Never changes your profile |
 | `jobscan tags [NAME]` | Lists the tags, or shows one's full definition |
 | `jobscan boards` · `boards add URL…` | Lists, or adds to, your boards file |
@@ -160,6 +161,8 @@ locations = ["London", "United Kingdom", "UK", "Remote"]
 eligible_where = "the UK, working from London"
 tags = ["founding", "location_eligible", "language_required", "tech_company"]
 require = { location_eligible = "yes", language_required = "no" }   # optional
+max_tag_per_run = 200      # optional, default 500: postings a run tags at most
+max_spend_per_run = 0.50   # optional, default 1.00: dollars at which a run starts no more
 
 [custom_tags.b2b]
 definition = "The company sells to businesses, not consumers."
