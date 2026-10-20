@@ -29,9 +29,11 @@ WORKERS = 8  # per ATS lane (`fetch_each`); describe_all and company_all run one
 IN_FLIGHT = 2 * WORKERS  # per lane: boards fetching or fetched but not yet consumed, bounding postings held
 HEADERS = {"User-Agent": "jobscan (+https://github.com/holarchic/job-board-scanner)", "Accept-Encoding": "gzip"}
 MAX_BODY = 256 << 20  # bytes an answer may inflate to; the largest board seen (Anduril's Greenhouse) inflates to 44 MB
-# OSError covers DNS failures, refusals, timeouts and resets; ValueError covers bad JSON and bad UTF-8;
-# RecursionError covers deeply nested JSON on Python < 3.14. XML decoding raises BoardError itself.
-FAILURES = (OSError, http.client.HTTPException, ValueError, RecursionError, BoardError)
+# The network failed: DNS, refusals, timeouts and resets (OSError), answers cut short or garbled (HTTPException).
+NETWORK = (OSError, http.client.HTTPException)
+# ValueError covers bad JSON and bad UTF-8; RecursionError covers deeply nested JSON on Python < 3.14. XML decoding
+# raises BoardError itself.
+FAILURES = (*NETWORK, ValueError, RecursionError, BoardError)
 log = logging.getLogger("jobscan")
 
 
@@ -54,6 +56,7 @@ class BoardFailure:
     board: Board
     reason: str
     http_status: int | None = None  # 404 means the board is gone; anything else may clear by the next run
+    network: bool = False  # the network failed (NETWORK), which may clear within minutes
 
 
 @dataclass(frozen=True)
@@ -137,8 +140,31 @@ def same_job(key: str) -> str:
 
 
 def fetch_each(boards: list[Board], places: Places) -> Iterator[BoardFetch | BoardFailure]:
-    """Every board's outcome as it completes; `places` is the profile's location test, which an adapter may read only
-    the matching postings by (Workday does). Each ATS reads in its own lane of WORKERS, every lane at once: no ATS
+    """Every board's one outcome; `places` is the profile's location test, which an adapter may read only the matching
+    postings by (Workday does). A board the network failed is read once more after every lane has finished, one try
+    per request: an outage minutes long (DNS down while a Mac sleeps) has often passed by then, and one that hasn't
+    costs a fast failure per board rather than the retry pauses again. Its outcome is handed over only then."""
+    started = time.monotonic()
+    with Connections(TIMEOUT) as connections:
+        unreached = []
+        for outcome in _lanes(connections, boards, places, RETRY_PAUSES, started):
+            if isinstance(outcome, BoardFailure) and outcome.network:
+                unreached.append(outcome.board)
+            else:
+                yield outcome
+        if not unreached:
+            return
+        log.info("fetch_retry boards=%d", len(unreached))
+        read = 0
+        for outcome in _lanes(connections, unreached, places, (), started):
+            read += isinstance(outcome, BoardFetch)
+            yield outcome
+        log.info("fetch_retry_done read=%d", read)
+
+
+def _lanes(connections: Connections, boards: list[Board], places: Places, pauses: tuple[int, ...],
+           started: float) -> Iterator[BoardFetch | BoardFailure]:
+    """Every board's outcome as it completes. Each ATS reads in its own lane of WORKERS, every lane at once: no ATS
     sees more requests at a time than one shared pool gave it, and the fetch lasts as long as its slowest ATS rather
     than all of them end to end. A board is submitted only as an earlier outcome of its lane is handed over, so at
     most IN_FLIGHT boards' postings per lane are held here (plus whatever the caller keeps), however many boards."""
@@ -147,15 +173,13 @@ def fetch_each(boards: list[Board], places: Places) -> Iterator[BoardFetch | Boa
         lanes.setdefault(board.ats, []).append(board)
     queues = {ats: iter(lane) for ats, lane in lanes.items()}
     left = {ats: len(lane) for ats, lane in lanes.items()}
-    started = time.monotonic()
     with ExitStack() as stack:
-        connections = stack.enter_context(Connections(TIMEOUT))  # entered first, so closed after the pools finish
         pools = {ats: stack.enter_context(ThreadPoolExecutor(WORKERS)) for ats in lanes}
         running: dict[Future, str] = {}
 
         def submit(ats: str, n: int) -> None:
             for board in itertools.islice(queues[ats], n):
-                running[pools[ats].submit(_fetch_isolated, connections, board, places)] = ats
+                running[pools[ats].submit(_fetch_isolated, connections, board, places, pauses)] = ats
 
         for ats in lanes:
             submit(ats, IN_FLIGHT)
@@ -174,12 +198,13 @@ def fetch_each(boards: list[Board], places: Places) -> Iterator[BoardFetch | Boa
                 del outcome
 
 
-def _fetch_isolated(connections: Connections, board: Board, places: Places) -> BoardFetch | BoardFailure:
+def _fetch_isolated(connections: Connections, board: Board, places: Places,
+                    pauses: tuple[int, ...]) -> BoardFetch | BoardFailure:
     adapter = ADAPTERS[board.ats]
     try:
-        return BoardFetch(board, adapter.read(board, partial(_get, connections, board), places))
+        return BoardFetch(board, adapter.read(board, partial(_get, connections, board, pauses=pauses), places))
     except FAILURES as e:
-        return BoardFailure(board, _reason(e), _status(e))
+        return BoardFailure(board, _reason(e), _status(e), network=isinstance(e, NETWORK))
 
 
 def describe_all(pairs: list[tuple[Board, Posting]]) -> list[Described | DescribeFailure]:
@@ -192,7 +217,8 @@ def describe_all(pairs: list[tuple[Board, Posting]]) -> list[Described | Describ
 def _describe_isolated(connections: Connections, pair: tuple[Board, Posting]) -> Described | DescribeFailure:
     board, posting = pair
     try:
-        description = ADAPTERS[board.ats].describe(board, posting, partial(_get, connections, board))
+        get = partial(_get, connections, board, pauses=RETRY_PAUSES)
+        description = ADAPTERS[board.ats].describe(board, posting, get)
         return Described(replace(posting, description=description))
     except FAILURES as e:
         return DescribeFailure(posting, _reason(e), _status(e))
@@ -207,16 +233,19 @@ def company_all(boards: list[Board]) -> list[CompanyFound | CompanyFailure]:
 
 def _company_isolated(connections: Connections, board: Board) -> CompanyFound | CompanyFailure:
     try:
-        return CompanyFound(board, ADAPTERS[board.ats].company(board, partial(_get, connections, board)))
+        get = partial(_get, connections, board, pauses=RETRY_PAUSES)
+        return CompanyFound(board, ADAPTERS[board.ats].company(board, get))
     except FAILURES as e:
         return CompanyFailure(board, _reason(e), _status(e))
 
 
-def _get(connections: Connections, board: Board, url: str, body: bytes | None = None) -> bytes:
-    """One request on the board's behalf, a GET, or a POST of `body` as JSON: its 429s are logged under its id. An
-    answer cut short raises IncompleteRead, which is retried like a reset."""
+def _get(connections: Connections, board: Board, url: str, body: bytes | None = None, *,
+         pauses: tuple[int, ...]) -> bytes:
+    """One request on the board's behalf, a GET, or a POST of `body` as JSON, tried again after each of `pauses`
+    (seconds): its 429s are logged under its id. An answer cut short raises IncompleteRead, which is retried like a
+    reset."""
     headers = HEADERS if body is None else HEADERS | {"Content-Type": "application/json"}
-    for attempt, pause in enumerate((*RETRY_PAUSES, None), start=1):
+    for attempt, pause in enumerate((*pauses, None), start=1):
         try:
             answer = connections.send(url, body, headers)
             if answer.status == 200:
@@ -225,7 +254,7 @@ def _get(connections: Connections, board: Board, url: str, body: bytes | None = 
                 log.warning("board_429 board=%s attempt=%d", board.id, attempt)
             if answer.status not in RETRYABLE or pause is None:
                 raise StatusError(answer.status)
-        except (OSError, http.client.HTTPException):
+        except NETWORK:
             if pause is None:
                 raise
         time.sleep(pause)
@@ -260,7 +289,7 @@ def _status(e: Exception) -> int | None:
 
 
 def _reason(e: Exception) -> str:
-    if isinstance(e, (OSError, http.client.HTTPException)):
+    if isinstance(e, NETWORK):
         return f"network: {type(e).__name__}"
     if isinstance(e, (ValueError, RecursionError)):
         return "malformed JSON"

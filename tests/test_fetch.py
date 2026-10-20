@@ -230,7 +230,7 @@ class FetchBoardTest(unittest.TestCase):
     def test_slow_consumer_bounds_boards_in_flight(self):
         started = []
 
-        def fake_fetch(connections, board, places):
+        def fake_fetch(connections, board, places, pauses):
             started.append(board.id)
             return fetch.BoardFetch(board, ())
 
@@ -247,7 +247,7 @@ class FetchBoardTest(unittest.TestCase):
         # WORKERS threads could never fill the barrier.
         together = threading.Barrier(3 * fetch.WORKERS, timeout=10)
 
-        def fake_fetch(connections, board, places):
+        def fake_fetch(connections, board, places, pauses):
             with lock:
                 running[board.ats] += 1
                 peak[board.ats] = max(peak[board.ats], running[board.ats])
@@ -273,7 +273,7 @@ class FetchBoardTest(unittest.TestCase):
     def test_a_slow_consumer_bounds_boards_in_flight_per_lane(self):
         lock, started = threading.Lock(), Counter()
 
-        def fake_fetch(connections, board, places):
+        def fake_fetch(connections, board, places, pauses):
             with lock:
                 started[board.ats] += 1
             return fetch.BoardFetch(board, ())
@@ -293,8 +293,9 @@ class FetchBoardTest(unittest.TestCase):
     def test_a_body_is_posted_as_json_and_a_bare_url_is_a_get(self):
         self.server.routes["/wday/cxs/acme/ext/jobs"] = (200, lambda payload: (200, {"echo": payload}))
         board, connections = self.board(), self.enterContext(Connections(fetch.TIMEOUT))
-        posted = fetch._get(connections, board, f"{self.server.url}/wday/cxs/acme/ext/jobs", b'{"limit": 20}')
-        fetched = fetch._get(connections, board, f"{self.server.url}/wday/cxs/acme/ext/jobs")
+        posted = fetch._get(connections, board, f"{self.server.url}/wday/cxs/acme/ext/jobs", b'{"limit": 20}',
+                            pauses=fetch.RETRY_PAUSES)
+        fetched = fetch._get(connections, board, f"{self.server.url}/wday/cxs/acme/ext/jobs", pauses=fetch.RETRY_PAUSES)
         self.assertEqual((json.loads(posted), json.loads(fetched)), ({"echo": {"limit": 20}}, {"echo": None}))
         self.assertEqual([(method, payload) for method, _, payload in self.server.requests],
                          [("POST", {"limit": 20}), ("GET", None)])
@@ -308,7 +309,8 @@ class FetchBoardTest(unittest.TestCase):
         postings = self.fetch_one()
         self.assertEqual([p.title for p in postings], ["Account Executive"])
         connections = self.enterContext(Connections(fetch.TIMEOUT))
-        fetch._get(connections, board, f"{self.server.url}/posting-api/job-board/acme", b"{}")
+        fetch._get(connections, board, f"{self.server.url}/posting-api/job-board/acme", b"{}",
+                   pauses=fetch.RETRY_PAUSES)
         self.assertEqual(self.server.accept_encodings, ["gzip", "gzip"])
 
     def test_a_gzip_answer_in_several_members_is_read_whole(self):
@@ -360,6 +362,84 @@ class FetchBoardTest(unittest.TestCase):
 
 
 
+class EndOfFetchReadTest(unittest.TestCase):
+    """A board the network failed is read once more after every lane has finished, one try per request."""
+
+    def setUp(self):
+        self.server = FakeServer()
+        self.addCleanup(self.server.close)
+        patcher = mock.patch.object(fetch, "RETRY_PAUSES", (0, 0))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def board(self, slug="acme"):
+        return Board(ats="ashby", slug=slug, company="Acme", api_url=f"{self.server.url}/posting-api/job-board/{slug}")
+
+    def answer(self, path, *answers):
+        """`path` answers each of `answers` in turn: bytes sent cut short (a network failure), else (status, body)."""
+        answers = iter(answers)
+        self.server.routes[path] = (200, lambda _: a if isinstance(a := next(answers), tuple) else (200, a))
+
+    def test_a_board_cut_short_on_every_try_is_read_at_the_end(self):
+        self.answer("/posting-api/job-board/acme", b"{", b"{", b"{", (200, {"jobs": [ashby_job("1", "AE")]}))
+        with self.assertLogs("jobscan", "INFO") as logs:
+            (fetched,), failed = split([self.board()])
+        self.assertEqual(([p.title for p in fetched.postings], failed, len(self.server.requests)), (["AE"], [], 4))
+        self.assertIn("fetch_retry boards=1", "\n".join(logs.output))
+        self.assertIn("fetch_retry_done read=1", "\n".join(logs.output))
+
+    def test_a_board_still_cut_short_fails_after_one_more_request(self):
+        self.answer("/posting-api/job-board/acme", *[b"{"] * 4)
+        _, (failure,) = split([self.board()])
+        self.assertEqual((failure.reason, failure.network, len(self.server.requests)),
+                         ("network: IncompleteRead", True, 4))
+
+    def test_a_board_gone_by_the_end_reports_its_404(self):
+        self.answer("/posting-api/job-board/acme", b"{", b"{", b"{", (404, {"error": "not found"}))
+        _, (failure,) = split([self.board()])
+        self.assertEqual((failure.http_status, failure.network), (404, False))
+
+    def test_answers_that_are_not_the_network_are_not_read_again(self):
+        self.server.routes["/posting-api/job-board/busy"] = (503, {"error": "busy"})
+        self.server.routes["/posting-api/job-board/bad"] = (200, "{not json")
+        with self.assertLogs("jobscan", "INFO") as logs:
+            _, failed = split([self.board("busy"), self.board("bad")])
+        self.assertEqual({f.board.slug: f.network for f in failed}, {"busy": False, "bad": False})
+        self.assertEqual(Counter(path for _, path, _ in self.server.requests),
+                         {"/posting-api/job-board/busy": 3, "/posting-api/job-board/bad": 1})
+        self.assertNotIn("fetch_retry", "\n".join(logs.output))
+
+    def test_a_paged_board_cut_on_a_later_page_is_read_whole_at_the_end(self):
+        board = fetch.board_for("Acme", f"{self.server.url}/v1/companies/acme/postings")
+        jobs = [smartrecruiters_job(str(n), "AE") for n in range(101)]
+        self.server.routes["/v1/companies/acme/postings?limit=100&offset=0"] = (
+            200, smartrecruiters_page(jobs[:100], total=101))
+        self.answer("/v1/companies/acme/postings?limit=100&offset=100", b"{", b"{", b"{",
+                    (200, smartrecruiters_page(jobs[100:], offset=100, total=101)))
+        (fetched,), failed = split([board])
+        self.assertEqual((len(fetched.postings), failed), (101, []))
+        self.assertEqual(Counter(path.rsplit("=", 1)[1] for _, path, _ in self.server.requests), {"0": 2, "100": 4})
+
+    def test_the_end_read_starts_after_every_lane_with_one_try_per_request(self):
+        calls = []
+
+        def fake_fetch(connections, board, places, pauses):
+            calls.append((board.id, pauses))
+            if board.slug == "down" and pauses:
+                return fetch.BoardFailure(board, "network: gaierror", network=True)
+            return fetch.BoardFetch(board, ())
+
+        boards = [Board(ats=ats, slug=f"{ats}{i}", company="x", api_url="http://unused")
+                  for ats in ("ashby", "gem") for i in range(3 * fetch.WORKERS)]
+        boards.insert(0, Board(ats="ashby", slug="down", company="x", api_url="http://unused"))
+        with mock.patch.object(fetch, "_fetch_isolated", fake_fetch):
+            outcomes = list(fetch.fetch_each(boards, anywhere))
+        self.assertEqual(sorted(o.board.id for o in outcomes), sorted(b.id for b in boards))  # one each
+        self.assertEqual(calls[-1], ("ashby:down", ()))
+        self.assertEqual({pauses for _, pauses in calls[:-1]}, {(0, 0)})
+        self.assertEqual((outcomes[-1].board.id, type(outcomes[-1])), ("ashby:down", fetch.BoardFetch))
+
+
 class KeptConnectionTest(unittest.TestCase):
     """Fetch, descriptions and company lookups each keep their connections, at most one per worker."""
 
@@ -377,8 +457,9 @@ class KeptConnectionTest(unittest.TestCase):
     def test_a_cut_answer_is_tried_again_on_a_new_connection(self):
         board = self.ashby("acme")
         whole = json.dumps({"jobs": [ashby_job("1", "AE")]})  # text: sent whole; bytes are sent cut
+        # The second case's fourth answer is the end-of-fetch read's.
         for sent, outcome in [([b'{"jobs": [', b'{"jobs"', whole], "AE"),
-                                 ([b'{"jobs": [', b'{"jobs"', b"{"], "network: IncompleteRead")]:
+                                 ([b'{"jobs": [', b'{"jobs"', b"{", b"{"], "network: IncompleteRead")]:
             with self.subTest(outcome):
                 before = len(self.server.requests)
                 answers = iter(sent)
@@ -387,7 +468,7 @@ class KeptConnectionTest(unittest.TestCase):
                 self.assertEqual([p.title for f in fetched for p in f.postings] or [f.reason for f in failed],
                                  [outcome])
                 ports = self.server.client_ports[before:]
-                self.assertEqual((len(ports), len(set(ports))), (3, 3))  # each cut connection left behind
+                self.assertEqual((len(ports), len(set(ports))), (len(sent), len(sent)))  # each cut one left behind
 
     def test_a_lane_reads_over_at_most_a_connection_per_worker(self):
         boards = [self.ashby(f"b{n:02d}") for n in range(3 * fetch.WORKERS)]
