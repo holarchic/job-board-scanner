@@ -76,6 +76,8 @@ It works best where a few titles narrow the field and the posting answers the re
 - **Tag:** one model call per posting with all your tags, a strict JSON schema, and each quote checked against the posting text; up to your limits each run, newest first.
 - **Store:** everything in one SQLite file under `~/.jobscan`; no runtime dependencies beyond standard-library Python.
 
+Module by module, with the decisions behind each: [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Requirements
 
 macOS or Linux, and an [OpenRouter](https://openrouter.ai) API key with credit. uv fetches Python 3.11+ if you don't have it.
