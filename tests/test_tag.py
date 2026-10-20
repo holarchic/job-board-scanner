@@ -521,6 +521,33 @@ class TagPostingTest(unittest.TestCase):
             tag.tag_all(postings, DEFS, self.model, None, on_attempt=save_fails)
         self.assertEqual(len(self.server.requests), 1)
 
+    def test_the_breaker_counts_failures_in_the_order_postings_finish(self):
+        # In finishing order, never three failures in a row: success, then fail, fail, success, fail, fail, ... The
+        # first callback is slow, so the other eleven have all finished before any is accounted for; taken in any
+        # other order, three failures would almost surely meet and trip the breaker.
+        fails = [False] + [n % 3 != 2 for n in range(11)]
+        success = tag.TagSuccess(results={}, usage=tag.Usage(), reasoning_tokens=0)
+
+        def tagged(posting, *args):
+            n = int(posting.key.rsplit(":", 1)[1])
+            if n < len(fails):
+                time.sleep(0.03 * n)
+                if fails[n]:
+                    return tag.TagFailure(error="HTTP 503", http_status=503, usage=tag.Usage())
+            return success
+
+        slept = []
+
+        def slow_first(key, attempt):
+            if not slept:
+                slept.append(key)
+                time.sleep(0.6)
+
+        postings = [Posting(**{**vars(POSTING), "key": f"ashby:acme:{n}"}) for n in range(14)]
+        with mock.patch.object(tag, "WORKERS", 12), mock.patch.object(tag, "tag_posting", tagged):
+            run = tag.tag_all(postings, DEFS, self.model, None, on_attempt=slow_first)
+        self.assertEqual((len(run.attempts), run.stopped), (14, None))
+
     def test_no_posting_starts_once_the_budget_is_reached_and_in_flight_ones_finish(self):
         self.server.routes["/chat/completions"] = (200, lambda payload: model_reply(json.loads(reply()), cost=0.0005))
         postings = [Posting(**{**vars(POSTING), "key": f"ashby:acme:{n:02}"}) for n in range(20)]

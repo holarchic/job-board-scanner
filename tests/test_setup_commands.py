@@ -15,7 +15,7 @@ from datetime import time
 from pathlib import Path
 from unittest import mock
 
-from jobscan import boards, cli, init, lock, schedule, store, tag
+from jobscan import boards, cli, init, lock, report, schedule, store, tag
 from jobscan.config import Requirement, load_config, load_email, load_profile
 from jobscan.records import Board, Company, Posting
 from tests.fakes import StatefulLaunchctl, patch_smtp
@@ -296,6 +296,10 @@ class InitFlagsTest(CliHome):
         self.assertTrue(load_profile(self.home).include_agencies)
         _, out, _ = self.cli("check")
         self.assertIn("  agency postings: kept (include_agencies = true)", out)
+
+    def test_a_spend_shows_every_digit_it_has(self):
+        self.assertEqual([report.dollars(v) for v in (1.0, 0.5, 0.555, 0.30000000000000004, 999.9999, 1e-05)],
+                         ["$1.00", "$0.50", "$0.555", "$0.30000000000000004", "$999.9999", "$1e-05"])
 
     def test_tagging_limits_by_flag(self):
         code, _, err = self.cli("init", *FLAGS, "--max-tag-per-run", "200", "--max-spend-per-run", "0.5", "--key-stdin",

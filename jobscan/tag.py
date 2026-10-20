@@ -5,6 +5,7 @@ import hashlib
 import http.client
 import json
 import math
+import queue
 import re
 import time
 import tomllib
@@ -12,9 +13,10 @@ import unicodedata
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from jobscan.config import ConfigError, CustomTag, ModelConfig, Profile, Requirement
 from jobscan.records import Posting
@@ -474,10 +476,13 @@ def verify_quote(quote: str, posting: Posting) -> bool:
                                 for field in (posting.title, posting.location, posting.description))
 
 
+Stopped = Literal["failures", "budget"]  # why postings were left unstarted: the breaker, or the budget reached
+
+
 @dataclass(frozen=True)
 class TagRun:
     attempts: dict[str, TagAttempt]  # by posting key; postings never started are absent
-    stopped: str | None  # why postings were left unstarted: "failures" (the breaker), "budget", or None
+    stopped: Stopped | None
 
 
 def tag_all(postings: list[Posting], defs: list[TagDef], model: ModelConfig, api_key: str | None,
@@ -492,28 +497,30 @@ def tag_all(postings: list[Posting], defs: list[TagDef], model: ModelConfig, api
     waiting = iter(postings)
     attempts: dict[str, TagAttempt] = {}
     consecutive_failures, spent, stopped = 0, 0.0, None
+    finished: queue.SimpleQueue[Future] = queue.SimpleQueue()  # in the order they finish, one at a time
     with ThreadPoolExecutor(WORKERS) as pool:
         running: dict[Future, str] = {}
 
         def start_next() -> None:
             if (posting := next(waiting, None)) is not None:
-                running[pool.submit(tag_posting, posting, defs, model, api_key)] = posting.key
+                future = pool.submit(tag_posting, posting, defs, model, api_key)
+                running[future] = posting.key
+                future.add_done_callback(finished.put)
 
         for _ in range(WORKERS):
             start_next()
         while running:
-            finished, _ = wait(running, return_when=FIRST_COMPLETED)
-            for future in finished:
-                key = running.pop(future)
-                attempts[key] = attempt = future.result()
-                if on_attempt is not None:
-                    on_attempt(key, attempt)
-                consecutive_failures = 0 if isinstance(attempt, TagSuccess) else consecutive_failures + 1
-                spent += attempt.usage.cost
-                if stopped is None and consecutive_failures >= STOP_AFTER_FAILURES:
-                    stopped = "failures"
-                elif stopped is None and budget is not None and spent >= budget:
-                    stopped = "budget"
-                if stopped is None:
-                    start_next()
+            future = finished.get()
+            key = running.pop(future)
+            attempts[key] = attempt = future.result()
+            if on_attempt is not None:
+                on_attempt(key, attempt)
+            consecutive_failures = 0 if isinstance(attempt, TagSuccess) else consecutive_failures + 1
+            spent += attempt.usage.cost
+            if stopped is None and consecutive_failures >= STOP_AFTER_FAILURES:
+                stopped = "failures"
+            elif stopped is None and budget is not None and spent >= budget:
+                stopped = "budget"
+            if stopped is None:
+                start_next()
     return TagRun(attempts, stopped)

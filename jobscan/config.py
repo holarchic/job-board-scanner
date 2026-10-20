@@ -68,7 +68,7 @@ class Profile:
     max_spend_per_run: float = 1.0  # dollars: once a run's known tagging spend reaches it, no posting starts
 
 
-MAX_TAG_PER_RUN, MAX_SPEND_PER_RUN = Profile.max_tag_per_run, Profile.max_spend_per_run  # the defaults, by name
+MAX_TAG_PER_RUN, MAX_SPEND_PER_RUN = Profile.max_tag_per_run, Profile.max_spend_per_run
 
 
 @dataclass(frozen=True)
@@ -249,8 +249,7 @@ def load_profile(home: Path) -> Profile:
         custom_tags=custom,
         require=_require(data, path),
         include_agencies=_boolean(data, "include_agencies", path),
-        max_tag_per_run=_limit(check_max_tag, data, "max_tag_per_run", MAX_TAG_PER_RUN, path),
-        max_spend_per_run=_limit(check_max_spend, data, "max_spend_per_run", MAX_SPEND_PER_RUN, path),
+        **_limits(data, path),
     )
 
 
@@ -269,11 +268,10 @@ def check_max_spend(value) -> float:
     return float(value)
 
 
-def _limit(check, data: dict, key: str, default, path: Path):
-    if key not in data:
-        return default
+def _limits(data: dict, path: Path) -> dict:
     try:
-        return check(data[key])
+        return {"max_tag_per_run": check_max_tag(data.get("max_tag_per_run", MAX_TAG_PER_RUN)),
+                "max_spend_per_run": check_max_spend(data.get("max_spend_per_run", MAX_SPEND_PER_RUN))}
     except ConfigError as e:
         raise ConfigError(f"{path}: {e}") from None
 

@@ -237,8 +237,8 @@ def _tag(conn: sqlite3.Connection, matched: list[store.StoredPosting], defs: lis
     over_budget = unstarted if run.stopped == "budget" else 0
     waiting = len(needed) - len(sending) + over_budget
     if waiting:
-        log.info("tag_limited waiting=%d over_count=%d over_budget=%d", waiting, len(needed) - len(sending),
-                 over_budget)
+        log.info("tag_limited waiting=%d by=%s over_count=%d over_budget=%d", waiting,
+                 "budget" if over_budget else "count", len(needed) - len(sending), over_budget)
     log.info("tag_done tagged=%d failed=%d cost=%.4f cost_reported=%s reasoning_tokens=%d", tagged,
              len(attempts) - tagged, usage.cost, usage.cost_reported, usage.reasoning_tokens)
     open_roles = store.open_counts(conn, {s.posting.board for s in matched})

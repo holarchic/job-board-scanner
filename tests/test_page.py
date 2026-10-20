@@ -240,7 +240,7 @@ class ToProfileTest(unittest.TestCase):
         profile = page.to_profile(DRAFT).profile
         self.assertEqual((profile.max_tag_per_run, profile.max_spend_per_run), (500, 1.0))  # the draft's defaults
         for count, spend, tile in [(1000, 2.0, "1000"), (250, 0.555, "other"), (1, 1e-05, "other"),
-                                   (100_000, 0.30000000000000004, "other")]:
+                                   (100_000, 0.30000000000000004, "other"), (2, 1e-100, "other"), (3, 5e-324, "other")]:
             limited = replace(profile, max_tag_per_run=count, max_spend_per_run=spend)
             form = page.form_from_profile(limited, None)
             with self.subTest(count=count, spend=spend):

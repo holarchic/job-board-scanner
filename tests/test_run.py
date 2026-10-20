@@ -1272,7 +1272,7 @@ class LimitRunTest(RunFixture):
         text = Path(path).read_text()
         self.assertTrue(text.startswith(f"# ae — {Path(path).stem} · 2 new · 3 waiting for later runs\n"), text)
         self.assertEqual((text.count("## Acme — "), text.count("## Beta — ")), (1, 1))
-        self.assertIn("tag_limited waiting=3 over_count=3 over_budget=0", (self.home / "runs.log").read_text())
+        self.assertIn("tag_limited waiting=3 by=count over_count=3 over_budget=0", (self.home / "runs.log").read_text())
         code, (_, new, path) = self.run_cli()
         self.assertEqual((code, new), (0, "2"))
         self.assertIn(" · 2 new · 1 waiting for later runs\n", Path(path).read_text())
@@ -1315,7 +1315,8 @@ class LimitRunTest(RunFixture):
         # The first answer reaches the limit; the three then in flight finish.
         self.assertEqual((code, new, len(self.model.requests)), (0, "4", 4))
         self.assertIn(" · 4 new · 6 waiting for later runs\n", Path(path).read_text())
-        self.assertIn("tag_limited waiting=6 over_count=0 over_budget=6", (self.home / "runs.log").read_text())
+        self.assertIn("tag_limited waiting=6 by=budget over_count=0 over_budget=6",
+                      (self.home / "runs.log").read_text())
 
 
 class TagQueueTest(unittest.TestCase):

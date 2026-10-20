@@ -145,8 +145,12 @@ def limits(max_tag: int, max_spend: float) -> str:
 
 
 def dollars(amount: float) -> str:
-    """Cents when the amount has no finer part, else as written: $1.00, $0.555."""
-    return f"${amount:.2f}" if round(amount, 2) == amount else f"${amount:g}"
+    return "$" + spend_text(amount)
+
+
+def spend_text(amount: float) -> str:
+    """A dollar amount exactly: cents when they read back the same (1.00), else every digit (0.555, 1e-05)."""
+    return f"{amount:.2f}" if float(f"{amount:.2f}") == amount else repr(amount)
 
 
 def preview_lines(search: str, p: Preview, requirements: tuple[Requirement, ...]) -> list[str]:

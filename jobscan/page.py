@@ -79,7 +79,7 @@ class Form:
     include_agencies: bool = False  # the tags step's tick: keep postings the agency check says an agency posted
     max_tag: str = str(MAX_TAG_PER_RUN)  # the limits step's tile: one of COUNTS, or "other" with `max_tag_other`
     max_tag_other: str = ""
-    max_spend: str = f"{MAX_SPEND_PER_RUN:.2f}"  # dollars, as typed
+    max_spend: str = report.spend_text(MAX_SPEND_PER_RUN)  # dollars, as typed
     email_to: str = ""
     email_from: str = ""
     email_host: str = ""
@@ -160,7 +160,7 @@ def form_from_profile(profile: Profile, email: EmailConfig | None) -> Form:
                 require=profile.require, include_agencies=profile.include_agencies,
                 max_tag=str(profile.max_tag_per_run) if str(profile.max_tag_per_run) in COUNTS else "other",
                 max_tag_other="" if str(profile.max_tag_per_run) in COUNTS else str(profile.max_tag_per_run),
-                max_spend=_spend_text(profile.max_spend_per_run),
+                max_spend=report.spend_text(profile.max_spend_per_run),
                 email_to=email.to if email else "", email_from=email.sender if email else "",
                 email_host=email.host if email else "", email_port=str(email.port) if email else "")
 
@@ -325,7 +325,7 @@ def _profile_errors(step: str, form: Form) -> dict[str, str]:
     elif step == "tags":
         errors |= _tag_errors(form)
     elif step == "limits":
-        errors |= _limits(form)[2]
+        errors |= _limits(form).errors
     elif step == "summary" and not init.PROFILE_NAME.fullmatch(form.name):
         errors["name"] = "Use lower-case letters, digits and -, starting with a letter or digit."
     return errors
@@ -374,9 +374,15 @@ def _tag_errors(form: Form) -> dict[str, str]:
     return {}
 
 
-def _limits(form: Form) -> tuple[int, float, dict[str, str]]:
-    """The draft's tagging limits by the profile's rules, the default standing in for one that doesn't read, with
-    why by field."""
+@dataclass(frozen=True)
+class Limits:
+    """The limits step's draft read by the profile's rules: each limit, or None with why under its field."""
+    max_tag_per_run: int | None
+    max_spend_per_run: float | None
+    errors: Mapping[str, str]
+
+
+def _limits(form: Form) -> Limits:
     errors: dict[str, str] = {}
     text = form.max_tag if form.max_tag in COUNTS else form.max_tag_other if form.max_tag == "other" else ""
     count = int(text) if re.fullmatch(r"[0-9]{1,6}", text) else None
@@ -384,22 +390,17 @@ def _limits(form: Form) -> tuple[int, float, dict[str, str]]:
         check_max_tag(count)
     except ConfigError:
         errors["max_tag"] = "Give a whole number of postings from 1 to 100,000."
-        count = MAX_TAG_PER_RUN
+        count = None
     spend = float(form.max_spend) if re.fullmatch(_DOLLARS, form.max_spend) else None
     try:
         check_max_spend(spend)
     except ConfigError:
         errors["max_spend"] = "Give dollars over 0 and at most 1,000, like 1.00."
-        spend = MAX_SPEND_PER_RUN
-    return count, spend, errors
+        spend = None
+    return Limits(count, spend, errors)
 
 
-_DOLLARS = r"(?:[0-9]{1,4}(?:\.[0-9]{0,24})?|\.[0-9]{1,24})(?:e-?[0-9]{1,2})?"  # as typed, or as `_spend_text` wrote it
-
-
-def _spend_text(spend: float) -> str:
-    """A stored spend as the page shows it: cents when that reads back the same, else exactly (`repr`)."""
-    return f"{spend:.2f}" if float(f"{spend:.2f}") == spend else repr(spend)
+_DOLLARS = r"(?:[0-9]{1,4}(?:\.[0-9]{0,24})?|\.[0-9]{1,24})(?:e-?[0-9]{1,3})?"  # as typed, or `report.spend_text`
 
 
 def _custom_tags(form: Form) -> tuple[tuple[CustomTag, ...], dict[str, str]]:
@@ -444,11 +445,14 @@ def to_profile(form: Form) -> Checked:
     for step in ("titles", "exclude", "places", "tags", "limits", "summary"):
         errors |= _profile_errors(step, form) | _too_long(form, step)
     custom, _ = _custom_tags(form)
-    count, spend, _ = _limits(form)
+    limits = _limits(form)
     profile = Profile(name=form.name, titles=_lines(form.titles), exclude_titles=_lines(form.exclude_titles),
                       locations=_lines(form.locations), eligible_where=form.eligible_where,
                       tags=tuple(sorted(form.tags, key=_tag_order)), custom_tags=custom, require=form.require,
-                      include_agencies=form.include_agencies, max_tag_per_run=count, max_spend_per_run=spend)
+                      include_agencies=form.include_agencies,
+                      # Defaults stand in only for the size measure below: a limit that doesn't read is an error.
+                      max_tag_per_run=limits.max_tag_per_run or MAX_TAG_PER_RUN,
+                      max_spend_per_run=limits.max_spend_per_run or MAX_SPEND_PER_RUN)
     # Measured as the page would show the profile, not as typed (a vertical tab posts smaller than the line break it
     # becomes): one rule for saving and for offering a profile, so the page can always reopen what it saved, with room
     # left for the email settings and the browser's encoding.
@@ -753,6 +757,12 @@ def _limits_body(view: View) -> str:
             + f'<p class="hint">About ${COST_PER_POSTING * 500:.2f} for 500 postings with the default model.</p>')
 
 
+def _limits_row(limits: Limits) -> str:
+    if limits.errors:
+        return "not set: a limit doesn't read"
+    return f"tags {report.limits(limits.max_tag_per_run, limits.max_spend_per_run)}"
+
+
 def _email_body(view: View) -> str:
     f, e = view.form, view.errors
     saved = f"Now: digests to {view.email.to} from {view.email.sender}." if view.email else \
@@ -847,7 +857,7 @@ def _summary_body(view: View) -> str:
                          + ", ".join(f"{r.tag} {r.value}" for r in f.require) + " (unknown and ⚠ answers stay)"
                          if f.require else "")
                       + ("; agency postings kept" if f.include_agencies else "; agency postings left out")),
-             "limits": ("Each run", f"tags {report.limits(*_limits(f)[:2])}"),
+             "limits": ("Each run", _limits_row(_limits(f))),
              "email": ("Email", email), "schedule": ("When to run", when)}
     rows = []
     for step, (label, value) in ((s, shown[s]) for s in EDITABLE):
