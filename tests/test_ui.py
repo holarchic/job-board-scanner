@@ -364,7 +364,7 @@ class NewInstallTest(UiTest):
         self.assertEqual(self.described(), 2)  # new words, read again: the draft follows them
         self.assertEqual(checked(text, "title"), ["Account Executive"])
 
-    def test_without_a_description_suggest_works_before_places_and_every_tag_starts_ticked(self):
+    def test_without_a_description_suggest_works_before_places_and_every_default_tag_starts_ticked(self):
         self.start()
         self.press("next", key="sk-or-v1-fresh")
         text = self.press("skip")
@@ -376,7 +376,7 @@ class NewInstallTest(UiTest):
         self.press("next")
         self.press("next")
         text = self.press("next", place_more="London", eligible_where="the UK")
-        self.assertEqual(checked(text, "tag"), list(tag.builtin_names()))
+        self.assertEqual(checked(text, "tag"), list(tag.default_names()))  # opt-in tags offered unticked
         self.press("next")
         self.press("next")
         self.press("next", unticked=[("schedule_on", "on")])

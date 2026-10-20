@@ -179,7 +179,7 @@ class Site:
 
     def _skip(self) -> str:
         if not self.form.tags and not self.form.custom:
-            self.form = replace(self.form, tags=frozenset(tag.builtin_names()))
+            self.form = replace(self.form, tags=frozenset(tag.default_names()))
         return self._go("titles")
 
     def _go(self, step: str) -> str:
