@@ -420,6 +420,35 @@ class EndOfFetchReadTest(unittest.TestCase):
         self.assertEqual((len(fetched.postings), failed), (101, []))
         self.assertEqual(Counter(path.rsplit("=", 1)[1] for _, path, _ in self.server.requests), {"0": 2, "100": 4})
 
+    def test_workers_finish_before_the_connections_close_when_the_caller_stops_early(self):
+        real = fetch._lanes
+        for stop_in in ("first pass", "end pass"):
+            events, kept = [], []
+
+            def fake_fetch(connections, board, places, pauses, stop_in=stop_in, events=events):
+                if stop_in == "end pass" and pauses:
+                    return fetch.BoardFailure(board, "network: gaierror", network=True)
+                time.sleep(0.05)
+                events.append("worker done")
+                return fetch.BoardFetch(board, ())
+
+            class Recorded(Connections):
+                def __exit__(self, *exc, events=events):
+                    events.append("connections closed")
+                    return super().__exit__(*exc)
+
+            def retained(*args, kept=kept):  # outlived by a reference, as a profiler or a debugger can hold one
+                kept.append(lanes := real(*args))
+                return lanes
+
+            with self.subTest(stop_in), mock.patch.object(fetch, "_fetch_isolated", fake_fetch), \
+                    mock.patch.object(fetch, "_lanes", retained), mock.patch.object(fetch, "Connections", Recorded):
+                each = fetch.fetch_each([self.board(f"b{i}") for i in range(2 * fetch.WORKERS)], anywhere)
+                next(each)
+                each.close()
+                time.sleep(0.2)  # a worker still running after the close would land here, after the connections closed
+                self.assertEqual((events[-1], events.count("connections closed")), ("connections closed", 1))
+
     def test_the_end_read_starts_after_every_lane_with_one_try_per_request(self):
         calls = []
 

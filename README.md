@@ -5,7 +5,7 @@
 
 Self-hosted scanner for tech roles on Ashby, Greenhouse, Gem, Workable, Teamtailor, Personio: LLM-tagged, emailed daily.
 
-> **Status:** running daily on my own search since October 2026, version 0.1.0. Pre-1.0: the config, the database and the digest format can still change.
+> **Status:** running daily on my own search since October 2026. Pre-1.0: the config, the database and the digest format can still change.
 
 ![A digest email in Gmail: "jobscan: 18 new for david-ae", listing Account Executive roles at carwow, Funding Circle and HiveMQ, each with its link, open-role count and tags with quotes from the posting](docs/digest-email.png)
 
@@ -58,7 +58,7 @@ It works best where a few titles narrow the field and the posting answers the re
 - **One digest per posting.** A posting appears in one digest only; a repost under a new ID is new, and a role posted separately per city appears once per city.
 - **Untagged matches wait.** Matches the model couldn't tag go into a later run's digest.
 - **Big backlogs take a few runs.** A run tags at most 500 matches and starts no more once it has spent $1.00; both are yours to change. It takes the newest first; on a first run, where every match is new, it takes one per company in turn. The rest wait for later runs (a run still exits 0), and the digest's first line and the notification say how many. Postings already being tagged when the dollar limit is reached finish, so a run can end a little past it.
-- **A run that can't reach many boards says so.** A board that fails on the network (DNS down, the Mac asleep mid-run) is tried once more at the end of the fetch. When over 5% of the boards (and at least 50) still couldn't be read, the digest and the notification say how many, even on a run with nothing new. They're read again next run, and nothing is lost.
+- **A run that can't reach many boards says so.** A board that fails on the network (DNS down, the Mac asleep mid-run) is tried once more at the end of the fetch. When over 5% of the boards (and at least 50) still couldn't be read, the digest says how many, and so does the notification, even on a run with nothing new and so no digest. They're read again next run, and nothing is lost.
 - **No new matches, no file.** A second digest on the same day gets `-2`, `-3`.
 - **Company names** come from each job site, looked up once per board the first time it has a match. Ashby also gives the company's website, shown under the posting. Some Personio boards name no company and show the board name (`ddock`). A company you list in a boards file keeps your name.
 - **Demo jobs** on Gem's trial and sandbox boards are skipped.

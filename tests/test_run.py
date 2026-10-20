@@ -808,9 +808,9 @@ class UnreadBoardsTest(RunFixture):
         """The fixture's two boards (Acme, and Broken answering 500) plus boards refusing every connection, cut short
         on every first-pass try then answering, answering an empty list, and answering 404."""
         url = f"{self.ats.url}/posting-api/job-board"
+        down = "http://127.0.0.1:9/posting-api/job-board"  # refused, as for SENTINELS
         entries = [{"company": "Acme", "board_url": f"{url}/acme"}, {"company": "Broken", "board_url": f"{url}/broken"}]
-        entries += [{"company": "Down", "board_url": f"http://127.0.0.1:9/posting-api/job-board/down{n}"}
-                    for n in range(refusing)]
+        entries += [{"company": "Down", "board_url": f"{down}/down{n}"} for n in range(refusing)]
         for name in [*(f"back{n}" for n in range(recovering)), *(f"empty{n}" for n in range(empty)),
                      *(f"gone{n}" for n in range(gone))]:
             answers = iter([b"{"] * 3 if name.startswith("back") else [])

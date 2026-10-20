@@ -8,7 +8,7 @@ import time
 import zlib
 from collections.abc import Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
@@ -145,20 +145,24 @@ def fetch_each(boards: list[Board], places: Places) -> Iterator[BoardFetch | Boa
     per request: an outage minutes long (DNS down while a Mac sleeps) has often passed by then, and one that hasn't
     costs a fast failure per board rather than the retry pauses again. Its outcome is handed over only then."""
     started = time.monotonic()
+    # Each pass closed explicitly, so its workers finish before the connections they use close, even when the caller
+    # abandons this generator part-way.
     with Connections(TIMEOUT) as connections:
         unreached = []
-        for outcome in _lanes(connections, boards, places, RETRY_PAUSES, started):
-            if isinstance(outcome, BoardFailure) and outcome.network:
-                unreached.append(outcome.board)
-            else:
-                yield outcome
+        with closing(_lanes(connections, boards, places, RETRY_PAUSES, started)) as outcomes:
+            for outcome in outcomes:
+                if isinstance(outcome, BoardFailure) and outcome.network:
+                    unreached.append(outcome.board)
+                else:
+                    yield outcome
         if not unreached:
             return
         log.info("fetch_retry boards=%d", len(unreached))
         read = 0
-        for outcome in _lanes(connections, unreached, places, (), started):
-            read += isinstance(outcome, BoardFetch)
-            yield outcome
+        with closing(_lanes(connections, unreached, places, (), started)) as outcomes:
+            for outcome in outcomes:
+                read += isinstance(outcome, BoardFetch)
+                yield outcome
         log.info("fetch_retry_done read=%d", read)
 
 

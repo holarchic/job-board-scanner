@@ -22,7 +22,7 @@ log = logging.getLogger("jobscan")
 @cache
 def code_identity() -> str:
     """SHA-256 of the package's own files, names and contents in name order. It changes with every upgrade, where the
-    version string doesn't: every git install reports 0.1.0."""
+    version string changes only when it is bumped: a git install can take several commits between bumps."""
     package = Path(__file__).parent
     digest = hashlib.sha256()
     for path in sorted([*package.glob("*.py"), package / "tags.toml"]):
