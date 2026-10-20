@@ -31,12 +31,17 @@ It finds the job boards itself, reads them directly and has a language model tag
 | Tag | Answers |
 |-----|---------|
 | `founding` | First and only hire in the role's function, across the company? |
-| `location_eligible` | Can you work it from where you said? Visa sponsorship isn't checked. |
+| `location_eligible` | Can you work it from where you said? Visa sponsorship isn't checked; `visa_sponsorship` asks it |
 | `segment` | Sales roles: enterprise, mid-market or SMB customers (one or more) |
 | `language_required` | A required language other than English, or `no` |
 | `tech_company` | Is the company's main business technology? |
+| `reports_to` | Who the role reports to, by title (and name, if the posting gives one), or `unknown` |
+| `visa_sponsorship` | Does the employer sponsor a work visa? `unknown` when the posting doesn't say |
+| `credential_required` | A required specialist degree, licence or lab/clinical background outside the role's own craft, or `no` |
 
-ⓘ marks the tags no labelled set has checked: `segment`, `tech_company`, `location_eligible` outside the UK, and your own.
+`reports_to`, `visa_sponsorship` and `credential_required` are opt-in: asked only when you pick them, so a search that doesn't need them pays nothing for them.
+
+ⓘ marks the tags no labelled set has checked: `segment`, `tech_company`, `reports_to`, `visa_sponsorship`, `credential_required`, `location_eligible` outside the UK, and your own.
 
 It works best where a few titles narrow the field and the posting answers the rest. My first runs: AE, 233 postings, 47 minutes, at least $0.11; PM, 169 postings, 7 minutes, $0.08, then 118 more from Greenhouse for $0.05.
 

@@ -9,15 +9,16 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from jobscan import cli, init, mail
+from jobscan import cli, init, mail, tag
 from jobscan.config import ConfigError, EmailConfig, load_config, load_email, load_profile
 from tests.fakes import patch_smtp
 
-TAG_COUNT = 5
+TAG_COUNT = len(tag.builtins())
+LATER_TAGS = TAG_COUNT - 5  # built-ins after the first five, which these answers leave unticked
 
 
 def answers(name="doa-pm", titles="Product Manager, Senior Product Manager", exclude="", locations="London, UK",
-            where="the UK, working from London", tags=("y", "y", "n", "y", "y"), email=("",)):
+            where="the UK, working from London", tags=("y", "y", "n", "y", "y", *["n"] * LATER_TAGS), email=("",)):
     """`email`: the answers to the email questions; Enter alone says no to email."""
     return [name, titles, exclude, locations, where, *tags, *email]
 

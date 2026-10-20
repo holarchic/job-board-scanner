@@ -249,7 +249,7 @@ def _init_answers(args: argparse.Namespace) -> init.Answers:
             raise ConfigError("no OpenRouter key: pipe it in with --key-stdin, or set OPENROUTER_API_KEY")
     return init.Answers(name=args.name, titles=args.title, exclude_titles=args.exclude_title,
                         locations=args.location, eligible_where=args.eligible_where,
-                        tags=args.tag or list(tag.builtin_names()), key=key, require=_requirements(args.require),
+                        tags=args.tag or list(tag.default_names()), key=key, require=_requirements(args.require),
                         include_agencies=args.include_agencies)
 
 

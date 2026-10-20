@@ -662,6 +662,8 @@ def _hide(t: tag.BuiltinTag, current: str) -> str:
     """The answer a posting must not definitely contradict, if any; one the file holds that the tag doesn't offer
     (free text) is offered too, so the page never changes it."""
     answers = t.requirable + ((current,) if current and current not in t.requirable else ())
+    if not answers:  # a free-text tag whose default is unknown: no answer to hide by
+        return ""
     options = "".join(f'<option value="{_x(a)}"{" selected" if a == current else ""}>{_x(a)}</option>'
                       for a in answers)
     return (f'<label class="hide">Hide postings it definitely answers other than <select name="require-{_x(t.name)}">'

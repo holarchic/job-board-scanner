@@ -264,7 +264,7 @@ class InitFlagsTest(CliHome):
         self.assertIn("jobscan schedule --at 08:00", out)
         typed_home = self.home.parent / "typed"
         typed = ["doa-pm", "Product Manager, Senior Product Manager", "Product Marketing", "London, UK",
-                 "the UK, working from London", "y", "n", "n", "n", "y", ""]
+                 "the UK, working from London", "y", "n", "n", "n", "y", *["n"] * (len(tag.builtins()) - 5), ""]
         with mock.patch("builtins.input", side_effect=typed), \
                 mock.patch.object(init.getpass, "getpass", return_value="sk-or-v1-abc"), \
                 contextlib.redirect_stdout(io.StringIO()):
@@ -274,11 +274,11 @@ class InitFlagsTest(CliHome):
         self.assertEqual(oct((self.home / "openrouter.key").stat().st_mode & 0o777), "0o600")
         self.assertEqual(self.cli("check")[0], 0)
 
-    def test_every_built_in_tag_by_default_and_the_environment_key_saved(self):
+    def test_every_default_tag_by_default_and_the_environment_key_saved(self):
         with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or-v1-env"}):
             self.assertEqual(self.cli("init", *FLAGS)[0], 0)
         self.assertEqual((self.home / "openrouter.key").read_text(), "sk-or-v1-env\n")
-        self.assertEqual(len(load_profile(self.home).tags), len(tag.builtin_names()))
+        self.assertEqual(load_profile(self.home).tags, tag.default_names())
 
     def test_require_by_flags_reaches_the_profile(self):
         code, _, err = self.cli("init", *FLAGS, "--require", "language_required=no", "--require",

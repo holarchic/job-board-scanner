@@ -4,7 +4,9 @@
 # which needs no quote. founding and language_required follow the G2 labelling guide v2.1.0. `validated` says
 # whether `eval` has passed the tag; "uk" means only when the profile's `eligible_where` names the UK, the only
 # eligibility G2 tested. `summary` is the one line `jobscan init` shows; the model never sees it. A `check` is no tag
-# to pick: jobscan asks it itself (the agency check, unless a profile sets `include_agencies = true`).
+# to pick: jobscan asks it itself (the agency check, unless a profile sets `include_agencies = true`). An `opt_in`
+# tag is asked only when chosen: `init` without --tag leaves it out, typed `init` offers it unticked, and `eval`,
+# which scores the prompt the G2 test built, never adds it.
 
 [agency]
 check = true
@@ -74,4 +76,39 @@ The company's main product is technology: software, SaaS, AI/ML, developer, data
 - **yes:** includes a fintech or insurtech selling software.
 - **no:** the main business is something else — services, consulting, agency, recruitment, events, retail, a bank or insurer, healthcare provision — even if it uses technology or is hiring for a tech role.
 - **unknown:** the posting doesn't describe what the company sells.
+"""
+
+[reports_to]
+opt_in = true
+summary = "Who does the role report to?"
+validated = false
+default = "unknown"
+definition = """
+The job title of the person this role reports to, as the posting names it (`Head of Product`, `CPO`, `VP Sales`, `the CEO`, `a co-founder`). Add the person's name only when the posting gives it (`CPO, Jane Smith`).
+- Read it from "reporting to", "you'll report to", "your manager will be". A team the role joins, or people it works alongside, is not who it reports to.
+- **Default `unknown`:** the posting doesn't say.
+"""
+
+[visa_sponsorship]
+opt_in = true
+summary = "Does it offer visa sponsorship?"
+validated = false
+values = ["yes", "no", "unknown"]
+definition = """
+The employer will sponsor a work visa or permit for this job.
+- **yes:** the posting says it sponsors visas or work permits ("visa sponsorship available", "we sponsor Skilled Worker visas").
+- **no:** the posting says it can't sponsor, or that applicants must already have the right to work there ("no sponsorship", "you must have the right to work in the UK").
+- **unknown:** the posting doesn't say. Relocation support alone, without sponsorship, is `unknown`.
+"""
+
+[credential_required]
+opt_in = true
+summary = "Does it require a specialist degree, licence or lab/clinical background?"
+validated = false
+default = "no"
+definition = """
+The posting requires a qualification or hands-on specialist background outside the role's own craft: a scientific or clinical degree (`PhD in life sciences`, `MD`, `pharmacy degree`), a licence or registration (`chartered accountant`, `registered nurse`), or lab, clinical or regulated-industry experience (`clinical lab experience`, `NGS / IVD experience`). Answer `no` or name what it requires, briefly.
+- Experience in the role's own craft (years as a PM, B2B sales, a CS degree for an engineer) is not a credential.
+- "Preferred", "a plus" or "nice to have" is `no`.
+- **Default `no`:** a posting that requires none.
 """

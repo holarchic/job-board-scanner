@@ -293,6 +293,11 @@ class RenderTest(unittest.TestCase):
         self.assertIn("hides postings a tag definitely answers otherwise than: language_required French, founding yes, "
                       "climate no (unknown and ⚠ answers stay)", page.render(self.view("summary", form=form)))
 
+    def test_a_tag_with_no_answer_to_hide_by_gets_no_picker(self):
+        html = page.render(self.view("tags"))
+        self.assertIn('value="reports_to"', html)  # still a tick box
+        self.assertNotIn('name="require-reports_to"', html)
+
     def test_every_built_in_tag_is_a_tick_box_and_offered_custom_tags_too(self):
         offered = (page.CustomRow(name="salary_stated", definition="Salary stated?"),
                    page.CustomRow(name="visa", definition="Visa offered?"))
