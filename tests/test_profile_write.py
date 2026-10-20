@@ -48,6 +48,33 @@ class ProfileTomlTest(Home):
         with self.assertRaisesRegex(ConfigError, "`include_agencies` must be true or false"):
             load_profile(self.home)
 
+    def test_tagging_limits_are_written_only_when_not_the_defaults_and_read_back(self):
+        self.assertNotIn("max_", profile_toml(PROFILE))
+        (self.home / "profiles" / "ae.toml").write_text(profile_toml(PROFILE))
+        self.assertEqual((load_profile(self.home).max_tag_per_run, load_profile(self.home).max_spend_per_run),
+                         (500, 1.0))
+        for count, spend in [(200, 0.555), (100_000, 1000.0), (1, 2.0), (500, 1e-05)]:
+            limited = Profile(**{**vars(PROFILE), "max_tag_per_run": count, "max_spend_per_run": spend})
+            (self.home / "profiles" / "ae.toml").write_text(profile_toml(limited))
+            with self.subTest(count=count, spend=spend):
+                self.assertEqual(load_profile(self.home), limited)
+        (self.home / "profiles" / "ae.toml").write_text("max_spend_per_run = 2\n" + profile_toml(PROFILE))
+        self.assertEqual(load_profile(self.home).max_spend_per_run, 2.0)  # a TOML integer is dollars too
+
+    def test_a_tagging_limit_out_of_range_or_of_the_wrong_type_is_refused(self):
+        lines = {"max_tag_per_run": ["0", "100001", "-1", "1.5", "true", '"500"'],
+                 "max_spend_per_run": ["0", "-1", "1000.01", "true", "inf", "nan", '"1.00"']}
+        for key, values in lines.items():
+            for value in values:
+                (self.home / "profiles" / "ae.toml").write_text(f"{key} = {value}\n" + profile_toml(PROFILE))
+                with self.subTest(key=key, value=value), self.assertRaisesRegex(ConfigError, f"`{key}` must be"):
+                    load_profile(self.home)
+
+    def test_validate_profile_refuses_a_limit_the_reader_would(self):
+        for changes in [{"max_tag_per_run": 0}, {"max_spend_per_run": 0.0}, {"max_tag_per_run": True}]:
+            with self.subTest(changes=changes), self.assertRaises(ConfigError):
+                init.validate_profile(Profile(**{**vars(PROFILE), **changes}))
+
     def test_a_require_that_isnt_a_table_of_strings_is_refused(self):
         for line in ['require = "founding"', "require = { founding = true }", 'require = { founding = "" }']:
             (self.home / "profiles" / "ae.toml").write_text(profile_toml(PROFILE).replace(

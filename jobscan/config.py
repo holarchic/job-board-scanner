@@ -64,6 +64,11 @@ class Profile:
     custom_tags: tuple[CustomTag, ...]  # tagged after `tags`, in file order
     require: tuple[Requirement, ...] = ()  # in file order; names and values checked by `tag.profile_definitions`
     include_agencies: bool = False  # False: the agency check is asked and its yes leaves a posting out
+    max_tag_per_run: int = 500  # postings a run sends to the model at most; the rest wait for later runs
+    max_spend_per_run: float = 1.0  # dollars: once a run's known tagging spend reaches it, no posting starts
+
+
+MAX_TAG_PER_RUN, MAX_SPEND_PER_RUN = Profile.max_tag_per_run, Profile.max_spend_per_run  # the defaults, by name
 
 
 @dataclass(frozen=True)
@@ -244,7 +249,33 @@ def load_profile(home: Path) -> Profile:
         custom_tags=custom,
         require=_require(data, path),
         include_agencies=_boolean(data, "include_agencies", path),
+        max_tag_per_run=_limit(check_max_tag, data, "max_tag_per_run", MAX_TAG_PER_RUN, path),
+        max_spend_per_run=_limit(check_max_spend, data, "max_spend_per_run", MAX_SPEND_PER_RUN, path),
     )
+
+
+def check_max_tag(value) -> int:
+    """`max_tag_per_run` by the one rule the profile file, `init`'s flags and the page share."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 100_000:
+        raise ConfigError("`max_tag_per_run` must be a whole number from 1 to 100,000")
+    return value
+
+
+def check_max_spend(value) -> float:
+    """`max_spend_per_run` in dollars, by the one rule the profile file, `init`'s flags and the page share."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= 1_000:
+        # NaN fails the range test too; infinity fails its upper bound.
+        raise ConfigError("`max_spend_per_run` must be a number of dollars over 0 and at most 1,000")
+    return float(value)
+
+
+def _limit(check, data: dict, key: str, default, path: Path):
+    if key not in data:
+        return default
+    try:
+        return check(data[key])
+    except ConfigError as e:
+        raise ConfigError(f"{path}: {e}") from None
 
 
 def profile_toml(profile: Profile) -> str:
@@ -256,6 +287,10 @@ def profile_toml(profile: Profile) -> str:
         lines.append("require = { " + ", ".join(f"{r.tag} = {toml_string(r.value)}" for r in profile.require) + " }")
     if profile.include_agencies:
         lines.append("include_agencies = true")
+    if profile.max_tag_per_run != MAX_TAG_PER_RUN:
+        lines.append(f"max_tag_per_run = {profile.max_tag_per_run}")
+    if profile.max_spend_per_run != MAX_SPEND_PER_RUN:
+        lines.append(f"max_spend_per_run = {profile.max_spend_per_run!r}")  # repr: the float reads back exactly
     for c in profile.custom_tags:
         lines += ["", f"[custom_tags.{c.name}]", f"definition = {toml_string(c.definition)}"]
         if c.values != CUSTOM_TAG_VALUES:

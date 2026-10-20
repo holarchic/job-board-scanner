@@ -16,12 +16,16 @@ from jobscan import mail, tag
 from jobscan.config import (
     EMAIL_FILE,
     KEY_FILE,
+    MAX_SPEND_PER_RUN,
+    MAX_TAG_PER_RUN,
     ConfigError,
     CustomTag,
     EmailConfig,
     ModelConfig,
     Profile,
     Requirement,
+    check_max_spend,
+    check_max_tag,
     is_host,
     is_mailbox,
     is_password,
@@ -113,12 +117,15 @@ class Answers:
     custom_tags: tuple[CustomTag, ...] = ()
     require: tuple[Requirement, ...] = ()
     include_agencies: bool = False
+    max_tag_per_run: int = MAX_TAG_PER_RUN
+    max_spend_per_run: float = MAX_SPEND_PER_RUN
 
     @property
     def profile(self) -> Profile:
         return Profile(name=self.name, titles=tuple(self.titles), exclude_titles=tuple(self.exclude_titles),
                        locations=tuple(self.locations), eligible_where=self.eligible_where, tags=tuple(self.tags),
-                       custom_tags=self.custom_tags, require=self.require, include_agencies=self.include_agencies)
+                       custom_tags=self.custom_tags, require=self.require, include_agencies=self.include_agencies,
+                       max_tag_per_run=self.max_tag_per_run, max_spend_per_run=self.max_spend_per_run)
 
 
 def init(home: Path) -> Setup:
@@ -182,6 +189,8 @@ def validate_profile(profile: Profile) -> None:
     twice = sorted({n for n in names if names.count(n) > 1})
     if twice:
         raise ConfigError(f"tags: {', '.join(twice)} given twice")
+    check_max_tag(profile.max_tag_per_run)
+    check_max_spend(profile.max_spend_per_run)
     tag.profile_definitions(profile)
 
 
