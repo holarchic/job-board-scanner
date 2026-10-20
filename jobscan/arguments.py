@@ -21,7 +21,7 @@ SET_UP = """Set up, in order (a person in a terminal, or an agent by flags):
   3. jobscan boards add URL        optional: a company discovery misses
   4. jobscan check                 the install loads as a run would; run it after editing the profile
   5. jobscan run                   fetch, filter, tag, write the digest; the first run finds the boards too and
-                                   tags every match, so it can take over an hour
+                                   tags up to the profile's limits (500 postings, $1.00), later runs the rest
   6. jobscan preview               what the profile matches among the stored postings: tune titles without a run
   7. jobscan schedule --at 08:00   macOS: a daily run, with a notification when there's something new
 
@@ -41,6 +41,9 @@ The profile is profiles/NAME.toml: edit it by hand, then `jobscan check`. For ex
                                      # digest's end, not as an entry; unknown answers stay
   include_agencies = true            # optional: keep jobs agencies post for clients; by default jobscan asks
                                      # of every posting and lists those at the digest's end
+  max_tag_per_run = 200              # optional (default 500): postings a run sends to the model at most
+  max_spend_per_run = 0.50           # optional (default 1.00): dollars; once a run's spend reaches it, it starts
+                                     # no more. Either way the rest wait for later runs (exit 0)
   [custom_tags.work_policy]          # your own tag: asked of every match, without listing it in `tags`
   definition = "Where the job is done: remote, hybrid or onsite, as the posting states it."
   values = ["remote", "hybrid", "onsite", "unknown"]
@@ -49,8 +52,9 @@ The profile is profiles/NAME.toml: edit it by hand, then `jobscan check`. For ex
 Tags label each posting in the digest; they hide one only as `require` says. `jobscan titles` suggests titles to
 add or leave out.
 Secrets never go on the command line: the key comes from stdin or OPENROUTER_API_KEY, the app password from stdin.
-Exit codes: 0 done; 1 finished with something left undone (untagged postings carried over, a digest not written or
-emailed, a test email refused, a run holding the database); 2 a config or usage error, before any work.
+Exit codes: 0 done, matches held back by the tagging limits included; 1 finished with something left undone
+(postings whose tagging failed, carried over; a digest not written or emailed; a test email refused; a run holding
+the database); 2 a config or usage error, before any work.
 Every command has --help with examples."""
 
 
@@ -101,7 +105,7 @@ def _init(commands) -> None:
          "    --eligible-where 'the UK, working from London' --key-stdin",
          "OPENROUTER_API_KEY=... jobscan init --name pm --title 'Product Manager' --location Berlin \\",
          "    --eligible-where 'Germany' --tag founding --tag location_eligible --require location_eligible=yes \\",
-         "    --include-agencies"])
+         "    --include-agencies --max-tag-per-run 200 --max-spend-per-run 0.50"])
     command.add_argument("--name", help="the search's name: lower-case letters, digits and -")
     command.add_argument("--title", action="append", default=[], metavar="TITLE",
                          help="a job title to look for (repeat for each)")
@@ -120,6 +124,11 @@ def _init(commands) -> None:
     command.add_argument("--include-agencies", action="store_true",
                          help="keep jobs recruitment and staffing agencies post for clients (default: each is listed "
                               "at the digest's end instead)")
+    command.add_argument("--max-tag-per-run", type=int, metavar="N",
+                         help="postings a run sends to the model at most (default 500); the rest wait for later runs")
+    command.add_argument("--max-spend-per-run", type=float, metavar="USD",
+                         help="once a run's tagging spend reaches this many dollars, it starts no more (default "
+                              "1.00); in-flight postings finish")
     command.add_argument("--key-stdin", action="store_true", help="read the OpenRouter key from stdin")
 
 
@@ -193,8 +202,9 @@ def _preview(commands) -> None:
     _command(
         commands, "preview", "what the saved profile matches among the postings the last run stored",
         "Count what the saved profile's titles, excluded titles and locations match among the open postings in the "
-        "database: new jobs as the next run would count and tag them (one per job, none already sent), with the "
-        "tagging cost, postings already sent, and samples, plus samples of what the excluded titles leave out. Edit "
+        "database: new jobs waiting to be tagged, counted as a run counts them (one per job, none already sent), "
+        "with what tagging them all costs and the per-run limits, postings already sent, and samples, plus samples "
+        "of what the excluded titles leave out. Edit "
         "the profile, then preview again, to tune a search without a run. A snapshot of what the last run stored: "
         "it fetches nothing, so before the first run there is nothing to preview. It waits for no run: while one "
         "is going, exit 1. The first time new code opens the database it backs it up first, as a run would.",

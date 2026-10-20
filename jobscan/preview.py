@@ -23,11 +23,13 @@ class Sample:
 class Preview:
     open: int  # open postings stored for the boards the next run reads
     matched: int  # postings passing the titles, places and excluded titles
-    new_jobs: int  # what the next run would tag: one per job, none whose job was sent
+    new_jobs: int  # the backlog to tag: one per job, none whose job was sent (a run tags it up to its limits)
     sent: int  # matched postings whose job was sent already
     excluded: int  # postings an excluded title leaves out
     new_samples: tuple[Sample, ...]  # newest first
     excluded_samples: tuple[Sample, ...]
+    max_tag_per_run: int  # the profile's limits, shown beside the backlog: a run tags only so much of it
+    max_spend_per_run: float
 
     @property
     def cost(self) -> float:
@@ -76,4 +78,5 @@ def preview(conn: sqlite3.Connection, profile: Profile, listed: dict[str, Board]
     return Preview(open=opened, matched=len(matched), new_jobs=len(new),
                    sent=sum(1 for b in matched if fetch.same_job(b.key) in sent_jobs), excluded=len(excluded),
                    new_samples=tuple(map(sample, new[:examples])),
-                   excluded_samples=tuple(map(sample, excluded[:examples])))
+                   excluded_samples=tuple(map(sample, excluded[:examples])), max_tag_per_run=profile.max_tag_per_run,
+                   max_spend_per_run=profile.max_spend_per_run)

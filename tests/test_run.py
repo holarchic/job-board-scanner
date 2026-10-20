@@ -752,6 +752,18 @@ class NotifyTest(RunFixture):
         self.assertEqual((code, sent), (0, [f"2 new postings in {self.home / 'digests' / 'ae'}"]))
         self.assertEqual(self.run_notified(), (0, []))
 
+    def test_postings_held_back_by_the_limits(self):
+        (self.home / "profiles" / "ae.toml").write_text(PROFILE + "max_tag_per_run = 1\nmax_spend_per_run = 0.5\n")
+        self.assertEqual(self.run_notified(), (0, [
+            f"1 new posting in {self.home / 'digests' / 'ae'}; 1 more matched and wait for later runs (each run tags "
+            "at most 1 posting, stopping at $0.50 spent)"]))
+
+    def test_postings_held_back_with_nothing_new_still_notify(self):
+        (self.home / "profiles" / "ae.toml").write_text(
+            PROFILE + 'max_tag_per_run = 1\nrequire = { founding = "no" }\n')
+        self.assertEqual(self.run_notified(), (0, [
+            "1 more matched and wait for later runs (each run tags at most 1 posting, stopping at $1.00 spent)"]))
+
     def test_untagged_postings(self):
         self.model.routes["/chat/completions"] = (503, {"error": "down"})
         self.assertEqual(self.run_notified(), (1, ["2 couldn't be tagged yet; see runs.log"]))
@@ -1410,7 +1422,7 @@ class AgentSetupTest(RunFixture):
         self.assertIn("## Acme — Enterprise Account Executive · London", Path(path).read_text())
         self.assertEqual(sum(1 for name, _ in self.calls if name == "send"), 2)  # the test email, then the digest
         out = self.step("preview")
-        self.assertIn("new jobs the next run would tag: 0", out)
+        self.assertIn("new jobs waiting to be tagged: 0", out)
         self.assertIn("already sent to you: 2", out)
 
 

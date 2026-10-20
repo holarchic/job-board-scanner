@@ -134,7 +134,7 @@ Then open a new terminal window and carry on with `jobscan ui`. `PIPX_DEFAULT_BA
 | `jobscan email` · `--off` | Sets up or stops emailing each digest. With `--to` and `--password-stdin` it asks nothing |
 | `jobscan eval <set.json>` | Scores the tags against your own labelled postings |
 
-Every command has `--help` with examples. `run` exit codes: 0 done, 1 some postings left untagged or the digest couldn't be written or emailed, 2 a config or usage error. Logs: `~/.jobscan/runs.log`.
+Every command has `--help` with examples. `run` exit codes: 0 done (matches the tagging limits held back for later runs included), 1 some postings' tagging failed (they're tried again next run) or the digest couldn't be written or emailed, 2 a config or usage error. Logs: `~/.jobscan/runs.log`.
 
 **Schedule.** On a Mac, the set-up page's Save or `jobscan schedule --at 08:00` runs it daily while you're logged in, and notifies you of new postings or a problem; a quiet day stays quiet. Asleep at 08:00: it runs when the Mac wakes, and several missed days make one run. Powered off: the next day's slot. Notifications may need allowing in System Settings › Notifications.
 

@@ -134,6 +134,7 @@ class CheckTest(CliHome):
                      "(key: openrouter.key)", "Email: off", "Boards file: none", "Schedule: none",
                      "  no require: no tag of yours hides a posting",
                      "  agency postings: left out (include_agencies = true keeps them)",
+                     "  tagging per run: at most 500 postings, stopping at $1.00 spent",
                      "OK: `jobscan run` can start."]:
             self.assertIn(line, out)
         self.assertNotIn("Warning", out)
@@ -296,8 +297,17 @@ class InitFlagsTest(CliHome):
         _, out, _ = self.cli("check")
         self.assertIn("  agency postings: kept (include_agencies = true)", out)
 
+    def test_tagging_limits_by_flag(self):
+        code, _, err = self.cli("init", *FLAGS, "--max-tag-per-run", "200", "--max-spend-per-run", "0.5", "--key-stdin",
+                                stdin="sk-or-v1-abc\n")
+        self.assertEqual((code, err), (0, ""))
+        profile = load_profile(self.home)
+        self.assertEqual((profile.max_tag_per_run, profile.max_spend_per_run), (200, 0.5))
+        _, out, _ = self.cli("check")
+        self.assertIn("  tagging per run: at most 200 postings, stopping at $0.50 spent", out)
+
     def test_require_or_include_agencies_alone_is_flags_and_asks_nothing(self):
-        for flags in (("--require", "language_required=no"), ("--include-agencies",)):
+        for flags in (("--require", "language_required=no"), ("--include-agencies",), ("--max-tag-per-run", "9")):
             with mock.patch("builtins.input") as typed:
                 code, _, err = self.cli("init", *flags, terminal=True)
             typed.assert_not_called()
@@ -326,6 +336,9 @@ class InitFlagsTest(CliHome):
             (("--tag", "founding", "--require", "language_required=no", "--key-stdin"),
              "require names `language_required`, which the profile doesn't tag", "sk-or-v1-abc\n"),
             (("--require", "founding=maybe", "--key-stdin"), "isn't an answer it can require", "sk-or-v1-abc\n"),
+            (("--max-tag-per-run", "0", "--key-stdin"), "`max_tag_per_run` must be", "sk-or-v1-abc\n"),
+            (("--max-spend-per-run", "0", "--key-stdin"), "`max_spend_per_run` must be", "sk-or-v1-abc\n"),
+            (("--max-spend-per-run", "nan", "--key-stdin"), "`max_spend_per_run` must be", "sk-or-v1-abc\n"),
         ]
         for extra, message, stdin in cases:
             code, out, err = self.cli("init", *FLAGS, *extra, stdin=stdin)
@@ -588,7 +601,8 @@ class PreviewTest(CliHome):
         self.assertEqual((code, err), (0, ""))
         self.assertIn("ae, against the 9 open postings stored for the boards the next run reads:", out)
         self.assertIn("matching your titles and locations: 6 postings", out)  # 1, 9, R1 and R2 on both sites
-        self.assertIn("new jobs the next run would tag: 3 (about $0.00)", out)  # 1, 9, R1 once
+        self.assertIn("new jobs waiting to be tagged: 3 (about $0.00 for them all)\n"  # 1, 9, R1 once
+                      "  a run tags at most 500 postings, stopping at $1.00 spent\n", out)
         self.assertIn("already sent to you: 2", out)  # R2 on both sites
         self.assertIn("left out by your excluded titles: 1", out)
         lines = out.splitlines()

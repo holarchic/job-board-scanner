@@ -27,6 +27,8 @@ from jobscan import (
 )
 from jobscan.config import (
     EMAIL_FILE,
+    MAX_SPEND_PER_RUN,
+    MAX_TAG_PER_RUN,
     ConfigError,
     EmailConfig,
     Profile,
@@ -97,7 +99,7 @@ def _run(home: Path, notifying: bool) -> int:
         raise
     print(f"{outcome.profile}\t{outcome.new}\t{outcome.digest_path or '-'}")
     email_error = _email_digest(email, outcome)
-    news = _news(outcome, email_error)
+    news = _news(outcome, email_error, profile)
     if notifying and news:
         notify.notify(news)
     return EXIT_OK if outcome.complete and email_error is None else EXIT_INCOMPLETE
@@ -123,12 +125,15 @@ def _refused(reason: str, notifying: bool) -> int:
     return EXIT_USAGE
 
 
-def _news(outcome: scan.ScanOutcome, email_error: mail.MailError | None) -> str | None:
+def _news(outcome: scan.ScanOutcome, email_error: mail.MailError | None, profile: Profile) -> str | None:
     parts = []
     if outcome.new:
         parts.append(f"{outcome.new} new posting{'' if outcome.new == 1 else 's'} in {outcome.digest_path.parent}")
     if outcome.carried_over:
         parts.append(f"{outcome.carried_over} couldn't be tagged yet; see runs.log")
+    if outcome.waiting:
+        parts.append(f"{outcome.waiting} more matched and wait for later runs (each run tags "
+                     f"{report.limits(profile.max_tag_per_run, profile.max_spend_per_run)})")
     if outcome.digest_failed:
         parts.append("the digest couldn't be written; see runs.log")
     if email_error:
@@ -200,7 +205,7 @@ def _email(home: Path, args: argparse.Namespace) -> int:
 
 
 INIT_FLAGS = ("name", "title", "exclude_title", "location", "eligible_where", "tag", "require", "include_agencies",
-              "key_stdin")
+              "max_tag_per_run", "max_spend_per_run", "key_stdin")
 
 
 def _given(value) -> bool:
@@ -250,7 +255,10 @@ def _init_answers(args: argparse.Namespace) -> init.Answers:
     return init.Answers(name=args.name, titles=args.title, exclude_titles=args.exclude_title,
                         locations=args.location, eligible_where=args.eligible_where,
                         tags=args.tag or list(tag.default_names()), key=key, require=_requirements(args.require),
-                        include_agencies=args.include_agencies)
+                        include_agencies=args.include_agencies,
+                        max_tag_per_run=MAX_TAG_PER_RUN if args.max_tag_per_run is None else args.max_tag_per_run,
+                        max_spend_per_run=MAX_SPEND_PER_RUN if args.max_spend_per_run is None
+                        else args.max_spend_per_run)
 
 
 def _requirements(given: list[str]) -> tuple[Requirement, ...]:

@@ -75,6 +75,7 @@ def install(checked: Install, scheduled: State | ScheduleError | None) -> list[s
         else "  no require: no tag of yours hides a posting",
         "  agency postings: kept (include_agencies = true)" if profile.include_agencies
         else "  agency postings: left out (include_agencies = true keeps them)",
+        f"  tagging per run: {limits(profile.max_tag_per_run, profile.max_spend_per_run)}",
         f"Model: {config.model.slug} at {config.model.base_url} (key: {KEY_SOURCES[checked.key_source]})",
         f"Email: digests to {email.to} from {email.sender} ({email.host}:{email.port})" if email
         else "Email: off (`jobscan email` sets it up)",
@@ -138,13 +139,24 @@ def boards_added(file: Path, outcome: Added) -> list[str]:
     return lines
 
 
+def limits(max_tag: int, max_spend: float) -> str:
+    """A profile's tagging limits as the person reads them."""
+    return f"at most {max_tag:,} posting{'' if max_tag == 1 else 's'}, stopping at {dollars(max_spend)} spent"
+
+
+def dollars(amount: float) -> str:
+    """Cents when the amount has no finer part, else as written: $1.00, $0.555."""
+    return f"${amount:.2f}" if round(amount, 2) == amount else f"${amount:g}"
+
+
 def preview_lines(search: str, p: Preview, requirements: tuple[Requirement, ...]) -> list[str]:
     """`requirements` (`tag.requirements`, the agency check's included) aren't counted here (preview reads no tags):
     the run lists what they rule out at the digest's end."""
     lines = [
         f"{search}, against the {p.open:,} open postings stored for the boards the next run reads:",
         f"  matching your titles and locations: {p.matched:,} postings",
-        f"  new jobs the next run would tag: {p.new_jobs:,} (about ${p.cost:.2f})",
+        f"  new jobs waiting to be tagged: {p.new_jobs:,} (about ${p.cost:.2f} for them all)",
+        f"  a run tags {limits(p.max_tag_per_run, p.max_spend_per_run)}",
         f"  already sent to you: {p.sent:,}",
         f"  left out by your excluded titles: {p.excluded:,}",
     ]
