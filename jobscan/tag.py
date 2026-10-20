@@ -6,14 +6,13 @@ import http.client
 import json
 import math
 import re
-import threading
 import time
 import tomllib
 import unicodedata
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -475,33 +474,46 @@ def verify_quote(quote: str, posting: Posting) -> bool:
                                 for field in (posting.title, posting.location, posting.description))
 
 
+@dataclass(frozen=True)
+class TagRun:
+    attempts: dict[str, TagAttempt]  # by posting key; postings never started are absent
+    stopped: str | None  # why postings were left unstarted: "failures" (the breaker), "budget", or None
+
+
 def tag_all(postings: list[Posting], defs: list[TagDef], model: ModelConfig, api_key: str | None,
-            on_attempt: Callable[[str, TagAttempt], None] | None = None) -> dict[str, TagAttempt]:
-    """Tag postings in parallel, keyed by posting key. After STOP_AFTER_FAILURES consecutive failures (in
-    completion order) no further postings start; in-flight results are kept. Unstarted postings are absent.
-    `on_attempt(key, attempt)` runs in the caller's thread as each posting finishes, so a caller can save it
-    there and then: a run stopped part-way keeps what it has paid for. Anything raised here (the callback,
-    a worker, Ctrl+C) stops unstarted postings too, so only those in flight are still paid for."""
-    stop = threading.Event()
-
-    def work(posting: Posting) -> TagAttempt | None:  # None: not started because the breaker tripped
-        return None if stop.is_set() else tag_posting(posting, defs, model, api_key)
-
-    attempts, consecutive_failures = {}, 0
+            on_attempt: Callable[[str, TagAttempt], None] | None = None, budget: float | None = None) -> TagRun:
+    """Tag postings in order, WORKERS at a time: a posting starts only once one in flight has finished and been
+    accounted for. No further posting starts after STOP_AFTER_FAILURES consecutive failures (in completion order), or
+    once the known cost of the attempts so far reaches `budget` (dollars; a reply without a cost adds nothing, so a
+    model that reports none never reaches it); those in flight then finish and are kept, so the spend can end a little
+    past the budget. `on_attempt(key, attempt)` runs in the caller's thread as each posting finishes, so a caller can
+    save it there and then: a run stopped part-way keeps what it has paid for. Anything raised here (the callback, a
+    worker, Ctrl+C) starts nothing more, so only those in flight are still paid for."""
+    waiting = iter(postings)
+    attempts: dict[str, TagAttempt] = {}
+    consecutive_failures, spent, stopped = 0, 0.0, None
     with ThreadPoolExecutor(WORKERS) as pool:
-        futures = {pool.submit(work, p): p.key for p in postings}
-        try:
-            for future in as_completed(futures):
-                attempt = future.result()
-                if attempt is None:
-                    continue
-                attempts[futures[future]] = attempt
+        running: dict[Future, str] = {}
+
+        def start_next() -> None:
+            if (posting := next(waiting, None)) is not None:
+                running[pool.submit(tag_posting, posting, defs, model, api_key)] = posting.key
+
+        for _ in range(WORKERS):
+            start_next()
+        while running:
+            finished, _ = wait(running, return_when=FIRST_COMPLETED)
+            for future in finished:
+                key = running.pop(future)
+                attempts[key] = attempt = future.result()
                 if on_attempt is not None:
-                    on_attempt(futures[future], attempt)
+                    on_attempt(key, attempt)
                 consecutive_failures = 0 if isinstance(attempt, TagSuccess) else consecutive_failures + 1
-                if consecutive_failures >= STOP_AFTER_FAILURES:
-                    stop.set()
-        except BaseException:
-            stop.set()  # the pool's exit waits for every queued posting; this makes the unstarted ones no-ops
-            raise
-    return attempts
+                spent += attempt.usage.cost
+                if stopped is None and consecutive_failures >= STOP_AFTER_FAILURES:
+                    stopped = "failures"
+                elif stopped is None and budget is not None and spent >= budget:
+                    stopped = "budget"
+                if stopped is None:
+                    start_next()
+    return TagRun(attempts, stopped)

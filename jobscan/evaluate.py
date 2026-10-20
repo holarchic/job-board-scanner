@@ -83,7 +83,7 @@ def run_eval(items: list[LabelledPosting], config: Config) -> EvalReport:
     and keeps the raw predictions under $JOBSCAN_HOME/eval/ for inspection."""
     defs = tag.profile_definitions(Profile(name="eval", titles=(), exclude_titles=(), locations=(),
                                            eligible_where=ELIGIBLE_WHERE, tags=tag.default_names(), custom_tags=()))
-    attempts = tag.tag_all([i.posting for i in items], defs, config.model, config.api_key)
+    attempts = tag.tag_all([i.posting for i in items], defs, config.model, config.api_key).attempts
     predictions = {key: a.results for key, a in attempts.items() if isinstance(a, tag.TagSuccess)}
     _save(config.home, items, attempts)
     return score(items, predictions, usage=sum((a.usage for a in attempts.values()), tag.Usage()),

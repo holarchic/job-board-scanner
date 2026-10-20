@@ -35,12 +35,15 @@ LEFT_OUT_NOTE = ("A required tag answers otherwise for these (`require` in your 
 
 def render(profile: str, date: str, entries: list[DigestEntry], carried_over: int,
            unvalidated: frozenset[str] = frozenset(), left_out: Sequence[LeftOut] = (),
-           quiet: frozenset[str] = frozenset()) -> str:
+           quiet: frozenset[str] = frozenset(), waiting: int = 0) -> str:
     """`unvalidated` names the tags shown with ⓘ; the legend appears only when one of them does on an entry. `quiet`
-    names tags asked but not shown on entries (the agency check): only a left-out row names one."""
+    names tags asked but not shown on entries (the agency check): only a left-out row names one. `waiting`: matches
+    the profile's tagging limits held back for later runs."""
     header = f"# {profile} — {date} · {len(entries)} new"
     if carried_over:
         header += f" · {carried_over} untagged, carried over"
+    if waiting:
+        header += f" · {waiting} waiting for later runs"
     if left_out:
         header += f" · {len(left_out)} left out"
     blocks = [header]

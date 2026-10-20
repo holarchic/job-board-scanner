@@ -4,6 +4,7 @@ import socket
 import ssl
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 from dataclasses import replace
@@ -493,18 +494,19 @@ class TagPostingTest(unittest.TestCase):
         self.server.routes["/chat/completions"] = (503, {"error": "down"})
         postings = [Posting(**{**vars(POSTING), "key": f"ashby:acme:{n}"}) for n in range(5)]
         with mock.patch.object(tag, "WORKERS", 1):
-            attempts = tag.tag_all(postings, DEFS, self.model, None)
-        # The breaker trips in completion order, so with one worker the next posting may already have started.
-        self.assertIn(len(attempts), (3, 4))
-        self.assertEqual(len(self.server.requests), len(attempts) * tag.TRIES)
+            run = tag.tag_all(postings, DEFS, self.model, None)
+        # A posting starts only after the one before it is accounted for, so the breaker stops exactly at three.
+        self.assertEqual((len(run.attempts), run.stopped), (3, "failures"))
+        self.assertEqual(len(self.server.requests), 3 * tag.TRIES)
 
     def test_each_finished_posting_is_reported_in_the_callers_thread(self):
         self.server.routes["/chat/completions"] = (200, lambda payload: model_reply(json.loads(reply())))
         postings = [Posting(**{**vars(POSTING), "key": f"ashby:acme:{n}"}) for n in range(3)]
         seen = []
-        attempts = tag.tag_all(postings, DEFS, self.model, None,
-                               on_attempt=lambda key, attempt: seen.append((key, attempt, threading.get_ident())))
-        self.assertEqual({key: attempt for key, attempt, _ in seen}, attempts)
+        run = tag.tag_all(postings, DEFS, self.model, None,
+                          on_attempt=lambda key, attempt: seen.append((key, attempt, threading.get_ident())))
+        self.assertEqual({key: attempt for key, attempt, _ in seen}, run.attempts)
+        self.assertIsNone(run.stopped)
         self.assertEqual(len(seen), 3)
         self.assertEqual({thread for *_, thread in seen}, {threading.get_ident()})
 
@@ -517,8 +519,56 @@ class TagPostingTest(unittest.TestCase):
 
         with mock.patch.object(tag, "WORKERS", 1), self.assertRaises(OSError):
             tag.tag_all(postings, DEFS, self.model, None, on_attempt=save_fails)
-        # With one worker the next posting may already have started when the first is reported.
-        self.assertIn(len(self.server.requests), (1, 2))
+        self.assertEqual(len(self.server.requests), 1)
+
+    def test_no_posting_starts_once_the_budget_is_reached_and_in_flight_ones_finish(self):
+        self.server.routes["/chat/completions"] = (200, lambda payload: model_reply(json.loads(reply()), cost=0.0005))
+        postings = [Posting(**{**vars(POSTING), "key": f"ashby:acme:{n:02}"}) for n in range(20)]
+        first = threading.Event()
+
+        def slow_first(key, attempt):  # the other workers finish meanwhile: nothing may start until this returns
+            if not first.is_set():
+                first.set()
+                time.sleep(0.3)
+
+        with mock.patch.object(tag, "WORKERS", 4):
+            run = tag.tag_all(postings, DEFS, self.model, None, on_attempt=slow_first, budget=0.001)
+        self.assertEqual(run.stopped, "budget")
+        # The first answer starts a fifth posting; the second reaches the budget, with three still in flight: five in
+        # all, never more than WORKERS past the answer that reached it, however long the caller takes.
+        self.assertEqual((len(run.attempts), len(self.server.requests)), (5, 5))
+
+    def test_the_budget_counts_known_cost_when_a_reply_reports_none(self):
+        costs = iter([None, 0.0005, 0.0005, 0.0005, 0.0005])
+
+        def answer(payload):
+            status, body = model_reply(json.loads(reply()))
+            cost = next(costs)
+            body["usage"] = {} if cost is None else {"cost": cost}
+            return status, body
+
+        self.server.routes["/chat/completions"] = (200, answer)
+        postings = [Posting(**{**vars(POSTING), "key": f"ashby:acme:{n}"}) for n in range(5)]
+        with mock.patch.object(tag, "WORKERS", 1):
+            run = tag.tag_all(postings, DEFS, self.model, None, budget=0.001)
+        self.assertEqual((len(run.attempts), run.stopped), (3, "budget"))
+        self.assertFalse(sum((a.usage for a in run.attempts.values()), tag.Usage()).cost_reported)
+
+    def test_a_billed_retry_counts_toward_the_budget(self):
+        replies = iter([(200, {"choices": [{"message": {"content": "not json"}}], "usage": {"cost": 0.0005}})]
+                       + [model_reply(json.loads(reply()), cost=0.0005)] * 5)
+        self.server.routes["/chat/completions"] = (200, lambda payload: next(replies))
+        postings = [Posting(**{**vars(POSTING), "key": f"ashby:acme:{n}"}) for n in range(3)]
+        with mock.patch.object(tag, "WORKERS", 1):
+            run = tag.tag_all(postings, DEFS, self.model, None, budget=0.001)
+        self.assertEqual((len(run.attempts), run.stopped), (1, "budget"))
+        self.assertEqual(len(self.server.requests), 2)  # the rejected reply, then the accepted one
+
+    def test_without_a_budget_every_posting_is_tagged(self):
+        self.server.routes["/chat/completions"] = (200, lambda payload: model_reply(json.loads(reply()), cost=5.0))
+        postings = [Posting(**{**vars(POSTING), "key": f"ashby:acme:{n}"}) for n in range(6)]
+        run = tag.tag_all(postings, DEFS, self.model, None)
+        self.assertEqual((len(run.attempts), run.stopped), (6, None))
 
 
 if __name__ == "__main__":

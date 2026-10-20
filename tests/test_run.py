@@ -1235,6 +1235,97 @@ class RequireRunTest(RunFixture):
         self.assertNotIn("Left out", Path(path).read_text())
 
 
+class LimitRunTest(RunFixture):
+    """`max_tag_per_run` and `max_spend_per_run`: a run sends at most so many postings to the model, newest first
+    seen first and one per board on a tie, and the rest wait for later runs without failing the run."""
+
+    def setUp(self):
+        super().setUp()
+        (self.home / "listed.json").write_text(json.dumps({"companies": [
+            {"company": "Acme", "board_url": f"{self.ats.url}/posting-api/job-board/acme"},
+            {"company": "Beta", "board_url": f"{self.ats.url}/posting-api/job-board/beta"}]}))
+        self.jobs = [ashby_job(n, "Account Executive") for n in ("1", "2", "3")]
+        self.beta = [ashby_job(n, "Account Executive") for n in ("b1", "b2")]
+        self.ats.routes["/posting-api/job-board/beta"] = (200, lambda _: (200, {"jobs": self.beta}))
+        self.limit(count=2)
+
+    def limit(self, count=None, spend=None, extra=""):
+        (self.home / "profiles" / "ae.toml").write_text(
+            PROFILE + extra + (f"max_tag_per_run = {count}\n" if count else "")
+            + (f"max_spend_per_run = {spend}\n" if spend else ""))
+
+    def test_runs_drain_the_backlog_two_at_a_time_one_per_board_first(self):
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        text = Path(path).read_text()
+        self.assertTrue(text.startswith(f"# ae — {Path(path).stem} · 2 new · 3 waiting for later runs\n"), text)
+        self.assertEqual((text.count("## Acme — "), text.count("## Beta — ")), (1, 1))
+        self.assertIn("tag_limited waiting=3 over_count=3 over_budget=0", (self.home / "runs.log").read_text())
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        self.assertIn(" · 2 new · 1 waiting for later runs\n", Path(path).read_text())
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "1"))
+        self.assertNotIn("waiting", Path(path).read_text())
+        self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
+        self.assertEqual(len(self.model.requests), 5)
+
+    def test_cached_results_are_never_limited(self):
+        self.limit(count=10)
+        (self.home / "digests").mkdir()
+        (self.home / "digests" / "ae").write_text("a file where the directory should be")
+        self.assertEqual(self.run_cli()[0], 1)  # all five tagged and cached, none delivered
+        (self.home / "digests" / "ae").unlink()
+        self.limit(count=1)
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new, len(self.model.requests)), (0, "5", 5))
+        self.assertNotIn("waiting", Path(path).read_text())
+
+    def test_failures_and_waiting_are_counted_apart(self):
+        self.model.routes["/chat/completions"] = (503, {"error": "down"})
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (1, "0"))
+        self.assertEqual(Path(path).read_text(), f"# ae — {Path(path).stem} · 0 new · 2 untagged, carried over · "
+                                                 "3 waiting for later runs\n")
+
+    def test_a_limited_run_whose_tagged_postings_are_all_left_out_writes_no_digest(self):
+        self.limit(count=2, extra='require = { founding = "no" }\n')
+        self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
+        self.assertEqual(self.digests(), [])
+        self.assertIn("tag_limited waiting=3", (self.home / "runs.log").read_text())
+
+    def test_no_posting_starts_once_the_spend_reaches_the_limit(self):
+        self.jobs = [ashby_job(str(n), "Account Executive") for n in range(10)]
+        self.beta = []
+        self.limit(count=10, spend=0.0001)  # below one reply's $0.0005
+        with mock.patch.object(tag, "WORKERS", 4):
+            code, (_, new, path) = self.run_cli()
+        # The first answer reaches the limit; the three then in flight finish.
+        self.assertEqual((code, new, len(self.model.requests)), (0, "4", 4))
+        self.assertIn(" · 4 new · 6 waiting for later runs\n", Path(path).read_text())
+        self.assertIn("tag_limited waiting=6 over_count=0 over_budget=6", (self.home / "runs.log").read_text())
+
+
+class TagQueueTest(unittest.TestCase):
+    def stored(self, board, n, first_seen):
+        posting = Posting(key=f"ashby:{board}:{n}", ats="ashby", board=f"ashby:{board}", company=board, title="AE",
+                          location="London", url="u", description="d")
+        return store.StoredPosting(posting, "h", first_seen)
+
+    def test_newest_first_seen_first_then_one_per_board_in_turn(self):
+        old, new = "2026-10-01T00:00:00.000000+00:00", "2026-10-02T00:00:00.000000+00:00"
+        postings = [self.stored("acme", n, old) for n in ("1", "2", "3")] + \
+            [self.stored("beta", n, old) for n in ("1", "2")] + [self.stored("zeta", "9", new),
+                                                                 self.stored("acme", "4", new)]
+        queue = [s.posting.key for s in scan.tag_queue(list(reversed(postings)))]
+        self.assertEqual(queue, ["ashby:acme:4", "ashby:zeta:9", "ashby:acme:1", "ashby:beta:1", "ashby:acme:2",
+                                 "ashby:beta:2", "ashby:acme:3"])
+
+    def test_the_order_never_depends_on_the_input_order(self):
+        postings = [self.stored(b, n, "t") for b in ("a", "b", "c") for n in ("1", "2")]
+        self.assertEqual(scan.tag_queue(postings), scan.tag_queue(list(reversed(postings))))
+
+
 class AgencyRunTest(RunFixture):
     """The agency check: asked unless the profile includes agencies, never shown on entries, a quoted yes left out."""
 
