@@ -292,12 +292,23 @@ class AgencyCheckTest(unittest.TestCase):
                 self.assertEqual(bool(tag.misses(defs, tag.requirements((), False), results)), out)
 
 
+class OptInTest(unittest.TestCase):
+    def test_opt_in_tags_are_asked_only_when_chosen(self):
+        self.assertEqual(tag.default_names(), ALL)  # init's default and eval's prompt stay the G2 five
+        self.assertEqual({t.name for t in tag.builtins() if t.opt_in},
+                         {"reports_to", "visa_sponsorship", "credential_required"})
+        self.assertEqual(set(tag.builtin_names()) - set(tag.default_names()),
+                         {t.name for t in tag.builtins() if t.opt_in})
+
+
 class RequirableTest(unittest.TestCase):
     def test_each_built_in_offers_the_answers_require_can_ask(self):
         self.assertEqual({t.name: t.requirable for t in tag.builtins()},
                          {"founding": ("yes", "no"), "location_eligible": ("yes", "no"),
                           "segment": ("enterprise", "mid_market", "smb"), "language_required": ("no",),
-                          "tech_company": ("yes", "no")})
+                          "tech_company": ("yes", "no"), "reports_to": (),
+                          "visa_sponsorship": ("yes", "no"),
+                          "credential_required": ("no",)})
         for t in tag.builtins():  # every one offered is one the check accepts
             for value in t.requirable:
                 tag.check_require(tag.definitions((t.name,), "the UK"), (Requirement(t.name, value),))

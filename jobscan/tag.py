@@ -118,6 +118,11 @@ def builtin_names() -> tuple[str, ...]:
     return tuple(_builtins())
 
 
+def default_names() -> tuple[str, ...]:
+    """The built-ins a profile asks unless it picks: every one but the `opt_in` tags."""
+    return tuple(name for name, spec in _builtins().items() if not spec.get("opt_in"))
+
+
 @dataclass(frozen=True)
 class BuiltinTag:
     """A built-in tag as people choosing tags see it; the tagging model never sees `summary` (the set-up page's
@@ -126,6 +131,7 @@ class BuiltinTag:
     summary: str
     validated: str  # "yes", "no", or "uk": validated only when `eligible_where` names the UK
     requirable: tuple[str, ...]  # the answers `require` can ask of it: its values but unknown; free text its default
+    opt_in: bool = False  # asked only when chosen (`default_names`)
 
 
 def builtins() -> tuple[BuiltinTag, ...]:
@@ -154,7 +160,7 @@ def _builtin_tag(name: str, spec: dict) -> BuiltinTag:
     values = spec.get("values", [spec["default"]] if "default" in spec else [])
     return BuiltinTag(name=name, summary=spec["summary"],
                       validated="uk" if validated == "uk" else "yes" if validated is True else "no",
-                      requirable=tuple(v for v in values if v != UNKNOWN))
+                      requirable=tuple(v for v in values if v != UNKNOWN), opt_in=bool(spec.get("opt_in")))
 
 
 def _builtins() -> dict:

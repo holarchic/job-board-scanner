@@ -112,8 +112,8 @@ def _init(commands) -> None:
     command.add_argument("--eligible-where", metavar="TEXT",
                          help="where you can work from, in a few words: what the location tag tests")
     command.add_argument("--tag", action="append", default=[], metavar="NAME",
-                         help="a built-in tag to ask (repeat for each; default: all; see `jobscan tags`); your own "
-                              "tags go in the profile file (`jobscan --help` shows how)")
+                         help="a built-in tag to ask (repeat for each; default: all but the opt-in ones; see "
+                              "`jobscan tags`); your own tags go in the profile file (`jobscan --help` shows how)")
     command.add_argument("--require", action="append", default=[], metavar="TAG=VALUE",
                          help="hide a posting when this tag definitely answers otherwise, listing it at the digest's "
                               "end instead (repeat for each; e.g. language_required=no; unknown answers stay)")

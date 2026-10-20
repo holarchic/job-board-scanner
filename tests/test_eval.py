@@ -85,7 +85,7 @@ class EvalCommandTest(unittest.TestCase):
         self.assertEqual(code, 0)
         (_, _, body), = model.requests
         self.assertEqual(set(body["response_format"]["json_schema"]["schema"]["required"]),
-                         {*tag.builtin_names(), tag.AGENCY})
+                         {*tag.default_names(), tag.AGENCY})
         self.assertIn("work from the UK", body["messages"][0]["content"])
         self.assertIn("G2 bar: FAIL", out.getvalue())  # language_required has no minority answer in a 1-posting set
         self.assertEqual(len(list((home / "eval").glob("*.jsonl"))), 1)
