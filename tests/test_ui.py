@@ -42,8 +42,8 @@ def answers(payload):
 
 
 class Fields(HTMLParser):
-    """What a browser would post from a page: inputs with their values (a checkbox only when ticked; a password box
-    empty), textareas with their text, and selects with the selected option (else the first)."""
+    """What a browser would post from a page: inputs with their values (a checkbox or radio only when ticked; a
+    password box empty), textareas with their text, and selects with the selected option (else the first)."""
 
     def __init__(self, text: str):
         super().__init__(convert_charrefs=True)
@@ -57,9 +57,10 @@ class Fields(HTMLParser):
     def handle_starttag(self, name, attrs):
         a = dict(attrs)
         if name == "input" and "name" in a:
-            if a.get("type") == "checkbox" and "checked" not in a:
+            if a.get("type") in ("checkbox", "radio") and "checked" not in a:
                 return
-            value = "" if a.get("type") == "password" else a.get("value", "on" if a.get("type") == "checkbox" else "")
+            value = "" if a.get("type") == "password" else \
+                a.get("value", "on" if a.get("type") in ("checkbox", "radio") else "")
             self.fields.setdefault(a["name"], []).append(value)
         elif name == "textarea":
             self.area = a["name"]
@@ -279,14 +280,17 @@ class NewInstallTest(UiTest):
         text = self.press("next", ticked={"place": ["UK"]})
         self.assertEqual((checked(text, "tag"), checked(text, "add_custom")), (["founding", "location_eligible"], []))
         self.assertIn('name="add_custom" value="salary_stated">', text)  # offered, one click to add
-        self.press("next", ticked={"add_custom": ["salary_stated"], "include_agencies": ["on"]},
-                   **{"require-location_eligible": "yes"})
+        text = self.press("next", ticked={"add_custom": ["salary_stated"], "include_agencies": ["on"]},
+                          **{"require-location_eligible": "yes"})
+        self.assertIn('name="max_tag" value="1000">', text)  # tiles, 500 ticked
+        self.press("next", max_tag="other", max_tag_other="250", max_spend="0.555")
         text = self.press("next", email_to="me@gmail.com", password="abcd efgh ijkl mnop")
         self.assertEqual((self.step(), checked(text, "schedule_on"), checked(text, "schedule_at")),
                          ("schedule", ["on"], ["08:00"]))  # a daily run, ticked
         text = self.press("next")
         self.assertEqual(checked(text, "name"), ["account-executive"])
         self.assertIn("every day at 08:00", text)
+        self.assertIn("tags at most 250 postings, stopping at $0.555 spent", text)
         text = self.press("save")
         self.assertEqual(self.step(), "done")
         self.assertIn("Saved your search, the settings and your key.", text)
@@ -307,6 +311,7 @@ class NewInstallTest(UiTest):
                          (("founding", "location_eligible"), ["salary_stated"],
                           (Requirement("location_eligible", "yes"),)))
         self.assertTrue(profile.include_agencies)
+        self.assertEqual((profile.max_tag_per_run, profile.max_spend_per_run), (250, 0.555))
         key = self.home / "openrouter.key"
         self.assertEqual((key.read_text(), stat.S_IMODE(key.stat().st_mode)), ("sk-or-v1-fresh\n", 0o600))
         self.assertEqual(load_email(self.home).password, "abcdefghijklmnop")
@@ -377,6 +382,9 @@ class NewInstallTest(UiTest):
         self.press("next")
         text = self.press("next", place_more="London", eligible_where="the UK")
         self.assertEqual(checked(text, "tag"), list(tag.default_names()))  # opt-in tags offered unticked
+        text = self.press("next")
+        self.assertEqual((self.step(), checked(text, "max_tag"), checked(text, "max_spend")),
+                         ("limits", ["500"], ["1.00"]))
         self.press("next")
         self.press("next")
         self.press("next", unticked=[("schedule_on", "on")])
@@ -422,6 +430,11 @@ class NewInstallTest(UiTest):
             "custom-1-name": "salary", "custom-1-definition": "Is pay stated?"})
         self.assertIn("asks the same question", text)
         self.press("next", **{"custom-1-name": ""})
+        self.assertEqual(self.step(), "limits")
+        self.assertIn("Give a whole number of postings", self.press("next", max_tag="other", max_tag_other="0"))
+        self.assertIn("Give a whole number of postings", self.press("next", max_tag_other="9" * 5000))
+        self.assertIn("Give dollars over 0", self.press("next", max_tag_other="250", max_spend="nan"))
+        self.press("next", max_spend="$0.50")
         self.assertEqual(self.step(), "email")
         self.assertIn("Your app password is needed.", self.press("next", email_to="me@gmail.com"))
         self.assertIn("The port is a number", self.press("next", email_port="9" * 5000, password="abcd efgh"))
@@ -440,21 +453,21 @@ class NewInstallTest(UiTest):
         self.press("next", ticked={"add_custom": ["salary_stated"]})
         self.press("back")
         text = self.press("next", **{"custom-0-definition": "Is a pay range stated?"})  # now a row of its own
-        self.assertEqual(self.step(), "email")
+        self.assertEqual(self.step(), "limits")
         self.press("back")
         self.assertNotIn('name="add_custom"', self.pages[-1])
         self.press("next")
-        self.assertEqual(self.step(), "email", text)
+        self.assertEqual(self.step(), "limits", text)
         self.assertEqual([(r.name, r.definition) for r in self.server.site.form.custom],
                          [("salary_stated", "Is a pay range stated?")])
 
     def test_the_name_is_suggested_once(self):
         self.to_titles()
-        for _ in range(6):
+        for _ in range(7):
             self.press("next")
         self.assertEqual(checked(self.pages[-1], "name"), ["account-executive"])
         self.press("goto:titles", name="")
-        for _ in range(6):
+        for _ in range(7):
             text = self.press("next")
         self.assertEqual((self.step(), checked(text, "name")), ("summary", [""]))
         self.assertIn("lower-case letters", self.press("save"))
@@ -469,7 +482,7 @@ class NewInstallTest(UiTest):
 
     def test_a_refused_test_email_saves_the_rest(self):
         self.to_titles()
-        for _ in range(4):
+        for _ in range(5):
             self.press("next")
         self.press("next", email_to="me@gmail.com", password="abcd efgh")
         self.press("next")
@@ -485,7 +498,7 @@ class NewInstallTest(UiTest):
 
     def test_preview_before_any_run(self):
         self.to_titles()
-        for _ in range(6):
+        for _ in range(7):
             self.press("next")
         self.assertIn("No postings yet", self.press("preview"))
 
@@ -510,7 +523,7 @@ class ExistingInstallTest(UiTest):
     def test_every_step_done_unchanged_saves_the_same_profile(self):
         self.install(profile='titles = ["AE", "ae", "AE"]\nlocations = ["London"]\neligible_where = "the UK"\n'
                              'tags = ["founding"]\nrequire = { founding = "yes", buyer = "smb" }\n'
-                             'include_agencies = true\n\n'
+                             'include_agencies = true\nmax_tag_per_run = 250\nmax_spend_per_run = 0.555\n\n'
                              '[custom_tags.buyer]\ndefinition = "Who buys.\\nSay smb or '
                              'enterprise."\nvalues = ["smb", "enterprise"]\n')
         before = load_profile(self.home)
@@ -527,6 +540,16 @@ class ExistingInstallTest(UiTest):
         self.assertEqual([d.hash for d in tag.definitions(after.tags, after.eligible_where, after.custom_tags)],
                          [d.hash for d in tag.definitions(before.tags, before.eligible_where, before.custom_tags)])
         self.assertEqual((self.home / "openrouter.key").read_text(), "sk-or-v1-old\n")
+
+    def test_the_limits_edited_are_saved(self):
+        self.install()
+        self.open()
+        self.assertIn("tags at most 500 postings, stopping at $1.00 spent", self.pages[-1])
+        text = self.edit("limits", max_tag="1000", max_spend="2.5")
+        self.assertIn("tags at most 1,000 postings, stopping at $2.50 spent", text)
+        self.press("save")
+        profile = load_profile(self.home)
+        self.assertEqual((profile.max_tag_per_run, profile.max_spend_per_run), (1000, 2.5))
 
     def test_a_replacement_key_is_saved_and_never_reverts(self):
         self.install(model_url=self.model.url)
@@ -806,6 +829,7 @@ class ElsewhereTest(UiTest):
         self.press("next", title_more="Account Executive")
         self.press("next")
         self.press("next", place_more="London", eligible_where="the UK")
+        self.press("next")
         self.press("next")
         self.press("next")
         self.assertIn("Unticking removes nothing", self.pages[-1])

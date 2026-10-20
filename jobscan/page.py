@@ -12,15 +12,19 @@ from urllib.parse import quote_plus
 from jobscan import init, report, schedule, tag
 from jobscan.config import (
     CUSTOM_TAG_VALUES,
+    MAX_SPEND_PER_RUN,
+    MAX_TAG_PER_RUN,
     ConfigError,
     CustomTag,
     EmailConfig,
     Profile,
     Requirement,
+    check_max_spend,
+    check_max_tag,
     custom_tag,
     usable_key,
 )
-from jobscan.preview import Preview
+from jobscan.preview import COST_PER_POSTING, Preview
 from jobscan.titles import Outcome
 
 REPOSITORY = "https://github.com/holarchic/job-board-scanner"
@@ -28,7 +32,7 @@ MOST_TAGS = 99  # custom tags the page edits, plus one blank row to add another;
 # its file
 TEXT_LIMIT = 20_000  # characters in one field; a longer one is refused, never cut
 LARGEST_POST = 256 * 1024  # bytes the server reads from one post
-STEPS = ("intro", "key", "describe", "titles", "exclude", "places", "tags", "email", "schedule", "summary")
+STEPS = ("intro", "key", "describe", "titles", "exclude", "places", "tags", "limits", "email", "schedule", "summary")
 # An existing install is edited, not introduced or described again; `done`, after Save, is in neither order.
 EXISTING_STEPS = tuple(s for s in STEPS if s not in ("intro", "describe"))
 EDITABLE = tuple(s for s in EXISTING_STEPS if s != "summary")  # the summary's Edit buttons, new install or not
@@ -39,11 +43,14 @@ WAITING = MappingProxyType({  # (step, action) → what the page says while that
 HEADINGS = MappingProxyType({
     "intro": "How it works", "key": "Your OpenRouter key", "describe": "What are you looking for?",
     "titles": "Job titles", "exclude": "Titles to leave out", "places": "Places", "tags": "Tags",
+    "limits": "How much a run tags",
     "email": "Email (optional)", "schedule": "When to run", "summary": "Your search", "done": "Saved: what now"})
 STEP_FIELDS = MappingProxyType({  # where each error shows; custom-N rows belong to tags
     "key": ("key",), "describe": ("description",), "titles": ("titles",), "exclude": ("exclude_titles",),
-    "places": ("locations", "eligible_where"), "tags": ("tags",), "schedule": ("schedule_at",),
+    "places": ("locations", "eligible_where"), "tags": ("tags",), "limits": ("max_tag", "max_spend"),
+    "schedule": ("schedule_at",),
     "email": ("email", "email_to", "email_from", "email_host", "email_port", "password"), "summary": ("name", "")})
+COUNTS = ("200", "500", "1000")  # the limits step's tiles; any other count is typed under "another number"
 WHERE_UNSAID = "anywhere"  # fills location_eligible's question while the tags step is checked before a where is set
 
 
@@ -70,6 +77,9 @@ class Form:
     require: tuple[Requirement, ...] = ()  # built-in tags' from the tags step's selects; the person's own tags', kept
     # as the file has them
     include_agencies: bool = False  # the tags step's tick: keep postings the agency check says an agency posted
+    max_tag: str = str(MAX_TAG_PER_RUN)  # the limits step's tile: one of COUNTS, or "other" with `max_tag_other`
+    max_tag_other: str = ""
+    max_spend: str = f"{MAX_SPEND_PER_RUN:.2f}"  # dollars, as typed
     email_to: str = ""
     email_from: str = ""
     email_host: str = ""
@@ -148,6 +158,9 @@ def form_from_profile(profile: Profile, email: EmailConfig | None) -> Form:
                 locations="\n".join(profile.locations), eligible_where=profile.eligible_where,
                 tags=frozenset(profile.tags), custom=tuple(row(c) for c in profile.custom_tags),
                 require=profile.require, include_agencies=profile.include_agencies,
+                max_tag=str(profile.max_tag_per_run) if str(profile.max_tag_per_run) in COUNTS else "other",
+                max_tag_other="" if str(profile.max_tag_per_run) in COUNTS else str(profile.max_tag_per_run),
+                max_spend=_spend_text(profile.max_spend_per_run),
                 email_to=email.to if email else "", email_from=email.sender if email else "",
                 email_host=email.host if email else "", email_port=str(email.port) if email else "")
 
@@ -220,6 +233,9 @@ def read_step(step: str, fields: Mapping[str, list[str]], form: Form, offers: Of
                                        if (value := one(f"require-{name}", "tags"))) \
                 + tuple(r for r in form.require if r.tag not in tag.builtin_names())
             changes["include_agencies"] = one("include_agencies") == "on"
+        case "limits":
+            changes.update(max_tag=one("max_tag").strip(), max_tag_other=one("max_tag_other", "max_tag").strip(),
+                           max_spend=one("max_spend").strip().removeprefix("$").strip())
         case "email":
             changes.update(email_to=one("email_to").strip(), email_from=one("email_from").strip(),
                            email_host=one("email_host").strip(), email_port=one("email_port").strip(),
@@ -276,7 +292,7 @@ def check_step(step: str, form: Form, *, key_held: bool, fresh: bool, password: 
                 errors["key"] = "That isn't an OpenRouter key: paste it again."
             elif fresh and not (form.key or key_held):
                 errors["key"] = "Your OpenRouter key is needed: openrouter.ai/keys."
-        case "titles" | "exclude" | "places" | "tags" | "summary":
+        case "titles" | "exclude" | "places" | "tags" | "limits" | "summary":
             errors = _profile_errors(step, form) | errors
         case "email":
             errors = _email_errors(form, password, email_saved) | errors
@@ -308,6 +324,8 @@ def _profile_errors(step: str, form: Form) -> dict[str, str]:
                 "Say where you can work from.")
     elif step == "tags":
         errors |= _tag_errors(form)
+    elif step == "limits":
+        errors |= _limits(form)[2]
     elif step == "summary" and not init.PROFILE_NAME.fullmatch(form.name):
         errors["name"] = "Use lower-case letters, digits and -, starting with a letter or digit."
     return errors
@@ -356,6 +374,34 @@ def _tag_errors(form: Form) -> dict[str, str]:
     return {}
 
 
+def _limits(form: Form) -> tuple[int, float, dict[str, str]]:
+    """The draft's tagging limits by the profile's rules, the default standing in for one that doesn't read, with
+    why by field."""
+    errors: dict[str, str] = {}
+    text = form.max_tag if form.max_tag in COUNTS else form.max_tag_other if form.max_tag == "other" else ""
+    count = int(text) if re.fullmatch(r"[0-9]{1,6}", text) else None
+    try:
+        check_max_tag(count)
+    except ConfigError:
+        errors["max_tag"] = "Give a whole number of postings from 1 to 100,000."
+        count = MAX_TAG_PER_RUN
+    spend = float(form.max_spend) if re.fullmatch(_DOLLARS, form.max_spend) else None
+    try:
+        check_max_spend(spend)
+    except ConfigError:
+        errors["max_spend"] = "Give dollars over 0 and at most 1,000, like 1.00."
+        spend = MAX_SPEND_PER_RUN
+    return count, spend, errors
+
+
+_DOLLARS = r"(?:[0-9]{1,4}(?:\.[0-9]{0,24})?|\.[0-9]{1,24})(?:e-?[0-9]{1,2})?"  # as typed, or as `_spend_text` wrote it
+
+
+def _spend_text(spend: float) -> str:
+    """A stored spend as the page shows it: cents when that reads back the same, else exactly (`repr`)."""
+    return f"{spend:.2f}" if float(f"{spend:.2f}") == spend else repr(spend)
+
+
 def _custom_tags(form: Form) -> tuple[tuple[CustomTag, ...], dict[str, str]]:
     custom, errors = [], {}
     for i, row in enumerate(form.custom):
@@ -395,13 +441,14 @@ def to_profile(form: Form) -> Checked:
     """The profile the draft describes, or why not: every profile step's checks, the page's size rule, then the
     profile validator the CLI uses."""
     errors: dict[str, str] = {}
-    for step in ("titles", "exclude", "places", "tags", "summary"):
+    for step in ("titles", "exclude", "places", "tags", "limits", "summary"):
         errors |= _profile_errors(step, form) | _too_long(form, step)
     custom, _ = _custom_tags(form)
+    count, spend, _ = _limits(form)
     profile = Profile(name=form.name, titles=_lines(form.titles), exclude_titles=_lines(form.exclude_titles),
                       locations=_lines(form.locations), eligible_where=form.eligible_where,
                       tags=tuple(sorted(form.tags, key=_tag_order)), custom_tags=custom, require=form.require,
-                      include_agencies=form.include_agencies)
+                      include_agencies=form.include_agencies, max_tag_per_run=count, max_spend_per_run=spend)
     # Measured as the page would show the profile, not as typed (a vertical tab posts smaller than the line break it
     # becomes): one rule for saving and for offering a profile, so the page can always reopen what it saved, with room
     # left for the email settings and the browser's encoding.
@@ -575,8 +622,8 @@ def _intro_body(view: View) -> str:
             f"<h2>Where it runs</h2><p>On this computer, not on a server. Everything lives in <code>{_x(view.home)}"
             "</code>; your key and your email password in files only you can read.</p>" + when +
             "<h2>What you'll do here</h2><p>About five minutes: your OpenRouter key, what you're looking for in your "
-            "own words, ticks on what that suggests, email if you want it, and when to run. Nothing is saved until "
-            "the last page.</p>")
+            "own words, ticks on what that suggests, how much a run tags, email if you want it, and when to run. "
+            "Nothing is saved until the last page.</p>")
 
 
 def _key_body(view: View) -> str:
@@ -688,6 +735,24 @@ def _custom(form: Form, e: Mapping[str, str]) -> str:
     return "".join(out) + "</fieldset></details>"
 
 
+def _limits_body(view: View) -> str:
+    f, e = view.form, view.errors
+    tiles = "".join(f'<label class="choice"><input type="radio" name="max_tag" value="{c}"'
+                    f'{" checked" if f.max_tag == c else ""}> <span><b>{int(c):,}</b> postings</span></label>'
+                    for c in COUNTS)
+    other = (f'<label class="choice"><input type="radio" name="max_tag" value="other"'
+             f'{" checked" if f.max_tag not in COUNTS else ""}> <span>Another number</span></label>'
+             f'<p><input name="max_tag_other" value="{_x(f.max_tag_other)}" inputmode="numeric" '
+             'aria-label="Postings a run tags, another number"></p>')
+    return ("<p>Each run asks the model about new matches, newest first. A broad search can match thousands at "
+            "first: these limits keep a run short and its cost known. What's left waits for the next runs, and "
+            "the digest says how many.</p>"
+            f"<fieldset><legend>Postings a run tags at most</legend>{tiles}{other}</fieldset>" + _err("max_tag", e)
+            + _text("max_spend", "Stop starting new ones once a run has spent this many dollars", f.max_spend, e,
+                    "postings already being tagged finish, so a run can end a little past it")
+            + f'<p class="hint">About ${COST_PER_POSTING * 500:.2f} for 500 postings with the default model.</p>')
+
+
 def _email_body(view: View) -> str:
     f, e = view.form, view.errors
     saved = f"Now: digests to {view.email.to} from {view.email.sender}." if view.email else \
@@ -742,8 +807,8 @@ def _done_body(view: View) -> str:
             f"delete the line):</p><pre>{_x(s.cron)}</pre>") if s.cron else ""
     email = f" and emails it to {_x(s.email_to)}" if s.email_to else ""
     return (f"<h2>Your first run</h2><p>Run it now in a terminal: <code>{_x(s.run)}</code>{by_itself}. A run takes "
-            "around 45 minutes; the first also finds the boards and tags every posting your search matches, so it can "
-            "take over an hour. Later runs tag only the new ones.</p>"
+            "around 45 minutes; the first also finds the boards and tags what your search matches up to your limits, "
+            "so it can take over an hour. Later runs tag what's left, then only the new ones.</p>"
             + cron +
             f"<h2>Your digest</h2><p>Each run with something new writes it to <code>{_x(s.digests)}</code>{email}. "
             "A quiet run writes nothing.</p>"
@@ -782,6 +847,7 @@ def _summary_body(view: View) -> str:
                          + ", ".join(f"{r.tag} {r.value}" for r in f.require) + " (unknown and ⚠ answers stay)"
                          if f.require else "")
                       + ("; agency postings kept" if f.include_agencies else "; agency postings left out")),
+             "limits": ("Each run", f"tags {report.limits(*_limits(f)[:2])}"),
              "email": ("Email", email), "schedule": ("When to run", when)}
     rows = []
     for step, (label, value) in ((s, shown[s]) for s in EDITABLE):
@@ -794,11 +860,12 @@ def _summary_body(view: View) -> str:
 
 _BODIES = MappingProxyType({"intro": _intro_body, "key": _key_body, "describe": _describe_body,
                             "titles": _titles_body, "exclude": _exclude_body, "places": _places_body,
-                            "tags": _tags_body, "email": _email_body, "schedule": _schedule_body,
+                            "tags": _tags_body, "limits": _limits_body, "email": _email_body,
+                            "schedule": _schedule_body,
                             "summary": _summary_body, "done": _done_body})
 _DEFAULT_ACTION = MappingProxyType({"summary": "save", "done": "goto:summary"})  # Enter's button; else next
 _PRIMARY = frozenset(_DEFAULT_ACTION.values()) | {"next"}  # the one bold button: what Enter presses
-_ENTER_MOVES_ON = frozenset({"key", "email", "summary"})  # a one-line box to type in, none taking Enter as a line
+_ENTER_MOVES_ON = frozenset({"key", "limits", "email", "summary"})  # one-line boxes only: Enter takes no line
 
 
 def _link(url: str, text: str) -> str:

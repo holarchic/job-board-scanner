@@ -96,6 +96,14 @@ class ReadStepTest(unittest.TestCase):
         form, _ = page.read_step("tags", rows, DRAFT, page.Offers())
         self.assertIn(f"More than {page.MOST_TAGS} custom tags", checks("tags", form)["tags"])
 
+    def test_the_limits_step_reads_a_tile_another_number_and_dollars(self):
+        form, _ = page.read_step("limits", {"max_tag": ["other"], "max_tag_other": [" 250 "], "max_spend": ["$ 0.5"]},
+                                 DRAFT, page.Offers())
+        self.assertEqual((form.max_tag, form.max_tag_other, form.max_spend), ("other", "250", "0.5"))
+        self.assertEqual(page.to_profile(form).profile.max_tag_per_run, 250)
+        form, _ = page.read_step("limits", {"max_tag": ["1000"], "max_spend": ["1.00"]}, DRAFT, page.Offers())
+        self.assertEqual(page.to_profile(form).profile.max_tag_per_run, 1000)
+
     def test_the_schedule_is_a_box_and_a_time(self):
         on, _ = page.read_step("schedule", {"schedule_on": ["on"], "schedule_at": [" 07:30 "]}, DRAFT, page.Offers())
         self.assertEqual((on.schedule_on, on.schedule_at), (True, "07:30"))
@@ -227,6 +235,29 @@ class ToProfileTest(unittest.TestCase):
         self.assertIsNone(page.to_profile(tabbed).profile)
         fits = page.to_profile(replace(tabbed, locations="London\v" * 100)).profile
         self.assertIsNone(page.unrepresentable(fits))
+
+    def test_tagging_limits_go_through_the_page_unchanged(self):
+        profile = page.to_profile(DRAFT).profile
+        self.assertEqual((profile.max_tag_per_run, profile.max_spend_per_run), (500, 1.0))  # the draft's defaults
+        for count, spend, tile in [(1000, 2.0, "1000"), (250, 0.555, "other"), (1, 1e-05, "other"),
+                                   (100_000, 0.30000000000000004, "other")]:
+            limited = replace(profile, max_tag_per_run=count, max_spend_per_run=spend)
+            form = page.form_from_profile(limited, None)
+            with self.subTest(count=count, spend=spend):
+                self.assertEqual(form.max_tag, tile)
+                self.assertEqual(page.to_profile(form).profile, limited)
+                self.assertIsNone(page.unrepresentable(limited))
+        self.assertEqual(page.form_from_profile(replace(profile, max_spend_per_run=2.0), None).max_spend, "2.00")
+
+    def test_a_limit_that_doesnt_read_is_refused_by_its_field(self):
+        for changes, field in [({"max_tag": "other", "max_tag_other": ""}, "max_tag"),
+                               ({"max_tag": "other", "max_tag_other": "100001"}, "max_tag"),
+                               ({"max_tag": "300"}, "max_tag"),  # a value the tiles never post
+                               ({"max_spend": "0"}, "max_spend"), ({"max_spend": "nan"}, "max_spend"),
+                               ({"max_spend": "1000.01"}, "max_spend"), ({"max_spend": "e5"}, "max_spend")]:
+            with self.subTest(changes=changes):
+                self.assertEqual(set(checks("limits", replace(DRAFT, **changes))), {field})
+                self.assertIn(field, page.to_profile(replace(DRAFT, **changes)).errors)
 
     def test_a_search_part_way_needs_only_titles(self):
         self.assertIsNone(page.search(page.Form()))
@@ -365,7 +396,7 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("crontab", mac)
         self.assertIn("crontab", other)
         self.assertNotIn("Step ", mac)  # unnumbered: the steps count from the key
-        self.assertIn("Step 1 of 9", page.render(self.view("key")))
+        self.assertIn("Step 1 of 10", page.render(self.view("key")))
 
     def test_the_schedule_step_and_its_summary_row(self):
         on = replace(DRAFT, schedule_on=True, schedule_at="07:30")
@@ -411,8 +442,8 @@ class RenderTest(unittest.TestCase):
 
     def test_one_question_a_screen(self):
         key = page.render(self.view("key"))
-        self.assertIn('aria-label="Step 1 of 9" aria-valuemin="0" aria-valuemax="100" aria-valuenow="11">'
-                      '<span style="width:11%">', key)  # the progress bar
+        self.assertIn('aria-label="Step 1 of 10" aria-valuemin="0" aria-valuemax="100" aria-valuenow="10">'
+                      '<span style="width:10%">', key)  # the progress bar
         self.assertIn('<h1><span class="num">1 →</span>Your OpenRouter key</h1>', key)
         self.assertIn('aria-label="OpenRouter key"', key)
         self.assertIn('value="next" class="primary">Next</button>', key)
