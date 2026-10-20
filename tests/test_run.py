@@ -801,6 +801,70 @@ class NotifyTest(RunFixture):
         return code, out.getvalue().strip().split("\t")
 
 
+class UnreadBoardsTest(RunFixture):
+    """A run that couldn't read many of its boards says so in the digest and the notification; a few don't."""
+
+    def list_boards(self, refusing=0, recovering=0, empty=0, gone=0):
+        """The fixture's two boards (Acme, and Broken answering 500) plus boards refusing every connection, cut short
+        on every first-pass try then answering, answering an empty list, and answering 404."""
+        url = f"{self.ats.url}/posting-api/job-board"
+        entries = [{"company": "Acme", "board_url": f"{url}/acme"}, {"company": "Broken", "board_url": f"{url}/broken"}]
+        entries += [{"company": "Down", "board_url": f"http://127.0.0.1:9/posting-api/job-board/down{n}"}
+                    for n in range(refusing)]
+        for name in [*(f"back{n}" for n in range(recovering)), *(f"empty{n}" for n in range(empty)),
+                     *(f"gone{n}" for n in range(gone))]:
+            answers = iter([b"{"] * 3 if name.startswith("back") else [])
+            ok = (200, {"jobs": []}) if not name.startswith("gone") else (404, {})
+            self.ats.routes[f"/posting-api/job-board/{name}"] = (
+                200, lambda _, a=answers, ok=ok: (200, b) if (b := next(a, None)) is not None else ok)
+            entries.append({"company": name, "board_url": f"{url}/{name}"})
+        (self.home / "listed.json").write_text(json.dumps({"companies": entries}))
+
+    def run_notified(self):
+        with mock.patch.object(notify, "notify") as sent, contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = cli.main(["run", "--notify"])
+        return code, [c.args[0] for c in sent.call_args_list]
+
+    def digest_text(self):
+        (path,) = (self.home / "digests" / "ae").iterdir()
+        return path.read_text()
+
+    def test_many_unread_boards_are_said_in_the_digest_and_the_notification(self):
+        self.list_boards(refusing=59, empty=39)
+        self.assertEqual(self.run_notified(), (0, [
+            f"2 new postings in {self.home / 'digests' / 'ae'}; 60 of 100 boards couldn't be read (the network down "
+            "or the Mac asleep?); the next run reads them"]))
+        self.assertIn("\n\n60 of 100 boards couldn't be read this run, most often the network down or the Mac asleep; "
+                      "the next run reads them.\n\n", self.digest_text())
+
+    def test_boards_answering_on_the_end_read_are_not_unread(self):
+        self.list_boards(recovering=59, empty=39)
+        self.assertEqual(self.run_notified(), (0, [f"2 new postings in {self.home / 'digests' / 'ae'}"]))
+        self.assertIn("fetch_retry_done read=59", (self.home / "runs.log").read_text())
+        self.assertNotIn("couldn't be read", self.digest_text())
+
+    def test_many_unread_and_nothing_new_notifies_without_a_digest(self):
+        self.jobs[:] = [ashby_job("4", "Engineer")]
+        self.list_boards(refusing=59, empty=39)
+        self.assertEqual(self.run_notified(), (0, [
+            "60 of 100 boards couldn't be read (the network down or the Mac asleep?); the next run reads them"]))
+        self.assertFalse((self.home / "digests" / "ae").exists())
+
+    def test_a_404_counts_among_the_boards_tried_but_is_not_unread(self):
+        self.list_boards(refusing=49, empty=49, gone=10)
+        self.assertIn("50 of 110 boards couldn't be read", self.run_notified()[1][0])
+
+    def test_few_unread_say_nothing(self):
+        self.list_boards(refusing=39, empty=59)
+        self.assertEqual(self.run_notified(), (0, [f"2 new postings in {self.home / 'digests' / 'ae'}"]))
+        self.assertNotIn("couldn't be read", self.digest_text())
+
+    def test_many_is_at_least_fifty_and_over_five_percent_of_the_boards_tried(self):
+        self.assertEqual([scan.many_unread(unread, tried) for unread, tried in
+                          [(49, 100), (50, 100), (50, 1000), (51, 1000)]], [False, True, False, True])
+
+
 class WorkdayRunTest(RunFixture):
     """A Workday site read through its place filters: only the profile's places are queried, matched postings are
     described, and the stored list follows the profile's locations."""

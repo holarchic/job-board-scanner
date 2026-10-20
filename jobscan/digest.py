@@ -21,6 +21,13 @@ class DigestEntry:
 
 
 @dataclass(frozen=True)
+class Unread:
+    """Boards a run couldn't read for a reason that may clear, when they are many (`scan.many_unread`)."""
+    boards: int
+    of: int  # boards the run tried
+
+
+@dataclass(frozen=True)
 class LeftOut:
     """A tagged posting a required tag rules out (`tag.misses`): listed on one line after the entries."""
     entry: DigestEntry
@@ -35,10 +42,10 @@ LEFT_OUT_NOTE = ("A required tag answers otherwise for these (`require` in your 
 
 def render(profile: str, date: str, entries: list[DigestEntry], carried_over: int,
            unvalidated: frozenset[str] = frozenset(), left_out: Sequence[LeftOut] = (),
-           quiet: frozenset[str] = frozenset(), waiting: int = 0) -> str:
+           quiet: frozenset[str] = frozenset(), waiting: int = 0, unread: Unread | None = None) -> str:
     """`unvalidated` names the tags shown with ⓘ; the legend appears only when one of them does on an entry. `quiet`
     names tags asked but not shown on entries (the agency check): only a left-out row names one. `waiting`: matches
-    the profile's tagging limits held back for later runs."""
+    the profile's tagging limits held back for later runs; `unread`, a line under the header."""
     header = f"# {profile} — {date} · {len(entries)} new"
     if carried_over:
         header += f" · {carried_over} untagged, carried over"
@@ -47,6 +54,9 @@ def render(profile: str, date: str, entries: list[DigestEntry], carried_over: in
     if left_out:
         header += f" · {len(left_out)} left out"
     blocks = [header]
+    if unread:
+        blocks.append(f"{unread.boards:,} of {unread.of:,} boards couldn't be read this run, most often the network "
+                      "down or the Mac asleep; the next run reads them.")
     if any(name in unvalidated and name not in quiet for entry in entries for name in entry.tags):
         blocks.append(LEGEND)
     for entry in entries:

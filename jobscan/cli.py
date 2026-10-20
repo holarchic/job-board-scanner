@@ -129,6 +129,9 @@ def _news(outcome: scan.ScanOutcome, email_error: mail.MailError | None, profile
     parts = []
     if outcome.new:
         parts.append(f"{outcome.new} new posting{'' if outcome.new == 1 else 's'} in {outcome.digest_path.parent}")
+    if outcome.unread:
+        parts.append(f"{outcome.unread.boards:,} of {outcome.unread.of:,} boards couldn't be read (the network down or "
+                     "the Mac asleep?); the next run reads them")
     if outcome.carried_over:
         parts.append(f"{outcome.carried_over} couldn't be tagged yet; see runs.log")
     if outcome.waiting:

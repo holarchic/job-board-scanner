@@ -15,6 +15,9 @@ from jobscan.records import Board, Company, Places
 
 log = logging.getLogger("jobscan")
 PROGRESS_EVERY = 100  # a tag_progress line every this many postings, so a long tagging run shows it is alive
+# Unread boards are news over this share of the boards tried and at least this many: a normal day leaves ~1% unread
+# (113 to 180 of ~20,700), a Mac asleep mid-run 10 to 20%, and a small install's one flaky board would say so every day.
+UNREAD_SHARE, UNREAD_AT_LEAST = 0.05, 50
 
 
 @dataclass(frozen=True)
@@ -25,6 +28,7 @@ class ScanOutcome:
     digest_path: Path | None
     digest_failed: bool
     waiting: int = 0  # matched, held back by the profile's tagging limits: pending for later runs, not a failure
+    unread: digest.Unread | None = None  # boards unread, when `many_unread`; read again next run
 
     @property
     def complete(self) -> bool:
@@ -50,8 +54,11 @@ def scan(config: Config, profile: Profile, defs: list[tag.TagDef]) -> ScanOutcom
         tagging = _tag(conn, matched, defs, config, profile, {b: c.website for b, c in companies.items()})
         shown, left_out = _select(tagging.entries, defs, tag.requirements(profile.require, profile.include_agencies))
         named = {*profile.tags, *(c.name for c in profile.custom_tags)}
+        tried = fetched.read + fetched.failed
+        unread = digest.Unread(fetched.unread, tried) if many_unread(fetched.unread, tried) else None
         outcome = _digest(conn, config, profile, shown, left_out,
                           carried_over=len(matched) - len(tagging.entries) - tagging.waiting, waiting=tagging.waiting,
+                          unread=unread,
                           unvalidated=frozenset(d.name for d in defs if not d.validated),
                           quiet=frozenset(d.name for d in defs if d.name not in named))
         store.record_run(conn, store.RunRecord(
@@ -66,7 +73,8 @@ def scan(config: Config, profile: Profile, defs: list[tag.TagDef]) -> ScanOutcom
 @dataclass(frozen=True)
 class FetchSummary:
     read: int
-    failed: int
+    failed: int  # 404s and `unread`
+    unread: int  # failed for a reason that may clear
     eligible: dict[str, Board]  # by id: boards whose postings may be delivered (read, or failing for a reason that
     # may clear), each as this run read it, so a boards-file entry's endpoint wins
 
@@ -91,7 +99,7 @@ def _fetch(conn: sqlite3.Connection, config: Config, places: Places, now: str) -
     store.record_board_outcomes(conn, read, not_found)
     log.info("fetch_done boards_read=%d boards_not_found=%d boards_failed=%d postings=%d", len(read),
              len(not_found), len(transient), postings)
-    return FetchSummary(read=len(read), failed=len(not_found) + len(transient),
+    return FetchSummary(read=len(read), failed=len(not_found) + len(transient), unread=len(transient),
                         eligible={b: boards[b] for b in read + transient})
 
 
@@ -276,28 +284,35 @@ def _select(entries: list[digest.DigestEntry], defs: list[tag.TagDef],
 
 
 def _digest(conn: sqlite3.Connection, config: Config, profile: Profile, entries: list[digest.DigestEntry],
-            left_out: list[digest.LeftOut], carried_over: int, waiting: int, unvalidated: frozenset[str],
-            quiet: frozenset[str]) -> ScanOutcome:
+            left_out: list[digest.LeftOut], carried_over: int, waiting: int, unread: digest.Unread | None,
+            unvalidated: frozenset[str], quiet: frozenset[str]) -> ScanOutcome:
     """Left-out postings are delivered with the digest that lists them. Alone they publish nothing: they stay pending,
-    their tags cached, until a digest has an entry or a carried-over count to report. Waiting postings alone publish
-    nothing either; the outcome still counts them."""
+    their tags cached, until a digest has an entry or a carried-over count to report. Waiting postings and unread
+    boards alone publish nothing either; the outcome still counts them."""
     if not entries and not carried_over:
         if left_out:
             log.info("left_out_pending profile=%s postings=%d", profile.name, len(left_out))
-        return ScanOutcome(profile.name, new=0, carried_over=0, digest_path=None, digest_failed=False, waiting=waiting)
+        return ScanOutcome(profile.name, new=0, carried_over=0, digest_path=None, digest_failed=False, waiting=waiting,
+                           unread=unread)
     today = date.today().isoformat()
-    text = digest.render(profile.name, today, entries, carried_over, unvalidated, left_out, quiet, waiting=waiting)
+    text = digest.render(profile.name, today, entries, carried_over, unvalidated, left_out, quiet, waiting=waiting,
+                         unread=unread)
     try:
         path = digest.publish(config.home / "digests" / profile.name, today, text)
     except OSError as e:
         log.error("digest_write_failed profile=%s error=%r", profile.name, str(e))
         return ScanOutcome(profile.name, new=0, carried_over=carried_over, digest_path=None, digest_failed=True,
-                           waiting=waiting)
+                           waiting=waiting, unread=unread)
     store.deliver(conn, profile.name, [e.posting.posting.key for e in [*entries, *(o.entry for o in left_out)]], path)
     log.info("digest profile=%s new=%d carried_over=%d waiting=%d left_out=%d path=%s", profile.name, len(entries),
              carried_over, waiting, len(left_out), path)
     return ScanOutcome(profile.name, new=len(entries), carried_over=carried_over, digest_path=path,
-                       digest_failed=False, waiting=waiting)
+                       digest_failed=False, waiting=waiting, unread=unread)
+
+
+def many_unread(unread: int, tried: int) -> bool:
+    """Whether `unread` boards of the `tried` are news (UNREAD_SHARE, UNREAD_AT_LEAST)."""
+    return unread >= UNREAD_AT_LEAST and unread > UNREAD_SHARE * tried
 
 
 def _now() -> str:

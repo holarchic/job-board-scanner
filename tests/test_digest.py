@@ -65,6 +65,13 @@ class RenderTest(unittest.TestCase):
         text = digest.render("david-ae", "2026-10-12", [], carried_over=3)
         self.assertEqual(text, "# david-ae — 2026-10-12 · 0 new · 3 untagged, carried over\n")
 
+    def test_unread_boards_get_a_line_under_the_header(self):
+        text = digest.render("ae", "2026-10-12", [entry()], carried_over=0, unread=digest.Unread(2040, 20700))
+        self.assertTrue(text.startswith(
+            "# ae — 2026-10-12 · 1 new\n\n2,040 of 20,700 boards couldn't be read this run, most often the network "
+            "down or the Mac asleep; the next run reads them.\n\n## "), text)
+        self.assertNotIn("couldn't be read", digest.render("ae", "2026-10-12", [entry()], carried_over=0))
+
     def test_left_out_postings_follow_the_entries_one_line_each(self):
         german = {"founding": TagResult(value="no", quote=None, verified=False, warn=False),
                   "segment": TagResult(value=(), quote=None, verified=False, warn=False),
