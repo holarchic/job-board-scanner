@@ -26,7 +26,7 @@ It finds the job boards itself, reads them directly and has a language model tag
 - **Finds boards** in the three newest [Common Crawl](https://commoncrawl.org) crawls: about 4,000 on Ashby, 4,800 on Greenhouse, 1,100 on Gem, 1,000 on Teamtailor, 2,800 on Personio, 1,250 on SmartRecruiters, 1,700 on Rippling, 4,200 Workday sites and 1,500 Oracle Recruiting Cloud sites. About 8,000 of the Ashby and Greenhouse ones answer. Of my hand-built list it finds 111 of 114 Ashby boards, 33 of 37 Greenhouse ones and all 4 on Gem.
 - **Reads Workable and Lever boards you list** in a boards file. Discovery would find about 5,300 Workable boards, but Workable rate-limits a full daily sweep, so it doesn't attempt one; Common Crawl barely holds Lever's. Lever boards on jobs.lever.co and its EU twin, jobs.eu.lever.co, both work.
 - **Filters** postings by your titles and locations, then **tags** each match with the model. Answers that need evidence quote the posting; a missing or unmatched quote shows ⚠. A quote that's there doesn't prove the answer right.
-- **Writes a markdown digest** of what's new, and can email it and raise a Mac notification. Where Ashby publishes a posting's pay (about one job in five), the digest shows it as Ashby writes it; other sites' pay stays inside the description.
+- **Writes a markdown digest** of what's new, and can email it and raise a Mac notification. Where Ashby, Greenhouse or Lever publishes a posting's pay, the digest shows it on a `Pay:` line: Ashby's summary as Ashby writes it, Greenhouse's ranges with their own titles (`Zone 1 Pay Range: USD 145,700 to 200,300`), Lever's with its period (`USD 52 to 64 an hour`). Other sites' pay stays inside the description.
 
 | Tag | Answers |
 |-----|---------|
@@ -94,7 +94,7 @@ The repo is job-board-scanner; the command it installs is still `jobscan`.
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh    # installs uv; skip this line and the next if you have it
 source "$HOME/.local/bin/env"                       # uv, in this window
-uv tool install git+https://github.com/holarchic/job-board-scanner@v0.7.0   # a release; fetches Python 3.11+ if needed
+uv tool install git+https://github.com/holarchic/job-board-scanner@v0.8.0   # a release; fetches Python 3.11+ if needed
 uv tool update-shell                                # puts jobscan on your PATH for new windows
 ```
 
@@ -111,7 +111,7 @@ jobscan run                    # the first run now, or wait for the daily one; p
 
 ```bash
 brew install pipx
-PIPX_DEFAULT_BACKEND=pip pipx install https://github.com/holarchic/job-board-scanner/archive/refs/tags/v0.7.0.zip
+PIPX_DEFAULT_BACKEND=pip pipx install https://github.com/holarchic/job-board-scanner/archive/refs/tags/v0.8.0.zip
 pipx ensurepath                # puts jobscan on your PATH for new windows
 ```
 
