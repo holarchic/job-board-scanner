@@ -3,7 +3,6 @@ import argparse
 import re
 import tempfile
 import textwrap
-import tomllib
 import unittest
 from pathlib import Path
 
@@ -56,13 +55,15 @@ class HelpTest(unittest.TestCase):
         self.assertEqual(prefilter.verdict(profile, "Senior Product Manager", "Remote - US"), prefilter.Verdict.OTHER)
         self.assertEqual(prefilter.verdict(profile, "Senior Product Manager", "Remote"), prefilter.Verdict.MATCH)
 
-    def test_the_readme_installs_the_current_release(self):
-        root = Path(__file__).resolve().parent.parent
-        version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
-        readme = (root / "README.md").read_text()
-        tags = re.findall(r"job-board-scanner(?:@|/archive/refs/tags/)v(\d+\.\d+\.\d+)", readme)
-        self.assertEqual(set(tags), {version})  # the uv and pipx lines: bump them with each release
-        self.assertEqual(len(tags), 2)
+    def test_the_readme_installs_the_latest_version(self):
+        readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+        install = re.compile(r"(PIPX_DEFAULT_BACKEND=pip )?(uv tool|pipx) install ")
+        installs = [line for line in readme.splitlines() if install.match(line)]
+        self.assertEqual(installs, [
+            "uv tool install git+https://github.com/holarchic/job-board-scanner   # the latest version; fetches Python "
+            "3.11+ if needed",
+            "PIPX_DEFAULT_BACKEND=pip pipx install https://github.com/holarchic/job-board-scanner/archive/refs/heads/main"
+            ".zip"])  # no release pinned: an update follows main
 
     def test_a_port_is_a_port(self):
         self.assertEqual(arguments.port("8765"), 8765)

@@ -94,7 +94,7 @@ The repo is job-board-scanner; the command it installs is still `jobscan`.
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh    # installs uv; skip this line and the next if you have it
 source "$HOME/.local/bin/env"                       # uv, in this window
-uv tool install git+https://github.com/holarchic/job-board-scanner@v0.8.0   # a release; fetches Python 3.11+ if needed
+uv tool install git+https://github.com/holarchic/job-board-scanner   # the latest version; fetches Python 3.11+ if needed
 uv tool update-shell                                # puts jobscan on your PATH for new windows
 ```
 
@@ -111,11 +111,11 @@ jobscan run                    # the first run now, or wait for the daily one; p
 
 ```bash
 brew install pipx
-PIPX_DEFAULT_BACKEND=pip pipx install https://github.com/holarchic/job-board-scanner/archive/refs/tags/v0.8.0.zip
+PIPX_DEFAULT_BACKEND=pip pipx install https://github.com/holarchic/job-board-scanner/archive/refs/heads/main.zip
 pipx ensurepath                # puts jobscan on your PATH for new windows
 ```
 
-Then open a new terminal window and carry on with `jobscan ui`. `PIPX_DEFAULT_BACKEND=pip` keeps pipx from using uv, which it does by default when uv is installed (pipx 1.12 and later; older pipx ignores the setting and uses pip anyway). To update, run the install line again with the newest tag and `--force` (`PIPX_DEFAULT_BACKEND=pip pipx install --force https://github.com/holarchic/job-board-scanner/archive/refs/tags/vX.Y.Z.zip`). `pipx reinstall jobscan` fixes daily runs that stop after Homebrew updates its Python.
+Then open a new terminal window and carry on with `jobscan ui`. `PIPX_DEFAULT_BACKEND=pip` keeps pipx from using uv, which it does by default when uv is installed (pipx 1.12 and later; older pipx ignores the setting and uses pip anyway). To update, run `PIPX_DEFAULT_BACKEND=pip pipx reinstall jobscan` (`pipx upgrade` skips it while the version number is unchanged); the same command fixes daily runs that stop after Homebrew updates its Python.
 
 **In a browser.** `jobscan ui` opens a page on your own machine that asks one thing at a time. It starts by saying how jobscan works. Paste your OpenRouter key, then type what you're looking for in your own words ("account executive jobs with founding teams in London, happy to be remote"). One model call, a fraction of a cent, fills in the next steps: titles, titles to leave out, places and tags, each a tick box, with suggestions you may have missed beside them. Tick, add a few, choose how much a run tags (500 postings and $1.00 unless you change them), set up email if you like (the page says how to get an app password), and choose when it runs: every day at 08:00 unless you change it. Save writes everything, checks it loads, sets up the daily run on a Mac (elsewhere it gives you a cron line), and then says what now: the command for a first run, where digests land, and how to report a problem or contribute. Run it again later to edit any step from a summary; after a first run, Preview shows what your search matches. The page runs only on 127.0.0.1, behind a one-time link, and never shows your key or password back to you.
 
@@ -144,7 +144,7 @@ Every command has `--help` with examples. `run` exit codes: 0 done (matches the 
 
 **Email.** `jobscan email` asks for the address, which of your accounts sends it (the same one, or another such as a Gmail account), and that account's app password (Gmail: [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords), which needs 2-Step Verification; iCloud: [account.apple.com](https://account.apple.com), App-Specific Passwords). It sends a test email and saves the settings in `~/.jobscan/email.toml`, readable only by you, once your mail server accepts it. From then on every run with a digest emails it; a quiet run sends nothing. If sending fails, the run exits 1 and says so in the notification. Gmail and iCloud work; personal Outlook.com and Hotmail accounts don't (Microsoft allows only OAuth sign-in). Google offers no app passwords to accounts under Advanced Protection or signing in only with security keys, and a Workspace admin can turn them off. Other providers work if their mail server takes the address as its login over TLS.
 
-**Updating and troubleshooting.** You install a release, so a half-finished change on `main` never reaches your daily run. To update, install the newest tag from [the tags page](https://github.com/holarchic/job-board-scanner/tags) over it: `uv tool install --force git+https://github.com/holarchic/job-board-scanner@vX.Y.Z` (`uv tool upgrade` stays on the release you have). `jobscan --version` says which you run; the schedule keeps working. `jobscan: command not found`: run `uv tool update-shell` and open a new terminal. The page says it couldn't reach OpenRouter, though your browser can? An outgoing firewall such as Little Snitch or LuLu may be blocking jobscan's own Python: allow it to reach openrouter.ai and the job boards. A fresh Mac may ask to install Apple's command-line developer tools; say yes. If daily runs stop after a uv update, run `uv tool install --reinstall git+https://github.com/holarchic/job-board-scanner`, then `jobscan schedule --at 08:00` again (or Save in `jobscan ui`).
+**Updating and troubleshooting.** You install the latest version on `main`. To update, run `uv tool upgrade jobscan`; `jobscan --version` says which version and commit you run, and the schedule keeps working. Releases are tagged on [the tags page](https://github.com/holarchic/job-board-scanner/tags), each with its notes: to stay on one, install it by its tag (`uv tool install --force git+https://github.com/holarchic/job-board-scanner@vX.Y.Z`). `jobscan: command not found`: run `uv tool update-shell` and open a new terminal. The page says it couldn't reach OpenRouter, though your browser can? An outgoing firewall such as Little Snitch or LuLu may be blocking jobscan's own Python: allow it to reach openrouter.ai and the job boards. A fresh Mac may ask to install Apple's command-line developer tools; say yes. If daily runs stop after a uv update, run `uv tool install --reinstall git+https://github.com/holarchic/job-board-scanner`, then `jobscan schedule --at 08:00` again (or Save in `jobscan ui`).
 
 ## Configuration
 
