@@ -38,7 +38,8 @@ The profile is profiles/NAME.toml: edit it by hand, then `jobscan check`. For ex
                                      # shows one
   require = { location_eligible = "yes" }
                                      # optional: a posting a tag definitely answers otherwise is listed at the
-                                     # digest's end, not as an entry; unknown answers stay
+                                     # digest's end, not as an entry; unknown answers stay; a list keeps any of
+                                     # its answers: segment = ["enterprise", "mid_market"]
   include_agencies = true            # optional: keep jobs agencies post for clients; by default jobscan asks
                                      # of every posting and lists those at the digest's end
   max_tag_per_run = 200              # optional (default 500): postings a run sends to the model at most
@@ -120,7 +121,8 @@ def _init(commands) -> None:
                               "`jobscan tags`); your own tags go in the profile file (`jobscan --help` shows how)")
     command.add_argument("--require", action="append", default=[], metavar="TAG=VALUE",
                          help="hide a posting when this tag definitely answers otherwise, listing it at the digest's "
-                              "end instead (repeat for each; e.g. language_required=no; unknown answers stay)")
+                              "end instead (repeat for each; a tag named again adds an answer it may give; e.g. "
+                              "language_required=no; unknown answers stay)")
     command.add_argument("--include-agencies", action="store_true",
                          help="keep jobs recruitment and staffing agencies post for clients (default: each is listed "
                               "at the digest's end instead)")
