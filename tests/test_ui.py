@@ -555,15 +555,18 @@ class ExistingInstallTest(UiTest):
         self.install(profile='titles = ["AE", "ae", "AE"]\nlocations = ["London"]\neligible_where = "the UK"\n'
                              'tags = ["founding"]\nrequire = { buyer = ["enterprise", "smb"], founding = "yes" }\n'
                              'include_agencies = true\nwatch = ["Acme", "hooli-eu"]\nmax_tag_per_run = 250\n'
-                             'max_spend_per_run = 0.555\n\n'
+                             'max_spend_per_run = 0.555\n\n[company_notes]\n"Acme AI" = "applied 29 Sep"\n'
+                             'hooli-eu = "talking to Sam"\n\n'
                              '[custom_tags.buyer]\ndefinition = "Who buys.\\nSay smb or '
                              'enterprise."\nvalues = ["smb", "enterprise"]\n')
         before = load_profile(self.home)
         self.assertEqual(before.watch, ("Acme", "hooli-eu"))
+        self.assertEqual([n.name for n in before.company_notes], ["Acme AI", "hooli-eu"])
         # An own tag's before a built-in's, its answers the other way round from the page's: kept as they are.
         self.assertEqual(before.require,
                          (Requirement("buyer", ("enterprise", "smb")), Requirement("founding", ("yes",))))
-        self.assertIn("Watchlist: 2 companies, kept as your profile file has them", self.open())
+        self.assertIn("Your profile file also holds a watchlist of 2 companies (<code>watch</code>) and notes on 2 "
+                      "companies (<code>[company_notes]</code>): kept as they are", self.open())
         for step in page.EXISTING_STEPS[:-1]:
             self.press(f"goto:{step}")
             self.press("next")

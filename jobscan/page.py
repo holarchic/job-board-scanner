@@ -14,6 +14,7 @@ from jobscan.config import (
     CUSTOM_TAG_VALUES,
     MAX_SPEND_PER_RUN,
     MAX_TAG_PER_RUN,
+    CompanyNote,
     ConfigError,
     CustomTag,
     EmailConfig,
@@ -80,6 +81,7 @@ class Form:
     require: tuple[Requirement, ...] = ()  # the tags step's ticks under each tag, in the draft's order (`_required`)
     include_agencies: bool = False  # the tags step's tick: keep postings the agency check says an agency posted
     watch: tuple[str, ...] = ()  # the profile file's watchlist: no step shows it, so it is saved as it was read
+    company_notes: tuple[CompanyNote, ...] = ()  # likewise
     max_tag: str = str(MAX_TAG_PER_RUN)  # the limits step's tile: one of COUNTS, or "other" with `max_tag_other`
     max_tag_other: str = ""
     max_spend: str = report.spend_text(MAX_SPEND_PER_RUN)  # dollars, as typed
@@ -163,6 +165,7 @@ def form_from_profile(profile: Profile, email: EmailConfig | None) -> Form:
                 custom=tuple(replace(row(c), require=next((r.values for r in profile.require if r.tag == c.name), ()))
                              for c in profile.custom_tags),
                 require=profile.require, include_agencies=profile.include_agencies, watch=profile.watch,
+                company_notes=profile.company_notes,
                 max_tag=str(profile.max_tag_per_run) if str(profile.max_tag_per_run) in COUNTS else "other",
                 max_tag_other="" if str(profile.max_tag_per_run) in COUNTS else str(profile.max_tag_per_run),
                 max_spend=report.spend_text(profile.max_spend_per_run),
@@ -473,7 +476,7 @@ def to_profile(form: Form) -> Checked:
     profile = Profile(name=form.name, titles=_lines(form.titles), exclude_titles=_lines(form.exclude_titles),
                       locations=_lines(form.locations), eligible_where=form.eligible_where,
                       tags=tuple(sorted(form.tags, key=_tag_order)), custom_tags=custom, require=form.require,
-                      include_agencies=form.include_agencies, watch=form.watch,
+                      include_agencies=form.include_agencies, watch=form.watch, company_notes=form.company_notes,
                       # Defaults stand in only for the size measure below: a limit that doesn't read is an error.
                       max_tag_per_run=limits.max_tag_per_run or MAX_TAG_PER_RUN,
                       max_spend_per_run=limits.max_spend_per_run or MAX_SPEND_PER_RUN)
@@ -890,9 +893,16 @@ def _summary_body(view: View) -> str:
         rows.append(f"<tr><th>{_x(label)}</th><td>{_x(value)}"
                     + "".join(f'<span class="error">{_x(m)}</span>' for m in mistakes)
                     + f'</td><td><button name="action" value="goto:{step}">Edit</button></td></tr>')
-    watching = (f'<p class="hint">Watchlist: {len(f.watch)} compan{"y" if len(f.watch) == 1 else "ies"}, kept as '
-                "your profile file has them (edit <code>watch</code> there).</p>") if f.watch else ""
-    return name + "<table>" + "".join(rows) + "</table>" + watching
+    kept = [*([f"a watchlist of {_companies(len(f.watch))} (<code>watch</code>)"] if f.watch else []),
+            *([f"notes on {_companies(len(f.company_notes))} (<code>[company_notes]</code>)"] if f.company_notes
+              else [])]
+    kept_line = f'<p class="hint">Your profile file also holds {" and ".join(kept)}: kept as they are; edit them ' \
+        "there.</p>" if kept else ""
+    return name + "<table>" + "".join(rows) + "</table>" + kept_line
+
+
+def _companies(n: int) -> str:
+    return f"{n} compan{'y' if n == 1 else 'ies'}"
 
 
 _BODIES = MappingProxyType({"intro": _intro_body, "key": _key_body, "describe": _describe_body,

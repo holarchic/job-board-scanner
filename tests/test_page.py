@@ -6,7 +6,7 @@ from dataclasses import replace
 from unittest import mock
 
 from jobscan import page, tag
-from jobscan.config import EmailConfig, Requirement, custom_tag
+from jobscan.config import CompanyNote, EmailConfig, Requirement, custom_tag
 from jobscan.titles import Counted, Outcome, Suggested
 
 DRAFT = page.Form(name="ae", titles="Account Executive\nSales Executive", locations="London\nUK",
@@ -380,10 +380,15 @@ class RenderTest(unittest.TestCase):
                       page.render(self.view("tags", form=replace(DRAFT, include_agencies=True))))
         self.assertIn("; agency postings left out", page.render(self.view("summary")))
 
-    def test_the_summary_counts_a_watchlist_it_cannot_edit(self):
-        self.assertNotIn("Watchlist", page.render(self.view("summary")))
-        for watch, said in [(("Acme",), "Watchlist: 1 company,"), (("Acme", "hooli-eu"), "Watchlist: 2 companies,")]:
-            self.assertIn(said, page.render(self.view("summary", form=replace(DRAFT, watch=watch))))
+    def test_the_summary_counts_what_the_file_holds_that_no_step_edits(self):
+        self.assertNotIn("also holds", page.render(self.view("summary")))
+        note = (CompanyNote("Acme", "applied"),)
+        for changes, said in [({"watch": ("Acme",)}, "also holds a watchlist of 1 company (<code>watch</code>): "),
+                              ({"company_notes": note},
+                               "also holds notes on 1 company (<code>[company_notes]</code>): "),
+                              ({"watch": ("Acme", "hooli-eu"), "company_notes": note},
+                               "a watchlist of 2 companies (<code>watch</code>) and notes on 1 company")]:
+            self.assertIn(said, page.render(self.view("summary", form=replace(DRAFT, **changes))))
 
     def test_each_built_in_tag_offers_the_answers_it_can_hide_by(self):
         form = replace(DRAFT, tags=frozenset({"founding", "language_required"}),
