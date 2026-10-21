@@ -17,7 +17,7 @@ It finds the job boards itself, reads them directly and has a language model tag
 
 **When not to use it:**
 
-- You want something hosted, free and set up in a minute. [HiringCafe](https://hiring.cafe) reads company career pages, Workday included, and emails alerts.
+- You want something hosted, free and set up in a minute. [HiringCafe](https://hiring.cafe) reads company career pages, Workday included, and emails alerts. [freehire](https://freehire.me) ([open source](https://github.com/strelov1/freehire)) crawls 124 ATSes centrally, 3M+ postings, with faceted search and digests.
 - You need LinkedIn, Indeed or Glassdoor. This reads company boards only; [JobSpy](https://github.com/speedyapply/JobSpy) scrapes those sites.
 - You want the widest list of companies and no model in the loop. [job-board-aggregator](https://github.com/Feashliaa/job-board-aggregator) indexes 20,000+ companies, Workday and Lever included, refreshed daily.
 
