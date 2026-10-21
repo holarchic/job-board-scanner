@@ -120,7 +120,8 @@ class BackupTest(unittest.TestCase):
         (copy,) = self.copies()
         with self.connect(self.folder / copy) as conn:
             self.assertEqual(conn.execute("PRAGMA user_version").fetchone(), (1,))
-            self.assertNotIn("salary", [r[1] for r in conn.execute("PRAGMA table_info(postings)")])
+            self.assertEqual(conn.execute("SELECT count(*) FROM pragma_table_info('postings') WHERE name = 'salary'")
+                             .fetchone(), (0,))
             self.assertEqual(conn.execute("SELECT posting_key FROM deliveries").fetchall(), [("k1",)])
             self.assertEqual(conn.execute("SELECT posting_key FROM tag_results").fetchall(), [("ashby:clerk:1",)])
         with self.connect() as conn:
