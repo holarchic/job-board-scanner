@@ -380,7 +380,7 @@ class GreenhouseRunTest(RunFixture):
             {"company": "Globex", "board_url": f"{self.ats.url}/v1/boards/globex/jobs"},
         ]}))
         content = "&lt;p&gt;You'll be our &lt;strong&gt;first&lt;/strong&gt; Account Executive.&lt;/p&gt;"
-        self.ats.routes["/v1/boards/globex/jobs?content=true"] = (200, {"jobs": [
+        self.ats.routes["/v1/boards/globex/jobs?content=true&pay_transparency=true"] = (200, {"jobs": [
             greenhouse_job(7, "Account Executive", "London, UK", content=content), greenhouse_job(8, "Engineer")]})
 
         def quoting_the_description(payload):
@@ -404,7 +404,7 @@ class GreenhouseRunTest(RunFixture):
             {"company": "Acme", "board_url": f"{self.ats.url}/posting-api/job-board/acme"},
             {"company": "Globex", "board_url": f"{self.ats.url}/v1/boards/globex/jobs"},
         ]}))
-        self.ats.routes["/v1/boards/globex/jobs?content=true"] = (200, {"jobs": [
+        self.ats.routes["/v1/boards/globex/jobs?content=true&pay_transparency=true"] = (200, {"jobs": [
             greenhouse_job("a\ud800", "Account Executive")]})
         code, (_, new, _) = self.run_cli()
         self.assertEqual((code, new), (0, "2"))

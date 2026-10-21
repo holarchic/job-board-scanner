@@ -113,6 +113,41 @@ class ParseTest(unittest.TestCase):
         job["location"], job["offices"] = None, None
         self.assertEqual(greenhouse.parse(self.board, {"jobs": [job]})[0].location, "")
 
+    def test_read_asks_for_pay(self):
+        asked = []
+        greenhouse.read(self.board, lambda url, body=None: asked.append(url) or b'{"jobs": []}', None)
+        self.assertEqual(asked, [API + "acme/jobs?content=true&pay_transparency=true"])
+
+    def test_pay_ranges_are_written_out_in_order(self):
+        def ranges(*pay):
+            return {**greenhouse_job(1, "AE"), "pay_input_ranges": [
+                {"min_cents": low, "max_cents": high, "currency_type": "USD", "title": title, "blurb": "<p>x</p>"}
+                for title, low, high in pay]}
+
+        for job, salary in [(ranges(("Pay Range", 10200000, 12000000)), "Pay Range: USD 102,000 to 120,000"),
+                            (ranges(("Zone 1 Pay Range", 16500000, 19000000), ("Hourly Base Pay Range: ", 2696, 2696)),
+                             "Zone 1 Pay Range: USD 165,000 to 190,000; Hourly Base Pay Range: USD 26.96"),
+                            (ranges(("", 100, 200), (None, 300, 400)), "USD 1 to 2; USD 3 to 4"),
+                            (ranges(("Canada\nAnnual", 100, 200)), "Canada Annual: USD 1 to 2"),
+                            (ranges(), ""), ({**greenhouse_job(1, "AE"), "pay_input_ranges": None}, ""),
+                            (greenhouse_job(1, "AE"), "")]:
+            (p,) = greenhouse.parse(self.board, {"jobs": [job]})
+            self.assertEqual(p.salary, salary, job.get("pay_input_ranges"))
+
+    def test_malformed_pay_is_no_pay_and_the_board_still_reads(self):
+        good = {"min_cents": 100, "max_cents": 200, "currency_type": "USD", "title": "Pay"}
+        for bad in [{**good, "min_cents": "100"}, {**good, "min_cents": True}, {**good, "max_cents": None},
+                    {k: v for k, v in good.items() if k != "min_cents"}, {**good, "currency_type": None},
+                    {k: v for k, v in good.items() if k != "currency_type"}, {**good, "min_cents": 300},
+                    {**good, "title": 3}, {**good, "title": ["Pay"]}, {**good, "title": "\ud800"}, "range", None]:
+            jobs = [{**greenhouse_job(1, "AE"), "pay_input_ranges": [good, bad]},
+                    {**greenhouse_job(2, "AE"), "pay_input_ranges": [good]}]
+            self.assertEqual([p.salary for p in greenhouse.parse(self.board, {"jobs": jobs})],
+                             ["", "Pay: USD 1 to 2"], bad)
+        for ranges in ["Pay", {"title": "Pay"}, 3]:
+            (p,) = greenhouse.parse(self.board, {"jobs": [{**greenhouse_job(1, "AE"), "pay_input_ranges": ranges}]})
+            self.assertEqual(p.salary, "", ranges)
+
     def test_a_malformed_job_fails_the_board(self):
         bad = []
         for change in [{"id": True}, {"id": None}, {"id": " "}, {"title": None}, {"title": 3}, {"location": "London"},

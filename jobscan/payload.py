@@ -19,6 +19,7 @@ NOT_IN_SLUG = frozenset("/:?#")
 REMOTE = re.compile(r"(?<!\w)remote(?!\w)")  # word-adjacent, as `prefilter` matches a `Remote` term
 # ASCII-only lower case: str.lower can change a string's length (`İ` → `i̇`), shifting offsets into the original.
 ASCII_LOWER = MappingProxyType(str.maketrans(string.ascii_uppercase, string.ascii_lowercase))
+MAX_PAY = 10**12  # above any real pay in any unit: a larger number is malformed, and every one allowed fits a float
 
 
 def http_url(url: str) -> SplitResult | None:
@@ -66,6 +67,24 @@ def one_line(text: str) -> str:
     """`text` as one printable line: unprintable characters (zero-width spaces) dropped, any run of whitespace
     (newlines and non-breaking spaces included) one space."""
     return " ".join("".join(c for c in text if c.isprintable() or c.isspace()).split())
+
+
+def pay_range(currency, low, high, unit: int = 1) -> str | None:
+    """A job site's published pay range as one line, `USD 165,000 to 190,000` (one figure when the two are equal; two
+    decimals on both when either isn't whole), the amounts given in 1/`unit` of the currency (cents: 100). None when
+    the currency is missing or blank, either amount isn't a number from 0 to `MAX_PAY`, or `low` exceeds `high`: pay
+    is optional, so a malformed range is no pay, never a failed board."""
+    code = one_line(currency) if isinstance(currency, str) and encodable(currency) else ""
+    if not code or not (_amount(low) and _amount(high)) or low > high:
+        return None
+    amounts = (low / unit,) if low == high else (low / unit, high / unit)
+    places = 0 if all(a.is_integer() for a in amounts) else 2
+    return f"{code} " + " to ".join(f"{a:,.{places}f}" for a in amounts)
+
+
+def _amount(value) -> bool:
+    """A number pay can be: `bool` is an int to Python but never an amount, and NaN fails both comparisons."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= MAX_PAY
 
 
 def named_company(name, website=None) -> Company:

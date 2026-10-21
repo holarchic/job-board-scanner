@@ -6,7 +6,16 @@ import json
 import re
 from urllib.parse import parse_qs, quote, unquote
 
-from jobscan.payload import board_slug, html_to_text, http_url, named_company, text_field
+from jobscan.payload import (
+    board_slug,
+    encodable,
+    html_to_text,
+    http_url,
+    named_company,
+    one_line,
+    pay_range,
+    text_field,
+)
 from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "greenhouse"
@@ -18,6 +27,7 @@ CRAWL_HOSTS = ("job-boards.greenhouse.io", "job-boards.eu.greenhouse.io")
 BOARD_HOSTS = frozenset({*CRAWL_HOSTS, "boards.greenhouse.io", "boards.eu.greenhouse.io"})
 API = "https://boards-api.greenhouse.io/v1/boards/"
 LIST = "/jobs?content=true"
+PAY = "&pay_transparency=true"  # asked on every read, so stored and discovered API URLs stay as they are
 REAL_TAG = re.compile(r"</?[a-zA-Z]")
 # A layer of escaped markup shows an escaped closing tag (any tag) or an escaped standard HTML tag (`<br>`, an
 # unclosed `<p>`); a bare `&lt;customer&gt;` is neither and stays text.
@@ -70,7 +80,7 @@ def company(board: Board, get: Get) -> Company:
 
 
 def read(board: Board, get: Get, places: Places) -> tuple[Posting, ...]:
-    return parse(board, json.loads(get(board.api_url)))
+    return parse(board, json.loads(get(board.api_url + PAY)))
 
 
 def parse(board: Board, data) -> tuple[Posting, ...]:
@@ -102,7 +112,29 @@ def _posting(board: Board, index: int, job) -> Posting:
         location=" / ".join(_locations(job, index)),
         url=text_field(job, "absolute_url", index) or "",
         description=_description(text_field(job, "content", index) or ""),
+        salary=_salary(job),
     )
+
+
+def _salary(job: dict) -> str:
+    """Each of the job's published pay ranges (`pay_input_ranges`, by zone or country) as `<its title>: USD 165,000 to
+    190,000`, joined by `; `. Pay is optional: a job without it has none, and so does a job with any range malformed
+    (never some ranges of several, which would misstate the rest); its board still reads."""
+    ranges = job.get("pay_input_ranges")
+    written = [_pay(r) for r in ranges] if isinstance(ranges, list) else []
+    return "" if None in written else "; ".join(written)
+
+
+def _pay(record) -> str | None:
+    """One range, its title first unless it has none (`Hourly Base Pay Range:` loses its colon); None if malformed."""
+    if not isinstance(record, dict):
+        return None
+    title = record.get("title")
+    if title is not None and not (isinstance(title, str) and encodable(title)):
+        return None
+    amounts = pay_range(record.get("currency_type"), record.get("min_cents"), record.get("max_cents"), unit=100)
+    label = one_line(title or "").removesuffix(":").rstrip()
+    return f"{label}: {amounts}" if amounts and label else amounts
 
 
 def _locations(job: dict, index: int) -> list[str]:
