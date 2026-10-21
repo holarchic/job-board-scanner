@@ -26,7 +26,7 @@ It finds the job boards itself, reads them directly and has a language model tag
 - **Finds boards** in the three newest [Common Crawl](https://commoncrawl.org) crawls: about 4,000 on Ashby, 4,800 on Greenhouse, 1,100 on Gem, 1,000 on Teamtailor, 2,800 on Personio, 1,250 on SmartRecruiters, 1,700 on Rippling, 4,200 Workday sites and 1,500 Oracle Recruiting Cloud sites. About 8,000 of the Ashby and Greenhouse ones answer. Of my hand-built list it finds 111 of 114 Ashby boards, 33 of 37 Greenhouse ones and all 4 on Gem.
 - **Reads Workable and Lever boards you list** in a boards file. Discovery would find about 5,300 Workable boards, but Workable rate-limits a full daily sweep, so it doesn't attempt one; Common Crawl barely holds Lever's. Lever boards on jobs.lever.co and its EU twin, jobs.eu.lever.co, both work.
 - **Filters** postings by your titles and locations, then **tags** each match with the model. Answers that need evidence quote the posting; a missing or unmatched quote shows ⚠. A quote that's there doesn't prove the answer right.
-- **Writes a markdown digest** of what's new, and can email it and raise a Mac notification.
+- **Writes a markdown digest** of what's new, and can email it and raise a Mac notification. Where Ashby publishes a posting's pay (about one job in five), the digest shows it as Ashby writes it; other sites' pay stays inside the description.
 
 | Tag | Answers |
 |-----|---------|
