@@ -1773,11 +1773,11 @@ class DiscoveryRefreshTest(RunFixture):
                               "rippling:rp-acme", "workday:wd-acme.wd3.careers", "oracle:or-acme.em2.cx"},
                              boards)  # the new ATSes' lists were read
 
-    def test_a_list_without_workable_is_not_rediscovered(self):
+    def test_a_list_without_workable_or_lever_is_not_rediscovered(self):
         self.seed_discovery("acme", at=self.days_ago(1))
         conn = store.open_db(self.home)
         with conn:
-            conn.execute("DELETE FROM boards WHERE ats = 'workable'")
+            conn.execute("DELETE FROM boards WHERE ats IN ('workable', 'lever')")
         conn.close()
         self.assertEqual(self.run_cli()[1][1], "2")
         self.assertEqual(self.cc.requests, [])

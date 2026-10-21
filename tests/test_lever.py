@@ -31,6 +31,11 @@ class BoardTest(unittest.TestCase):
         b = board_for("https://jobs.eu.lever.co/ep%2Bco")
         self.assertEqual((b.id, b.api_url), ("lever:ep+co", EU + "ep%2Bco?mode=json"))
 
+    def test_an_instances_api_url_is_written_one_way(self):
+        for url, api in [("https://API.EU.LEVER.CO:443/v0/postings/acme", EU), ("http://api.lever.co/v0/postings/acme",
+                                                                               US)]:
+            self.assertEqual(board_for(url).api_url, api + "acme?mode=json", url)
+
     def test_api_url_on_another_host_is_kept(self):
         b = board_for("http://127.0.0.1:8000/v0/postings/acme")
         self.assertEqual(b.api_url, "http://127.0.0.1:8000/v0/postings/acme?mode=json")

@@ -38,12 +38,15 @@ LIST = "?mode=json"
 
 
 def api_board(company: str, url: str) -> Board | None:
-    """A postings API URL on any host (how tests point at a fake server); the host is kept."""
+    """A postings API URL on any host (how tests point at a fake server). A Lever instance's API is written the one
+    way `company` recognises (`https://API.EU.LEVER.CO:443/…` as `API`); any other host is kept."""
     parsed = http_url(url)
     path = [p for p in parsed.path.split("/") if p] if parsed else []
     if tuple(path[:2]) != API_PATH or len(path) < 3:
         return None
-    return _board(company, board_slug(path[2]), f"{parsed.scheme}://{parsed.netloc}/{'/'.join(API_PATH)}/")
+    base = API.format(host=parsed.hostname) if parsed.hostname in INSTANCES.values() else \
+        f"{parsed.scheme}://{parsed.netloc}/{'/'.join(API_PATH)}/"
+    return _board(company, board_slug(path[2]), base)
 
 
 def page_board(company: str, url: str) -> Board | None:

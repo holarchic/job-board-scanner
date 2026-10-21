@@ -103,7 +103,8 @@ class AdapterTest(unittest.TestCase):
     def test_lever_reads_the_title_of_the_boards_own_instance(self):
         for url, page in [("https://jobs.lever.co/acme", "https://jobs.lever.co/acme"),
                           ("https://jobs.eu.lever.co/Beta/1/apply", "https://jobs.eu.lever.co/Beta"),
-                          ("https://api.eu.lever.co/v0/postings/Beta", "https://jobs.eu.lever.co/Beta")]:
+                          ("https://api.eu.lever.co/v0/postings/Beta", "https://jobs.eu.lever.co/Beta"),
+                          ("https://API.EU.LEVER.CO:443/v0/postings/Beta", "https://jobs.eu.lever.co/Beta")]:
             company, asked = look_up(lever, url, {page: html_page(" Acme &amp; Co ")})
             self.assertEqual((company, asked), (Company("Acme & Co", None), [page]), url)
 

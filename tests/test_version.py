@@ -48,6 +48,16 @@ class VersionTest(unittest.TestCase):
         with installed(FakeDist("0.0.1", {"vcs_info": {"commit_id": "f" * 40}})):
             self.assertEqual(version.line(self.root), f"9.8.7 ({head})")
 
+    def test_a_copy_inside_another_repository_has_no_commit_of_its_own(self):
+        self.git("init", "-q")
+        (self.root / "README").write_text("outer")
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "outer")
+        inner = self.root / "vendor" / "jobscan-src"
+        inner.mkdir(parents=True)
+        (inner / "pyproject.toml").write_text(MANIFEST)
+        self.assertEqual(version.line(inner), "9.8.7")
+
     def test_a_checkout_without_git_or_outside_a_repository_names_the_version_alone(self):
         (self.root / "pyproject.toml").write_text(MANIFEST)
         self.assertEqual(version.line(self.root), "9.8.7")  # not a repository: git fails
