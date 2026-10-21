@@ -46,6 +46,8 @@ class HelpTest(unittest.TestCase):
             profile = config.load_profile(Path(home))
         self.assertEqual([(c.name, c.values) for c in profile.custom_tags],
                          [("work_policy", ("remote", "hybrid", "onsite", "unknown"))])
+        self.assertEqual(profile.company_notes, (config.CompanyNote("Monzo", "applied 29 Sep; no answer yet"),))
+        self.assertEqual(profile.watch, ("Monzo", "hiive"))
         self.assertEqual(prefilter.verdict(profile, "Senior Product Manager", "London"), prefilter.Verdict.MATCH)
         self.assertEqual(prefilter.verdict(profile, "Product Marketing Manager", "London"), prefilter.Verdict.OTHER)
         self.assertEqual(prefilter.verdict(profile, "Associate Product Manager", "Remote, EMEA"),

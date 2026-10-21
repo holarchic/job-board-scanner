@@ -168,6 +168,10 @@ watch = ["Monzo", "Wise", "hiive"]   # optional: companies whose postings come f
 max_tag_per_run = 200      # optional, default 500: postings a run tags at most
 max_spend_per_run = 0.50   # optional, default 1.00: dollars at which a run starts no more
 
+[company_notes]            # optional: your note on each posting from a company you already know
+"Wise" = "rejected 14 Oct: only a clearly different role"
+"Monzo" = "talking to the hiring manager: mention it to them"
+
 [custom_tags.b2b]
 definition = "The company sells to businesses, not consumers."
 ```
@@ -177,6 +181,8 @@ definition = "The company sells to businesses, not consumers."
 `require` moves a posting out of the digest's entries when one of those tags definitely answers otherwise: a German-speaking role with `language_required = "no"`. An `unknown`, or an answer shown with ⚠, never hides one. Hidden postings are listed one line each under "Left out" at the end of the digest, with the answer and the link, so a wrong answer costs you a line, not the job. A day with only hidden postings writes no digest; they wait for the next one. A list keeps a posting giving any of its answers: `segment = ["enterprise", "mid_market"]`. On the set-up page, tick the answers under any tag, built-in or your own ("Only show postings where the answer is"); with flags, `jobscan init --require language_required=no`, naming a tag again for each further answer.
 
 `watch` puts the postings of companies you care about at the top of each digest, each heading starting ★. A name matches whole words of the company's name, so `"Monzo"` catches "Monzo Bank"; a board's slug (the `hiive` in `jobs.ashbyhq.com/hiive`) matches that board. Edit it in the profile file; the set-up page keeps it as it is.
+
+`[company_notes]` puts your own words on every posting from a company you already know: applied, rejected, mid-conversation, whatever the next step is. Each shows as a `Your note:` line under that posting's link. Companies are named as in `watch`; a short name can catch another company (`Apple` names Apple Leisure Group too), so use the fuller name or the board's slug when it does.
 
 **Agency jobs are left out by default.** Every posting is also asked whether a recruitment, staffing or executive-search agency posted it for a client; a quoted yes moves it to "Left out" the same way. To keep them, set `include_agencies = true` in the profile, tick "Include jobs posted by recruitment and staffing agencies" on the page, or pass `jobscan init --include-agencies`. In my own digests about 1 posting in 200 was an agency's.
 

@@ -47,6 +47,8 @@ The profile is profiles/NAME.toml: edit it by hand, then `jobscan check`. For ex
   max_tag_per_run = 200              # optional (default 500): postings a run sends to the model at most
   max_spend_per_run = 0.50           # optional (default 1.00): dollars; once a run's spend reaches it, it starts
                                      # no more. Either way the rest wait for later runs (exit 0)
+  [company_notes]                    # optional: your own note on each posting from a company you know,
+  "Monzo" = "applied 29 Sep; no answer yet"   # named as `watch` names it
   [custom_tags.work_policy]          # your own tag: asked of every match, without listing it in `tags`
   definition = "Where the job is done: remote, hybrid or onsite, as the posting states it."
   values = ["remote", "hybrid", "onsite", "unknown"]
