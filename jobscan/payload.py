@@ -71,13 +71,15 @@ def one_line(text: str) -> str:
 
 def pay_range(currency, low, high, unit: int = 1) -> str | None:
     """A job site's published pay range as one line, `USD 165,000 to 190,000` (one figure when the two are equal; two
-    decimals on both when either isn't whole), the amounts given in 1/`unit` of the currency (cents: 100). None when
-    the currency is missing or blank, either amount isn't a number from 0 to `MAX_PAY`, or `low` exceeds `high`: pay
-    is optional, so a malformed range is no pay, never a failed board."""
+    decimals on both when either isn't whole), the amounts given in 1/`unit` of the currency (cents: 100; the
+    caller's positive constant). None when the currency is missing or blank, either amount isn't a number from 0 to
+    `MAX_PAY`, or `low` exceeds `high`, so nothing a site sends raises: pay is optional, a malformed range is no pay,
+    never a failed board."""
     code = one_line(currency) if isinstance(currency, str) and encodable(currency) else ""
     if not code or not (_amount(low) and _amount(high)) or low > high:
         return None
-    amounts = (low / unit,) if low == high else (low / unit, high / unit)
+    low, high = abs(low) / unit, abs(high) / unit  # abs: -0.0 passes `0 <=` and would print as -0
+    amounts = (low,) if low == high else (low, high)
     places = 0 if all(a.is_integer() for a in amounts) else 2
     return f"{code} " + " to ".join(f"{a:,.{places}f}" for a in amounts)
 

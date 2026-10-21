@@ -7,6 +7,7 @@ all-or-nothing per board, as for the others.
 Boards come from the boards file only: Common Crawl holds no readable captures of jobs.lever.co, so discovery can't
 find them."""
 import json
+from types import MappingProxyType
 from urllib.parse import quote
 
 from jobscan.payload import (
@@ -33,8 +34,8 @@ API = "https://{host}/" + "/".join(API_PATH) + "/"  # host templates, composed a
 BOARD_PAGE = "https://{host}/{slug}"
 LIST = "?mode=json"
 # `salaryRange.interval` → the words after the amounts; a period not listed means no pay shown, never an unlabelled one.
-INTERVALS = {"per-year-salary": "a year", "per-month-salary": "a month", "per-week-salary": "a week",
-             "per-day-wage": "a day", "per-hour-wage": "an hour", "one-time": "one-time"}
+INTERVALS = MappingProxyType({"per-year-salary": "a year", "per-month-salary": "a month", "per-week-salary": "a week",
+             "per-day-wage": "a day", "per-hour-wage": "an hour", "one-time": "one-time"})
 
 
 # Lever slugs are case-sensitive (`Spotify` is a 404 where `spotify` reads), so a slug keeps its case.

@@ -11,6 +11,7 @@ class PayRangeTest(unittest.TestCase):
                               (("USD", 2696, 2696, 100), "USD 26.96"),
                               (("USD", 52.5, 64), "USD 52.50 to 64.00"),
                               (("GBP", 0, 1), "GBP 0 to 1"),
+                              (("GBP", -0.0, 1), "GBP 0 to 1"), (("GBP", -0.0, 0), "GBP 0"),
                               ((" GBP\n", 85000.0, 85000), "GBP 85,000")]:
             self.assertEqual(pay_range(*args), written, args)
 
