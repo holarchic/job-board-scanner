@@ -1311,6 +1311,39 @@ class RequireRunTest(RunFixture):
         self.assertNotIn("Left out", Path(path).read_text())
 
 
+class SeveralAnswersRunTest(RunFixture):
+    """`require` with a list: a posting is kept when its answer is any of them."""
+
+    def setUp(self):
+        super().setUp()
+        (self.home / "profiles" / "ae.toml").write_text(
+            PROFILE + 'require = { sector = ["HealthTech", "BioTech", "both"] }\n\n[custom_tags.sector]\n'
+            'definition = "The company\'s sector."\nvalues = ["HealthTech", "BioTech", "both", "other", "unknown"]\n')
+        self.jobs = [ashby_job(str(i), f"Account Executive - {sector}")
+                     for i, sector in enumerate(["HealthTech", "both", "other", "unknown"], 1)]
+
+        def answering(payload):
+            tags = tags_quoting_the_posting(payload)
+            title = tags["founding"]["quote"]
+            sector = title.rsplit(" - ", 1)[1]
+            tags["sector"] = {"value": sector, "quote": None if sector == "unknown" else title}
+            return model_reply(tags)
+
+        self.model.routes["/chat/completions"] = (200, answering)
+
+    def test_only_a_posting_answering_none_of_them_is_left_out(self):
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "3"))
+        text = Path(path).read_text()
+        self.assertTrue(text.startswith(f"# ae — {Path(path).stem} · 3 new · 1 left out\n"), text)
+        for sector in ["HealthTech", "both", "unknown"]:
+            self.assertIn(f"## Acme — Account Executive - {sector} · London\n", text)
+        self.assertNotIn("## Acme — Account Executive - other", text)
+        self.assertTrue(text.endswith("## Left out (1)\n" + digest.LEFT_OUT_NOTE + "\n- Acme — Account Executive - "
+                                      "other · London · sector: other · https://jobs.ashbyhq.com/acme/3\n"), text)
+        self.assertNotIn("carried over", text)
+
+
 class LimitRunTest(RunFixture):
     """`max_tag_per_run` and `max_spend_per_run`: a run sends at most so many postings to the model, newest first
     seen first and one per board on a tie, and the rest wait for later runs without failing the run."""

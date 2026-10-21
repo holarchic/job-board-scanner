@@ -85,6 +85,7 @@ class Site:
         if action not in page.actions(self.step):  # refused before anything is applied
             return self._render(errors={"": "Press one of the buttons."})
         self.revision += 1
+        before = self.form
         self.form, self.offers = page.read_step(self.step, fields, self.form, self.offers)
         if self.form.key and "key" not in self.form.too_long and usable_key(self.form.key):
             self.drafts.key = self.form.key
@@ -92,7 +93,7 @@ class Site:
             self.drafts.password = self.form.password
         order = page.steps(self._fresh())
         if action == "next":
-            return self._next()
+            return self._next(before)
         if action == "back":
             return self._go(order[order.index(self.step) - 1] if self._fresh() else "summary")
         if action.startswith("goto:"):
@@ -143,12 +144,20 @@ class Site:
         return replace(page.form_from_profile(profile, self._prefill_email()), schedule_on=at is not None,
                        schedule_at=f"{at:%H:%M}" if at else FIRST_RUN_AT)
 
-    def _next(self) -> str:
+    def _next(self, before: page.Form) -> str:
+        """`before`, the draft as this post found it: a tag of one's own added on the tags step shows that step again,
+        so its answers can be ticked."""
         errors = page.check_step(self.step, self.form, key_held=self._key_held(), fresh=self._fresh(),
                                  password=self._password(),
                                  email_saved=not self._fresh() and (self.home / EMAIL_FILE).exists())
         if errors:
             return self._render(errors=errors)
+        added = [r.name for r in self.form.custom if r.name not in {b.name for b in before.custom}]
+        if self.step == "tags" and added:
+            one = len(added) == 1
+            return self._render(notices=(
+                f"Added {', '.join(added)}: to show only some of {'its' if one else 'their'} answers, tick them under "
+                f"{'it' if one else 'each'}; else press {'Next' if self._fresh() else 'Done'}.",))
         if self.step == "describe":
             return self._describe()
         order = page.steps(self._fresh())

@@ -282,6 +282,12 @@ class NewInstallTest(UiTest):
         self.assertIn('name="add_custom" value="salary_stated">', text)  # offered, one click to add
         text = self.press("next", ticked={"add_custom": ["salary_stated"], "include_agencies": ["on"]},
                           **{"require-location_eligible": "yes"})
+        # A tag of one's own just added: the step again, so its answers can be ticked.
+        self.assertEqual(self.step(), "tags")
+        self.assertIn("Added salary_stated: to show only some of its answers, tick them under it; else press Next.",
+                      text)
+        self.assertEqual(checked(text, "require-location_eligible"), ["yes"])
+        text = self.press("next", ticked={"custom-0-require": ["yes"]})
         self.assertIn('name="max_tag" value="1000">', text)  # tiles, 500 ticked
         self.press("next", max_tag="other", max_tag_other="250", max_spend="0.555")
         text = self.press("next", email_to="me@gmail.com", password="abcd efgh ijkl mnop")
@@ -309,7 +315,7 @@ class NewInstallTest(UiTest):
                           ("Account Executive Assistant",), ("London", "Remote", "UK")))
         self.assertEqual((profile.tags, [c.name for c in profile.custom_tags], profile.require),
                          (("founding", "location_eligible"), ["salary_stated"],
-                          (Requirement("location_eligible", ("yes",)),)))
+                          (Requirement("location_eligible", ("yes",)), Requirement("salary_stated", ("yes",)))))
         self.assertTrue(profile.include_agencies)
         self.assertEqual((profile.max_tag_per_run, profile.max_spend_per_run), (250, 0.555))
         key = self.home / "openrouter.key"
@@ -451,7 +457,7 @@ class NewInstallTest(UiTest):
         for _ in range(3):
             self.press("next")
         self.press("next", ticked={"add_custom": ["salary_stated"]})
-        self.press("back")
+        self.assertEqual(self.step(), "tags")
         text = self.press("next", **{"custom-0-definition": "Is a pay range stated?"})  # now a row of its own
         self.assertEqual(self.step(), "limits")
         self.press("back")
@@ -504,6 +510,31 @@ class NewInstallTest(UiTest):
 
 
 class ExistingInstallTest(UiTest):
+    def test_a_tag_of_ones_own_added_then_its_answers_ticked(self):
+        self.install()
+        self.open()
+        self.press("goto:tags")
+        text = self.press("next", **{"custom-0-name": "sector", "custom-0-definition": "The company's sector.",
+                                     "custom-0-values": "HealthTech\nBioTech\nboth\nother\nunknown"})
+        self.assertEqual(self.step(), "tags")
+        self.assertIn("Added sector: to show only some of its answers, tick them under it; else press Done.", text)
+        self.assertNotIn('name="custom-0-require" value="unknown"', text)
+        self.press("next", ticked={"custom-0-require": ["BioTech", "HealthTech", "both"]})
+        self.assertEqual(self.step(), "summary")
+        self.assertIn("only shows postings answering sector BioTech or HealthTech or both", self.pages[-1])
+        self.press("save")
+        self.assertEqual(load_profile(self.home).require, (Requirement("sector", ("BioTech", "HealthTech", "both")),))
+        self.assertIn('require = { sector = ["BioTech", "HealthTech", "both"] }',
+                      (self.home / "profiles" / "ae.toml").read_text())
+
+    def test_an_added_tag_with_an_error_shows_the_error_not_the_notice(self):
+        self.install()
+        self.open()
+        self.press("goto:tags")
+        text = self.press("next", **{"custom-0-name": "sector", "custom-0-definition": ""})
+        self.assertEqual(self.step(), "tags")
+        self.assertNotIn("Added sector", text)
+
     def edit(self, step, **typed):
         """From the summary (or the page after Save): Edit `step`, change what's typed, Done."""
         if self.step() == "done":
@@ -522,12 +553,14 @@ class ExistingInstallTest(UiTest):
 
     def test_every_step_done_unchanged_saves_the_same_profile(self):
         self.install(profile='titles = ["AE", "ae", "AE"]\nlocations = ["London"]\neligible_where = "the UK"\n'
-                             'tags = ["founding"]\nrequire = { founding = "yes", buyer = "smb" }\n'
+                             'tags = ["founding"]\nrequire = { buyer = ["enterprise", "smb"], founding = "yes" }\n'
                              'include_agencies = true\nmax_tag_per_run = 250\nmax_spend_per_run = 0.555\n\n'
                              '[custom_tags.buyer]\ndefinition = "Who buys.\\nSay smb or '
                              'enterprise."\nvalues = ["smb", "enterprise"]\n')
         before = load_profile(self.home)
-        self.assertEqual(before.require, (Requirement("founding", ("yes",)), Requirement("buyer", ("smb",))))
+        # An own tag's before a built-in's, its answers the other way round from the page's: kept as they are.
+        self.assertEqual(before.require,
+                         (Requirement("buyer", ("enterprise", "smb")), Requirement("founding", ("yes",))))
         self.open()
         for step in page.EXISTING_STEPS[:-1]:
             self.press(f"goto:{step}")
