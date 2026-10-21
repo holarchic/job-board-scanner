@@ -16,6 +16,7 @@ from jobscan.payload import (
     html_to_text,
     http_url,
     named_company,
+    pay_range,
     text_field,
     with_remote,
 )
@@ -31,6 +32,9 @@ API_PATH = ("v0", "postings")
 API = "https://{host}/" + "/".join(API_PATH) + "/"  # host templates, composed at call time
 BOARD_PAGE = "https://{host}/{slug}"
 LIST = "?mode=json"
+# `salaryRange.interval` → the words after the amounts; a period not listed means no pay shown, never an unlabelled one.
+INTERVALS = {"per-year-salary": "a year", "per-month-salary": "a month", "per-week-salary": "a week",
+             "per-day-wage": "a day", "per-hour-wage": "an hour", "one-time": "one-time"}
 
 
 # Lever slugs are case-sensitive (`Spotify` is a 404 where `spotify` reads), so a slug keeps its case.
@@ -99,7 +103,18 @@ def _posting(board: Board, index: int, job) -> Posting:
         location=" / ".join(with_remote(places) if text_field(job, "workplaceType", index) == "remote" else places),
         url=text_field(job, "hostedUrl", index) or "",
         description=_description(job, index),
+        salary=_salary(job),
     )
+
+
+def _salary(job: dict) -> str:
+    """The job's published `salaryRange` (whole currency units) as `USD 52 to 64 an hour`. Pay is optional: a job
+    without it, or with it malformed or in a period `INTERVALS` doesn't name, has none, and its board still reads."""
+    pay = job.get("salaryRange")
+    if not isinstance(pay, dict) or not isinstance(pay.get("interval"), str) or pay["interval"] not in INTERVALS:
+        return ""
+    amounts = pay_range(pay.get("currency"), pay.get("min"), pay.get("max"))
+    return f"{amounts} {INTERVALS[pay['interval']]}" if amounts else ""
 
 
 def _places(job: dict, index: int) -> list[str]:

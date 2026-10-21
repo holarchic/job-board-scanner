@@ -73,6 +73,29 @@ class ParseTest(unittest.TestCase):
         (p,) = lever.parse(self.board, [{"id": "j1", "text": "AE", "categories": None, "lists": None}])
         self.assertEqual(p.location, "")
 
+    def test_pay_is_written_with_its_period(self):
+        def paid(**pay):
+            return lever_job("j1", "AE", salaryRange={"currency": "USD", "interval": "per-year-salary", "min": 123000,
+                                                      "max": 168000, **pay})
+
+        for job, salary in [(paid(), "USD 123,000 to 168,000 a year"),
+                            (paid(interval="per-hour-wage", min=52, max=64), "USD 52 to 64 an hour"),
+                            (paid(currency="GBP", interval="per-month-salary", min=5000.5, max=5000.5),
+                             "GBP 5,000.50 a month"),
+                            (lever_job("j1", "AE"), ""), (lever_job("j1", "AE", salaryRange=None), "")]:
+            (p,) = lever.parse(self.board, [job])
+            self.assertEqual(p.salary, salary, job.get("salaryRange"))
+
+    def test_malformed_pay_is_no_pay_and_the_board_still_reads(self):
+        good = {"currency": "USD", "interval": "per-year-salary", "min": 1, "max": 2}
+        for bad in [{**good, "interval": "per-fortnight"}, {**good, "interval": ["per-year-salary"]},
+                    {**good, "interval": {"a": 1}}, {**good, "interval": None},
+                    {k: v for k, v in good.items() if k != "interval"}, {**good, "currency": None},
+                    {k: v for k, v in good.items() if k != "currency"}, {**good, "min": "1"}, {**good, "min": True},
+                    {k: v for k, v in good.items() if k != "max"}, {**good, "min": 3}, "USD 1 to 2", [good]]:
+            jobs = [lever_job("j1", "AE", salaryRange=bad), lever_job("j2", "AE", salaryRange=good)]
+            self.assertEqual([p.salary for p in lever.parse(self.board, jobs)], ["", "USD 1 to 2 a year"], bad)
+
     def test_a_malformed_board_fails_whole(self):
         def job(**changes):
             return {**lever_job("j1", "AE"), **changes}

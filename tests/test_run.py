@@ -1339,6 +1339,26 @@ class PayRunTest(RunFixture):
         self.assertIn(("GET", "/posting-api/job-board/acme?includeCompensation=true", None), self.ats.requests)
         self.assertNotIn(("GET", "/posting-api/job-board/acme", None), self.ats.requests)
 
+    def test_greenhouse_and_lever_pay_ranges_are_written_out(self):
+        (self.home / "listed.json").write_text(json.dumps({"companies": [
+            {"company": "Globex", "board_url": f"{self.ats.url}/v1/boards/globex/jobs"},
+            {"company": "Initech", "board_url": f"{self.ats.url}/v0/postings/initech"},
+        ]}))
+        ranges = [{"min_cents": 16500000, "max_cents": 19000000, "currency_type": "USD", "title": "Zone 1 Pay Range"},
+                  {"min_cents": 2696, "max_cents": 2696, "currency_type": "USD", "title": "Hourly:"}]
+        self.ats.routes["/v1/boards/globex/jobs?content=true&pay_transparency=true"] = (200, {"jobs": [
+            {**greenhouse_job(7, "Account Executive"), "pay_input_ranges": ranges},
+            {**greenhouse_job(8, "Enterprise Account Executive"), "pay_input_ranges": []}]})
+        self.ats.routes["/v0/postings/initech?mode=json"] = (200, [lever_job("l1", "Account Executive", salaryRange={
+            "min": 52, "max": 64, "currency": "USD", "interval": "per-hour-wage"})])
+        code, (_, _, path) = self.run_cli()
+        self.assertEqual(code, 0)
+        blocks = {b.split("\n", 1)[0]: b.splitlines() for b in Path(path).read_text().split("\n\n")}
+        self.assertEqual(blocks["## Globex — Account Executive · London"][2],
+                         "Pay: Zone 1 Pay Range: USD 165,000 to 190,000; Hourly: USD 26.96")
+        self.assertNotIn("Pay:", "\n".join(blocks["## Globex — Enterprise Account Executive · London"]))
+        self.assertEqual(blocks["## Initech — Account Executive · London"][2], "Pay: USD 52 to 64 an hour")
+
 
 class RequireRunTest(RunFixture):
     """`require`: a posting a required tag definitely rules out is listed under Left out, never as an entry, and
