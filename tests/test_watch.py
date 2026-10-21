@@ -1,7 +1,8 @@
 """The watchlist's matcher: whole words of a company's name, or a board's slug."""
 import unittest
 
-from jobscan.watch import watched
+from jobscan.config import CompanyNote
+from jobscan.watch import noted, watched
 
 
 class WatchedTest(unittest.TestCase):
@@ -18,6 +19,15 @@ class WatchedTest(unittest.TestCase):
                                       ("hooli-eu", "ashby:hooli-eu-2", False), ("hooli", "ashby:hooli-eu", False),
                                       ("acme.wd3.careers", "workday:acme.wd3.careers", True)]:
             self.assertEqual(watched((term,), "Someone Else", board), expected, (term, board))
+
+
+class NotedTest(unittest.TestCase):
+    def test_every_note_naming_the_company_in_file_order(self):
+        notes = (CompanyNote("hooli-eu", "talking to Sam"), CompanyNote("Globex", "rejected"),
+                 CompanyNote("Hooli", "applied 29 Sep"))
+        self.assertEqual(noted(notes, "Hooli Europe", "ashby:hooli-eu"), ("talking to Sam", "applied 29 Sep"))
+        self.assertEqual(noted(notes, "Acme", "ashby:acme"), ())
+        self.assertEqual(noted((), "Hooli", "ashby:hooli"), ())
 
 
 if __name__ == "__main__":

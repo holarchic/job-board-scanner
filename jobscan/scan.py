@@ -252,7 +252,8 @@ def _tag(conn: sqlite3.Connection, matched: list[store.StoredPosting], defs: lis
     open_roles = store.open_counts(conn, {s.posting.board for s in matched})
     entries = [digest.DigestEntry(posting=s, tags={d.name: results[s.posting.key][d.name] for d in defs},
                                   open_roles=open_roles[s.posting.board], website=websites.get(s.posting.board),
-                                  watched=watch.watched(profile.watch, s.posting.company, s.posting.board))
+                                  watched=watch.watched(profile.watch, s.posting.company, s.posting.board),
+                                  notes=watch.noted(profile.company_notes, s.posting.company, s.posting.board))
                for s in matched if len(results[s.posting.key]) == len(defs)]
     return Tagging(entries, tagged, usage, waiting)
 

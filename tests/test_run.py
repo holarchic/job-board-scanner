@@ -1300,6 +1300,26 @@ class WatchRunTest(RunFixture):
                       text)
 
 
+class CompanyNotesRunTest(RunFixture):
+    def test_a_note_shows_on_each_entry_from_the_company_it_names(self):
+        (self.home / "profiles" / "ae.toml").write_text(
+            PROFILE + '\n[company_notes]\n"Initech" = "applied 29 Sep"\n"hooli-eu" = "talking to Sam"\n')
+        (self.home / "listed.json").write_text(json.dumps({"companies": [
+            {"company": "Acme", "board_url": f"{self.ats.url}/posting-api/job-board/acme"},
+            {"company": "Initech Ltd", "board_url": f"{self.ats.url}/posting-api/job-board/initech"},
+            {"company": "Hooli", "board_url": f"{self.ats.url}/posting-api/job-board/hooli-eu"},
+        ]}))
+        self.ats.routes["/posting-api/job-board/initech"] = (200, {"jobs": [ashby_job("i1", "Account Executive")]})
+        self.ats.routes["/posting-api/job-board/hooli-eu"] = (200, {"jobs": [ashby_job("h1", "Account Executive")]})
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "4"))
+        blocks = {b.split("\n", 1)[0]: b for b in Path(path).read_text().split("\n\n")}
+        self.assertEqual(blocks["## Initech Ltd — Account Executive · London"].splitlines()[2],
+                         "Your note: applied 29 Sep")
+        self.assertEqual(blocks["## Hooli — Account Executive · London"].splitlines()[2], "Your note: talking to Sam")
+        self.assertNotIn("Your note", blocks["## Acme — Account Executive · London"])
+
+
 class RequireRunTest(RunFixture):
     """`require`: a posting a required tag definitely rules out is listed under Left out, never as an entry, and
     delivered only with a digest that lists it."""

@@ -36,6 +36,13 @@ class Config:
 
 
 @dataclass(frozen=True)
+class CompanyNote:
+    """The seeker's own words about a company they already know, shown on its entries (`watch.noted`)."""
+    name: str  # a company name or a board slug, matched as `watch` names are
+    note: str
+
+
+@dataclass(frozen=True)
 class CustomTag:
     """A tag the profile defines for itself; never validated against labelled postings."""
     name: str
@@ -67,6 +74,7 @@ class Profile:
     max_tag_per_run: int = 500  # postings a run sends to the model at most; the rest wait for later runs
     max_spend_per_run: float = 1.0  # dollars: once a run's known tagging spend reaches it, no posting starts
     watch: tuple[str, ...] = ()  # company names or board slugs whose postings lead the digest (`watch.watched`)
+    company_notes: tuple[CompanyNote, ...] = ()  # in file order
 
 
 MAX_TAG_PER_RUN, MAX_SPEND_PER_RUN = Profile.max_tag_per_run, Profile.max_spend_per_run
@@ -252,6 +260,7 @@ def load_profile(home: Path) -> Profile:
         include_agencies=_boolean(data, "include_agencies", path),
         **_limits(data, path),
         watch=_watch(data, path),
+        company_notes=_company_notes(data, path),
     )
 
 
@@ -296,6 +305,9 @@ def profile_toml(profile: Profile) -> str:
         lines.append(f"max_tag_per_run = {profile.max_tag_per_run}")
     if profile.max_spend_per_run != MAX_SPEND_PER_RUN:
         lines.append(f"max_spend_per_run = {profile.max_spend_per_run!r}")  # repr: the float reads back exactly
+    if profile.company_notes:  # a table: after every top-level key, before the custom tags' tables
+        lines += ["", "[company_notes]",
+                  *(f"{toml_string(n.name)} = {toml_string(n.note)}" for n in profile.company_notes)]
     for c in profile.custom_tags:
         lines += ["", f"[custom_tags.{c.name}]", f"definition = {toml_string(c.definition)}"]
         if c.values != CUSTOM_TAG_VALUES:
@@ -412,6 +424,18 @@ def _watch(data: dict, path: Path) -> tuple[str, ...]:
     if len({n.strip().casefold() for n in names}) != len(names):
         raise ConfigError(f"{path}: `watch` lists a company twice")
     return names
+
+
+def _company_notes(data: dict, path: Path) -> tuple[CompanyNote, ...]:
+    """A name twice, as `watch.noted` reads it (stripped, case-folded), is refused, as in `watch`."""
+    table = data.get("company_notes", {})
+    if not isinstance(table, dict) or not all(name.strip() and isinstance(note, str) and note.strip()
+                                              for name, note in table.items()):
+        raise ConfigError(f"{path}: `company_notes` must be a table of company names to your notes, like "
+                          '[company_notes] "Acme" = "applied 29 Sep"')
+    if len({name.strip().casefold() for name in table}) != len(table):
+        raise ConfigError(f"{path}: `company_notes` names a company twice")
+    return tuple(CompanyNote(name, note) for name, note in table.items())
 
 
 def _unique(values: tuple[str, ...], key: str, path: Path) -> tuple[str, ...]:

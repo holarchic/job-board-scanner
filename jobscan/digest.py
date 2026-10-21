@@ -19,6 +19,7 @@ class DigestEntry:
     open_roles: int  # open postings on the posting's board, all roles
     website: str | None = None  # the company's site, when its ATS gives one
     watched: bool = False  # the company is on the profile's watchlist: the entry leads the digest, marked WATCHED
+    notes: tuple[str, ...] = ()  # the seeker's notes naming the company (`watch.noted`), one line each
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,7 @@ def render(profile: str, date: str, entries: list[DigestEntry], carried_over: in
             f"{p.url} · {ADAPTERS[p.ats].DISPLAY_NAME} · first seen {entry.posting.first_seen[:10]} · "
             f"{entry.open_roles} open role{'' if entry.open_roles == 1 else 's'}",
             *([f"Company: {p.company} · {entry.website}"] if entry.website else []),
+            *(one_line(f"Your note: {note}") for note in entry.notes),
             *(_tag_line(name + (f" {UNVALIDATED}" if name in unvalidated else ""), result)
               for name, result in entry.tags.items() if name not in quiet),
         ]))

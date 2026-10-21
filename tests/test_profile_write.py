@@ -5,7 +5,16 @@ import unittest
 from pathlib import Path
 
 from jobscan import init
-from jobscan.config import ConfigError, CustomTag, Profile, Requirement, custom_tag, load_profile, profile_toml
+from jobscan.config import (
+    CompanyNote,
+    ConfigError,
+    CustomTag,
+    Profile,
+    Requirement,
+    custom_tag,
+    load_profile,
+    profile_toml,
+)
 
 CLIMATE = custom_tag("climate", {"definition": 'Cuts "emissions"\\n- yes: says so'}, "test")
 SEGMENT = custom_tag("buyer", {"definition": "Who buys.", "values": ["smb", "enterprise"], "multi": True}, "test")
@@ -77,6 +86,31 @@ class ProfileTomlTest(Home):
                                ('["Acme", " acme "]', "`watch` lists a company twice")]:
             (self.home / "profiles" / "ae.toml").write_text(f"watch = {value}\n" + profile_toml(PROFILE))
             with self.assertRaisesRegex(ConfigError, message, msg=value):
+                load_profile(self.home)
+
+    def test_company_notes_are_a_table_written_only_when_set_and_read_back(self):
+        self.assertNotIn("company_notes", profile_toml(PROFILE))
+        noting = Profile(**{**vars(PROFILE), "watch": ("Acme",), "company_notes": (
+            CompanyNote("Acme AI", 'applied 29 Sep, "PM"'), CompanyNote('Q "x" Ltd', "line one\nline two"),
+            CompanyNote("hooli-eu", "talking to Sam"), CompanyNote("Zürich Ltd", "rejected"))})
+        text = profile_toml(noting)
+        self.assertIn('\n[company_notes]\n"Acme AI" = "applied 29 Sep, \\"PM\\""\n', text)
+        self.assertLess(text.index("[company_notes]"), text.index("[custom_tags."))
+        (self.home / "profiles" / "ae.toml").write_text(text)
+        self.assertEqual(load_profile(self.home), noting)
+
+    def test_company_notes_that_arent_names_to_notes_or_name_one_twice_are_refused(self):
+        for table, message in [('company_notes = "Acme"', "must be a table of company names to your notes"),
+                               ("[company_notes]\nAcme = 3", "must be a table"),
+                               ('[company_notes]\nAcme = " "', "must be a table"),
+                               ('[company_notes]\n" " = "x"', "must be a table"),
+                               ('[company_notes]\nAcme = "a"\nACME = "b"', "names a company twice"),
+                               ('[company_notes]\nAcme = "a"\n" acme " = "b"', "names a company twice")]:
+            top, _, tables = profile_toml(PROFILE).partition("\n\n[custom_tags")
+            text = (table + "\n" + top if table.startswith("company_notes =") else top + "\n\n" + table) + \
+                "\n\n[custom_tags" + tables
+            (self.home / "profiles" / "ae.toml").write_text(text)
+            with self.assertRaisesRegex(ConfigError, message, msg=table):
                 load_profile(self.home)
 
     def test_tagging_limits_are_written_only_when_not_the_defaults_and_read_back(self):

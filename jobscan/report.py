@@ -78,6 +78,7 @@ def install(checked: Install, scheduled: State | ScheduleError | None) -> list[s
         else "  agency postings: left out (include_agencies = true keeps them)",
         f"  tagging per run: {limits(profile.max_tag_per_run, profile.max_spend_per_run)}",
         f"  watchlist: {_items(profile.watch)}",
+        f"  company notes: {_items(tuple(n.name for n in profile.company_notes))}",
         f"Model: {config.model.slug} at {config.model.base_url} (key: {KEY_SOURCES[checked.key_source]})",
         f"Email: digests to {email.to} from {email.sender} ({email.host}:{email.port})" if email
         else "Email: off (`jobscan email` sets it up)",

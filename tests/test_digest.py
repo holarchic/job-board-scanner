@@ -11,12 +11,12 @@ from jobscan.store import StoredPosting
 from jobscan.tag import TagResult
 
 
-def entry(job_id="1", title="Founding Account Executive", tags=None, open_roles=14, watched=False):
+def entry(job_id="1", title="Founding Account Executive", tags=None, open_roles=14, watched=False, notes=()):
     p = Posting(key=f"ashby:acme:{job_id}", ats="ashby", board="ashby:acme", company="Acme AI", title=title,
                 location="London", url=f"https://jobs.ashbyhq.com/acme/{job_id}", description="")
     return digest.DigestEntry(posting=StoredPosting(posting=p, input_hash="h",
                                                     first_seen="2026-10-12T08:00:00.000000+00:00"), tags=tags or {},
-                              open_roles=open_roles, watched=watched)
+                              open_roles=open_roles, watched=watched, notes=notes)
 
 
 class RenderTest(unittest.TestCase):
@@ -43,6 +43,19 @@ class RenderTest(unittest.TestCase):
         self.assertTrue(text.startswith("# pm — 2026-10-12 · 1 new · 1 left out\n\n" + digest.WATCH_LEGEND))
         self.assertIn("\n- ★ Acme AI — Founding Account Executive · London · language_required: German · ", text)
         self.assertIn("\n## Acme AI — ", text)
+
+    def test_notes_follow_the_link_and_company_lines_one_line_each(self):
+        tags = {"founding": TagResult(value="yes", quote="first", verified=True, warn=False)}
+        noted = digest.DigestEntry(**{**vars(entry(tags=tags, notes=("applied 29 Sep", "talking\n## to Sam"))),
+                                      "website": "https://acme.ai/"})
+        lines = digest.render("pm", "2026-10-12", [noted], carried_over=0).splitlines()
+        self.assertEqual(lines[4:8], ["Company: Acme AI · https://acme.ai/", "Your note: applied 29 Sep",
+                                      "Your note: talking ## to Sam", '- founding: **yes** — "first"'])
+        self.assertNotIn("Your note", digest.render("pm", "2026-10-12", [entry()], carried_over=0))
+        german = {"language_required": TagResult(value="German", quote="German", verified=True, warn=False)}
+        text = digest.render("pm", "2026-10-12", [entry()], carried_over=0, left_out=[digest.LeftOut(
+            entry("2", tags=german, notes=("applied",)), (Requirement("language_required", ("no",)),))])
+        self.assertNotIn("Your note", text)
 
     def test_tag_lines(self):
         tags = {

@@ -135,7 +135,7 @@ class CheckTest(CliHome):
                      "  no require: no tag of yours hides a posting",
                      "  agency postings: left out (include_agencies = true keeps them)",
                      "  tagging per run: at most 500 postings, stopping at $1.00 spent",
-                     "  watchlist: (none)", "OK: `jobscan run` can start."]:
+                     "  watchlist: (none)", "  company notes: (none)", "OK: `jobscan run` can start."]:
             self.assertIn(line, out)
         self.assertNotIn("Warning", out)
         self.assertEqual(self.files(), before)
@@ -147,6 +147,15 @@ class CheckTest(CliHome):
         code, out, _ = self.cli("check")
         self.assertEqual(code, 0)
         self.assertIn("  watchlist: Acme; hooli-eu\n", out)
+
+    def test_company_notes_are_named(self):
+        self.write_install()
+        self.write_profile(PROFILE.replace('tags = ["founding", "location_eligible"]',
+                                           'tags = ["founding", "location_eligible"]\n\n[company_notes]\n'
+                                           '"Acme AI" = "applied"\nhooli-eu = "talking"\n'))
+        code, out, _ = self.cli("check")
+        self.assertEqual(code, 0, out)
+        self.assertIn("  company notes: Acme AI; hooli-eu\n", out)
 
     def test_require_is_shown_and_one_the_tags_cant_answer_is_exit_2(self):
         self.write_install()
