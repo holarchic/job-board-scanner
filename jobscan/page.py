@@ -4,7 +4,7 @@ on its own (`check_step`), the whole draft checked into a profile (`to_profile`)
 pure). Secrets typed into the page are read but never rendered."""
 import html
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from urllib.parse import quote_plus
@@ -232,9 +232,12 @@ def read_step(step: str, fields: Mapping[str, list[str]], form: Form, offers: Of
             changes["custom"] = _rows(fields, one, offers)
             changes["too_many"] = len(changes["custom"]) > MOST_TAGS
             # A row given a built-in's name (refused) keeps its ticks to itself, never adding them to the built-in's.
-            ticked = [*((name, fields.get(f"require-{name}", [])) for name in tag.builtin_names()),
-                      *((r.name, r.require) for r in changes["custom"] if r.name not in tag.builtin_names())]
-            if any(len(t) > TEXT_LIMIT for _, ticks in ticked for t in ticks):
+            builtin = ((name, tuple(dict.fromkeys(t for t in fields.get(f"require-{name}", []) if t)))
+                       for name in tag.builtin_names())
+            ticked = [*(Requirement(name, values) for name, values in builtin if values),
+                      *(Requirement(r.name, r.require) for r in changes["custom"]
+                        if r.require and r.name not in tag.builtin_names())]
+            if any(len(v) > TEXT_LIMIT for r in ticked for v in r.values):
                 long.add("tags")
             changes["require"] = _required(form.require, ticked)
             changes["include_agencies"] = one("include_agencies") == "on"
@@ -276,13 +279,14 @@ def _rows(fields: Mapping[str, list[str]], one, offers: Offers) -> tuple[CustomR
     return tuple(rows)
 
 
-def _required(draft: tuple[Requirement, ...], ticked: list[tuple[str, Sequence[str]]]) -> tuple[Requirement, ...]:
+def _required(draft: tuple[Requirement, ...], ticked: list[Requirement]) -> tuple[Requirement, ...]:
     """The requirements the tags step's ticks make, in the draft's order so an unchanged step changes nothing: each
     the draft holds keeps its place and its answers' order while still ticked, answers newly ticked after them; a tag
-    left with none goes (a removed or renamed row's among them); tags newly given ticks follow, in the page's order."""
+    left with none goes (a removed or renamed row's among them); tags newly given ticks follow, in the page's order.
+    `ticked`: each tag with answers ticked, as posted; a name given twice (refused) merged."""
     posted: dict[str, dict[str, None]] = {}
-    for name, ticks in ticked:
-        posted.setdefault(name, {}).update(dict.fromkeys(t for t in ticks if t))
+    for r in ticked:
+        posted.setdefault(r.tag, {}).update(dict.fromkeys(r.values))
     kept = []
     for r in draft:
         now = posted.pop(r.tag, {})

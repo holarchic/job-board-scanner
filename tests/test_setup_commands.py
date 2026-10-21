@@ -291,7 +291,7 @@ class InitFlagsTest(CliHome):
                          (Requirement("language_required", ("no",)), Requirement("segment", ("enterprise", "smb")),
                           Requirement("location_eligible", ("yes",))))
         self.assertIn('require = { language_required = "no", segment = ["enterprise", "smb"], location_eligible = '
-                      '"yes" }', (self.home / "profiles" / "my-pm.toml").read_text())
+                      '"yes" }', next((self.home / "profiles").glob("*.toml")).read_text())
         _, out, _ = self.cli("check")
         self.assertIn("  only shows postings answering language_required no; segment enterprise or smb; "
                       "location_eligible yes (unknown and ⚠ answers stay)\n", out)

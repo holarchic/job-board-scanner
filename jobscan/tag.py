@@ -161,7 +161,7 @@ def _builtin_tag(name: str, spec: dict) -> BuiltinTag:
     values = spec.get("values", [spec["default"]] if "default" in spec else [])
     return BuiltinTag(name=name, summary=spec["summary"],
                       validated="uk" if validated == "uk" else "yes" if validated is True else "no",
-                      requirable=tuple(v for v in values if v != UNKNOWN), opt_in=bool(spec.get("opt_in")))
+                      requirable=tuple(v for v in values if can_require(v)), opt_in=bool(spec.get("opt_in")))
 
 
 def _builtins() -> dict:
@@ -226,7 +226,7 @@ def check_require(defs: list[TagDef], require: tuple[Requirement, ...]) -> None:
             raise ConfigError(f"require names `{r.tag}`, which the profile doesn't tag")
         for value in r.values:
             if not can_require(value) or (d.values is not None and value not in d.values):
-                choices = f": one of {[v for v in d.values if v != UNKNOWN]}" if d.values else ""
+                choices = f": one of {[v for v in d.values if can_require(v)]}" if d.values else ""
                 raise ConfigError(f"require `{r.tag}`: {value!r} isn't an answer it can require{choices}")
 
 
