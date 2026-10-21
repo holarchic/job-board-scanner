@@ -73,7 +73,8 @@ class ProfileTomlTest(Home):
     def test_a_watchlist_that_isnt_names_or_names_one_twice_is_refused(self):
         for value, message in [('[""]', "`watch` must be a list of strings"), ("[1]", "`watch` must be a list"),
                                ('"Acme"', "`watch` must be a list"),
-                               ('["Acme", "ACME"]', "`watch` lists a company twice")]:
+                               ('["Acme", "ACME"]', "`watch` lists a company twice"),
+                               ('["Acme", " acme "]', "`watch` lists a company twice")]:
             (self.home / "profiles" / "ae.toml").write_text(f"watch = {value}\n" + profile_toml(PROFILE))
             with self.assertRaisesRegex(ConfigError, message, msg=value):
                 load_profile(self.home)

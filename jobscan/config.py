@@ -406,10 +406,10 @@ def _strings(data: dict, key: str, path: Path, required: bool = True) -> tuple[s
 
 
 def _watch(data: dict, path: Path) -> tuple[str, ...]:
-    """`[]` is no watchlist. A name twice, case-folded, is refused: `watch.watched` folds case, so one of them does
-    nothing."""
+    """`[]` is no watchlist. A name twice, as `watch.watched` reads it (stripped, case-folded), is refused: one of
+    them would do nothing."""
     names = _strings(data, "watch", path, required=False)
-    if len({n.casefold() for n in names}) != len(names):
+    if len({n.strip().casefold() for n in names}) != len(names):
         raise ConfigError(f"{path}: `watch` lists a company twice")
     return names
 
