@@ -554,14 +554,16 @@ class ExistingInstallTest(UiTest):
     def test_every_step_done_unchanged_saves_the_same_profile(self):
         self.install(profile='titles = ["AE", "ae", "AE"]\nlocations = ["London"]\neligible_where = "the UK"\n'
                              'tags = ["founding"]\nrequire = { buyer = ["enterprise", "smb"], founding = "yes" }\n'
-                             'include_agencies = true\nmax_tag_per_run = 250\nmax_spend_per_run = 0.555\n\n'
+                             'include_agencies = true\nwatch = ["Acme", "hooli-eu"]\nmax_tag_per_run = 250\n'
+                             'max_spend_per_run = 0.555\n\n'
                              '[custom_tags.buyer]\ndefinition = "Who buys.\\nSay smb or '
                              'enterprise."\nvalues = ["smb", "enterprise"]\n')
         before = load_profile(self.home)
+        self.assertEqual(before.watch, ("Acme", "hooli-eu"))
         # An own tag's before a built-in's, its answers the other way round from the page's: kept as they are.
         self.assertEqual(before.require,
                          (Requirement("buyer", ("enterprise", "smb")), Requirement("founding", ("yes",))))
-        self.open()
+        self.assertIn("Watchlist: 2 companies, kept as your profile file has them", self.open())
         for step in page.EXISTING_STEPS[:-1]:
             self.press(f"goto:{step}")
             self.press("next")

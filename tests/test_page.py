@@ -380,6 +380,11 @@ class RenderTest(unittest.TestCase):
                       page.render(self.view("tags", form=replace(DRAFT, include_agencies=True))))
         self.assertIn("; agency postings left out", page.render(self.view("summary")))
 
+    def test_the_summary_counts_a_watchlist_it_cannot_edit(self):
+        self.assertNotIn("Watchlist", page.render(self.view("summary")))
+        for watch, said in [(("Acme",), "Watchlist: 1 company,"), (("Acme", "hooli-eu"), "Watchlist: 2 companies,")]:
+            self.assertIn(said, page.render(self.view("summary", form=replace(DRAFT, watch=watch))))
+
     def test_each_built_in_tag_offers_the_answers_it_can_hide_by(self):
         form = replace(DRAFT, tags=frozenset({"founding", "language_required"}),
                        custom=(replace(DRAFT.custom[0], require=("no",)), DRAFT.custom[1]),
