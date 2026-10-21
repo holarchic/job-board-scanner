@@ -164,6 +164,7 @@ locations = ["London", "United Kingdom", "UK", "Remote"]
 eligible_where = "the UK, working from London"
 tags = ["founding", "location_eligible", "language_required", "tech_company"]
 require = { location_eligible = "yes", language_required = "no" }   # optional
+watch = ["Monzo", "Wise", "hiive"]   # optional: companies whose postings come first
 max_tag_per_run = 200      # optional, default 500: postings a run tags at most
 max_spend_per_run = 0.50   # optional, default 1.00: dollars at which a run starts no more
 
@@ -174,6 +175,8 @@ definition = "The company sells to businesses, not consumers."
 `locations` is checked against the posting's location field only. `"Remote"` keeps remote jobs that name no place. A remote job that names a country you list, by any of its names, or a region holding one, is kept too, so with `"UK"` you get "Remote - GB" and "Remote - EMEA" but not "Remote - US" or "Remote - EU". `eligible_where` is what `location_eligible` asks the model about.
 
 `require` moves a posting out of the digest's entries when one of those tags definitely answers otherwise: a German-speaking role with `language_required = "no"`. An `unknown`, or an answer shown with ⚠, never hides one. Hidden postings are listed one line each under "Left out" at the end of the digest, with the answer and the link, so a wrong answer costs you a line, not the job. A day with only hidden postings writes no digest; they wait for the next one. A list keeps a posting giving any of its answers: `segment = ["enterprise", "mid_market"]`. On the set-up page, tick the answers under any tag, built-in or your own ("Only show postings where the answer is"); with flags, `jobscan init --require language_required=no`, naming a tag again for each further answer.
+
+`watch` puts the postings of companies you care about at the top of each digest, each heading starting ★. A name matches whole words of the company's name, so `"Monzo"` catches "Monzo Bank"; a board's slug (the `hiive` in `jobs.ashbyhq.com/hiive`) matches that board. Edit it in the profile file; the set-up page keeps it as it is.
 
 **Agency jobs are left out by default.** Every posting is also asked whether a recruitment, staffing or executive-search agency posted it for a client; a quoted yes moves it to "Left out" the same way. To keep them, set `include_agencies = true` in the profile, tick "Include jobs posted by recruitment and staffing agencies" on the page, or pass `jobscan init --include-agencies`. In my own digests about 1 posting in 200 was an agency's.
 

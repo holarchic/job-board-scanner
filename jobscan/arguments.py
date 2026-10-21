@@ -42,6 +42,8 @@ The profile is profiles/NAME.toml: edit it by hand, then `jobscan check`. For ex
                                      # its answers: segment = ["enterprise", "mid_market"]
   include_agencies = true            # optional: keep jobs agencies post for clients; by default jobscan asks
                                      # of every posting and lists those at the digest's end
+  watch = ["Monzo", "hiive"]         # optional: these companies' postings lead the digest, marked ★: whole
+                                     # words of the company's name, or a board's slug
   max_tag_per_run = 200              # optional (default 500): postings a run sends to the model at most
   max_spend_per_run = 0.50           # optional (default 1.00): dollars; once a run's spend reaches it, it starts
                                      # no more. Either way the rest wait for later runs (exit 0)
