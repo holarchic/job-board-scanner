@@ -7,10 +7,10 @@ from pathlib import Path
 from jobscan import schedule, version
 
 DESCRIPTION = """Self-hosted job-board scanner. jobscan finds company job boards itself (Ashby, Greenhouse, Gem,
-Teamtailor, Personio, SmartRecruiters, Rippling, Workday and Oracle sites, from Common Crawl; Workable boards from the
-boards file), keeps the postings whose titles and locations match your search, has a language model answer your tags
-about each one, quoting the posting, and writes a markdown digest of what is new: emailed if you like, daily if you
-schedule it. Everything lives under $JOBSCAN_HOME (default ~/.jobscan)."""
+Teamtailor, Personio, SmartRecruiters, Rippling, Workday and Oracle sites, from Common Crawl; Workable and Lever
+boards from the boards file), keeps the postings whose titles and locations match your search, has a language model
+answer your tags about each one, quoting the posting, and writes a markdown digest of what is new: emailed if you
+like, daily if you schedule it. Everything lives under $JOBSCAN_HOME (default ~/.jobscan)."""
 SET_UP = """Set up, in order (a person in a terminal, or an agent by flags):
   1. jobscan init                  the search and the OpenRouter key (openrouter.ai/keys); a person can use
                                    `jobscan ui` instead, a local page that does steps 1, 2, 4 and 7
@@ -173,17 +173,19 @@ def _email(commands) -> None:
 def _boards(commands) -> None:
     command = _command(
         commands, "boards", "list the boards file's boards, or add board URLs to it",
-        "Discovery finds most boards by itself. Companies it misses (a board Common Crawl never captured, or one "
-        "embedded in a company's own careers page) go in the boards file, read by every run beside the discovered "
-        "boards: config.toml's boards_file, else $JOBSCAN_HOME/boards.json. With no subcommand, list it.",
+        "Discovery finds most boards by itself. Companies it misses (a board Common Crawl never captured, one "
+        "embedded in a company's own careers page, and every Workable and Lever board) go in the boards file, read "
+        "by every run beside the discovered boards: config.toml's boards_file, else $JOBSCAN_HOME/boards.json. With "
+        "no subcommand, list it.",
         ["jobscan boards", "jobscan boards add https://job-boards.greenhouse.io/acme"])
     add = _command(
         command.add_subparsers(dest="boards_command"), "add", "add board URLs to the boards file",
-        "Add each board by its careers-page or board URL (Ashby, Greenhouse, Workable, Gem, Teamtailor, Personio, "
-        "SmartRecruiters, Rippling, Workday, Oracle). Every URL is checked first: one no adapter recognises adds "
-        "nothing (exit 2). A board the file lists already is skipped. Without --company, the run looks the "
-        "company's name up. No request is made: the next run reads it.",
+        "Add each board by its careers-page or board URL (Ashby, Greenhouse, Workable, Lever on jobs.lever.co or "
+        "jobs.eu.lever.co, Gem, Teamtailor, Personio, SmartRecruiters, Rippling, Workday, Oracle). Every URL is checked"
+        " first: one no adapter recognises adds nothing (exit 2). A board the file lists already is skipped. Without "
+        "--company, the run looks the company's name up. No request is made: the next run reads it.",
         ["jobscan boards add https://job-boards.greenhouse.io/acme https://apply.workable.com/beta",
+         "jobscan boards add https://jobs.lever.co/acme https://jobs.eu.lever.co/beta",
          "jobscan boards add https://acme.wd3.myworkdayjobs.com/Careers --company Acme"])
     add.add_argument("urls", nargs="+", metavar="URL", help="a board or careers-page URL")
     add.add_argument("--company", help="the company's name for the digest (one URL only)")

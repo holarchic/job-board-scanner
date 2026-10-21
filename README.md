@@ -3,7 +3,7 @@
 [![CI](https://github.com/holarchic/job-board-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/holarchic/job-board-scanner/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/holarchic/job-board-scanner)](LICENSE)
 
-Self-hosted scanner for tech roles on Ashby, Greenhouse, Gem, Workable, Teamtailor, Personio: LLM-tagged, emailed daily.
+Self-hosted scanner for tech roles on Ashby, Greenhouse, Gem, Workable, Lever, Teamtailor, Personio: LLM-tagged, emailed daily.
 
 > **Status:** running daily on my own search since October 2026. Pre-1.0: the config, the database and the digest format can still change.
 
@@ -24,7 +24,7 @@ It finds the job boards itself, reads them directly and has a language model tag
 ## What it does
 
 - **Finds boards** in the three newest [Common Crawl](https://commoncrawl.org) crawls: about 4,000 on Ashby, 4,800 on Greenhouse, 1,100 on Gem, 1,000 on Teamtailor, 2,800 on Personio, 1,250 on SmartRecruiters, 1,700 on Rippling, 4,200 Workday sites and 1,500 Oracle Recruiting Cloud sites. About 8,000 of the Ashby and Greenhouse ones answer. Of my hand-built list it finds 111 of 114 Ashby boards, 33 of 37 Greenhouse ones and all 4 on Gem.
-- **Reads Workable boards you list** in a boards file. Discovery would find about 5,300, but Workable rate-limits a full daily sweep, so it doesn't attempt one.
+- **Reads Workable and Lever boards you list** in a boards file. Discovery would find about 5,300 Workable boards, but Workable rate-limits a full daily sweep, so it doesn't attempt one; Common Crawl barely holds Lever's. Lever boards on jobs.lever.co and its EU twin, jobs.eu.lever.co, both work.
 - **Filters** postings by your titles and locations, then **tags** each match with the model. Answers that need evidence quote the posting; a missing or unmatched quote shows ⚠. A quote that's there doesn't prove the answer right.
 - **Writes a markdown digest** of what's new, and can email it and raise a Mac notification.
 
@@ -47,7 +47,7 @@ It works best where a few titles narrow the field and the posting answers the re
 
 **Limits:**
 
-- No Lever or job sites. Teamtailor and Personio boards on a company's own domain aren't found either, nor are Workday sites outside myworkdayjobs.com or Oracle sites outside oraclecloud.com. Oracle sites with more than 10,000 jobs (Kroger, Marriott, AutoZone and a few others) can't be read. Companies that embed Greenhouse in their own careers page, such as Fivetran and Wiz, need the boards file.
+- No job sites, and no Lever board you haven't listed. Teamtailor and Personio boards on a company's own domain aren't found either, nor are Workday sites outside myworkdayjobs.com or Oracle sites outside oraclecloud.com. Oracle sites with more than 10,000 jobs (Kroger, Marriott, AutoZone and a few others) can't be read. Companies that embed Greenhouse in their own careers page, such as Fivetran and Wiz, need the boards file.
 - Tags label matches; only the ones you `require` hide any, and a hidden posting is still listed in one line. Every match is tagged in the end, so hiding saves nothing.
 - Tests cover AE and PM postings only, with just 8 founding roles. In the five-tag test, 8 of 11 `founding: yes` answers were right.
 - No funding stage or company age; the open-role count is a rough read on size.
@@ -179,7 +179,7 @@ definition = "The company sells to businesses, not consumers."
 
 Your own tags run on every matching posting. They needn't be listed in `tags`. Say what each answer means; `jobscan tags NAME` shows a built-in one's definition as an example. `values` defaults to yes, no, unknown; `multi = true` answers a list; `default` is the answer when the posting is silent.
 
-To add companies discovery misses, or your Workable boards, run `jobscan boards add <url>`. It writes `~/.jobscan/boards.json`, which every run reads. To keep the file elsewhere, put `boards_file` above `[model]` in `config.toml`:
+To add companies discovery misses, or your Workable and Lever boards, run `jobscan boards add <url>`. It writes `~/.jobscan/boards.json`, which every run reads. To keep the file elsewhere, put `boards_file` above `[model]` in `config.toml`:
 
 ```toml
 boards_file = "boards.json"          # relative to ~/.jobscan, or absolute
