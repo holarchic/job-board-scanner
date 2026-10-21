@@ -45,7 +45,7 @@ class BoardTest(unittest.TestCase):
 
     def test_other_urls_are_not_greenhouse(self):
         self.assertEqual(fetch.board_for("", "https://jobs.ashbyhq.com/acme").ats, "ashby")
-        for url in ["https://jobs.lever.co/acme", "https://job-boards.greenhouse.io/",
+        for url in ["https://jobs.jobvite.com/acme", "https://job-boards.greenhouse.io/",
                     "https://boards.greenhouse.io/embed/job_board", "https://job-boards.greenhouse.io/a%3Ab",
                     "https://job-boards.greenhouse.io/a%2Fb", "https://job-boards.greenhouse.io/a%20b",
                     "https://www.example.com/acme", "ftp://job-boards.greenhouse.io/acme", "not a url"]:

@@ -60,7 +60,7 @@ class AshbyBoardTest(unittest.TestCase):
                 {"company": "Acme", "board_url": "https://jobs.ashbyhq.com/acme"},
                 {"company": "Acme again", "board_url": "https://api.ashbyhq.com/posting-api/job-board/acme"},
                 {"company": "ACME", "board_url": "https://jobs.ashbyhq.com/ACME"},
-                {"company": "Other", "board_url": "https://jobs.lever.co/other"},
+                {"company": "Other", "board_url": "https://jobs.jobvite.com/other"},
                 {"company": None, "board_url": 7},
             ]}))
             boards, skipped = fetch.load_boards(path)
@@ -107,7 +107,11 @@ class AshbyBoardTest(unittest.TestCase):
                          ("https://jobs.gem.com/acme", "gem"),
                          ("https://api.gem.com/job_board/v0/acme/job_posts/", "gem"),
                          ("https://jobs.gem.com/posting-api/job-board/acme", "ashby"),
-                         ("https://job-boards.greenhouse.io/job_board/v0/acme", "gem")]:
+                         ("https://job-boards.greenhouse.io/job_board/v0/acme", "gem"),
+                         ("https://jobs.lever.co/acme", "lever"), ("https://jobs.eu.lever.co/acme/1/apply", "lever"),
+                         ("https://api.eu.lever.co/v0/postings/acme", "lever"),
+                         ("http://127.0.0.1:8000/v0/postings/acme", "lever"),
+                         ("https://jobs.lever.co/posting-api/job-board/acme", "ashby")]:
             self.assertEqual(fetch.board_for("", url).ats, ats, url)
 
     def test_load_boards_rejects_lone_surrogates(self):

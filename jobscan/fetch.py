@@ -13,13 +13,25 @@ from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 
-from jobscan import ashby, gem, greenhouse, oracle, personio, rippling, smartrecruiters, teamtailor, workable, workday
+from jobscan import (
+    ashby,
+    gem,
+    greenhouse,
+    lever,
+    oracle,
+    personio,
+    rippling,
+    smartrecruiters,
+    teamtailor,
+    workable,
+    workday,
+)
 from jobscan.config import ConfigError
 from jobscan.connections import Connections
 from jobscan.payload import encodable
 from jobscan.records import Board, BoardError, Company, Places, Posting
 
-ADAPTERS = {ashby.ATS: ashby, greenhouse.ATS: greenhouse, workable.ATS: workable, gem.ATS: gem,
+ADAPTERS = {ashby.ATS: ashby, greenhouse.ATS: greenhouse, workable.ATS: workable, lever.ATS: lever, gem.ATS: gem,
             teamtailor.ATS: teamtailor, personio.ATS: personio, smartrecruiters.ATS: smartrecruiters,
             rippling.ATS: rippling, workday.ATS: workday, oracle.ATS: oracle}
 TIMEOUT = 20

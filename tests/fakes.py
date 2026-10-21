@@ -223,6 +223,17 @@ def workable_job(shortcode, title, city="London", country="United Kingdom", desc
             **extra}
 
 
+def lever_job(job_id, title, location="London", all_locations=None, workplace="onsite", **extra):
+    """A Lever postings-API job as `?mode=json` returns it: HTML description, lists under headings, closing text."""
+    return {"id": job_id, "text": title, "hostedUrl": f"https://jobs.lever.co/acme/{job_id}",
+            "applyUrl": f"https://jobs.lever.co/acme/{job_id}/apply", "workplaceType": workplace, "country": "GB",
+            "categories": {"commitment": "Full-time", "team": "Sales", "location": location,
+                           "allLocations": [location] if all_locations is None else all_locations},
+            "description": f"<div>{title} role. We sell software.</div>",
+            "lists": [{"text": "What you'll do ", "content": "<li>Close deals</li><li>Open doors</li>"}],
+            "additional": "<div>We are an equal opportunity employer.</div>", "createdAt": 1791566108174, **extra}
+
+
 def gem_job(job_id, title, location="London", offices=(), content_plain=None, **extra):
     """A Gem job board API job: plain-text and HTML descriptions, a location and offices with their own."""
     text = content_plain if content_plain is not None else f"{title} role. We sell software."

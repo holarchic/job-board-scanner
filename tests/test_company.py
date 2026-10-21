@@ -2,7 +2,19 @@
 import json
 import unittest
 
-from jobscan import ashby, fetch, gem, greenhouse, payload, personio, rippling, smartrecruiters, teamtailor, workable
+from jobscan import (
+    ashby,
+    fetch,
+    gem,
+    greenhouse,
+    lever,
+    payload,
+    personio,
+    rippling,
+    smartrecruiters,
+    teamtailor,
+    workable,
+)
 from jobscan.records import BoardError, Company
 
 
@@ -87,6 +99,19 @@ class AdapterTest(unittest.TestCase):
         company, asked = look_up(greenhouse, "https://job-boards.greenhouse.io/acme",
                                  {"https://boards-api.greenhouse.io/v1/boards/acme": {"name": "Acme ", "content": ""}})
         self.assertEqual((company, asked), (Company("Acme", None), ["https://boards-api.greenhouse.io/v1/boards/acme"]))
+
+    def test_lever_reads_the_title_of_the_boards_own_instance(self):
+        for url, page in [("https://jobs.lever.co/acme", "https://jobs.lever.co/acme"),
+                          ("https://jobs.eu.lever.co/Beta/1/apply", "https://jobs.eu.lever.co/Beta"),
+                          ("https://api.eu.lever.co/v0/postings/Beta", "https://jobs.eu.lever.co/Beta")]:
+            company, asked = look_up(lever, url, {page: html_page(" Acme &amp; Co ")})
+            self.assertEqual((company, asked), (Company("Acme & Co", None), [page]), url)
+
+    def test_lever_on_another_host_or_an_empty_title_names_nobody(self):
+        with self.assertRaises(BoardError):
+            look_up(lever, "http://127.0.0.1:8000/v0/postings/acme", {})
+        with self.assertRaises(BoardError):
+            look_up(lever, "https://jobs.lever.co/acme", {"https://jobs.lever.co/acme": html_page(" ")})
 
     def test_workable_reads_the_account_without_its_details(self):
         url = "https://apply.workable.com/api/v1/widget/accounts/Acme"

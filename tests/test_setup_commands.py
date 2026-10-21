@@ -491,6 +491,16 @@ class BoardsTest(CliHome):
         self.assertEqual(json.loads(self.file.read_text())["companies"],
                          [{"company": "Beta AI", "board_url": ASHBY}, {"board_url": GREENHOUSE}])
 
+    def test_lever_boards_of_either_instance_are_added_and_listed(self):
+        us, eu = "https://jobs.lever.co/acme", "https://jobs.eu.lever.co/beta/259824ae/apply"
+        code, out, _ = self.cli("boards", "add", us, eu)
+        self.assertEqual(code, 0)
+        self.assertIn("added lever:acme", out)
+        self.assertIn("added lever:beta", out)
+        out = self.cli("boards")[1]
+        self.assertIn(f"{us}  [Lever]", out)
+        self.assertIn(f"{eu}  [Lever]", out)
+
     def test_the_configured_file_keeps_what_else_it_holds(self):
         other = self.home / "mine.json"
         other.write_text(json.dumps({"note": "mine", "companies": [{"company": "X", "board_url": "https://x.example"}]}))

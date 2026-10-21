@@ -27,6 +27,7 @@ from jobscan import (
     gem,
     greenhouse,
     init,
+    lever,
     notify,
     oracle,
     personio,
@@ -53,6 +54,7 @@ from tests.fakes import (
     crawl_list,
     gem_job,
     greenhouse_job,
+    lever_job,
     model_reply,
     oracle_detail,
     oracle_job,
@@ -429,6 +431,40 @@ class WorkableGemRunTest(RunFixture):
         self.assertEqual(text.count("· 2 open roles"), 2)  # one per new board: jobs, not Workable's entries
         self.assertEqual(self.run_cli()[1][1:], ["0", "-"])
 
+
+    def test_lever_boards_are_read_from_their_own_instance_and_a_broken_one_fails_alone(self):
+        for name, value in [("API", f"{self.ats.url}/{{host}}/v0/postings/"),
+                            ("BOARD_PAGE", f"{self.ats.url}/page/lever/{{host}}/{{slug}}")]:
+            patcher = mock.patch.object(lever, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        (self.home / "listed.json").write_text(json.dumps({"companies": [
+            {"company": "Acme", "board_url": f"{self.ats.url}/posting-api/job-board/acme"},
+            {"board_url": "https://jobs.lever.co/initech"},
+            {"board_url": "https://jobs.eu.lever.co/hooli/259824ae/apply"},
+            {"company": "Broken", "board_url": "https://jobs.lever.co/broken"},
+        ]}))
+        self.ats.routes["/api.lever.co/v0/postings/initech?mode=json"] = (200, [
+            lever_job("l1", "Account Executive", all_locations=["London", "Manchester"]), lever_job("l2", "Engineer")])
+        self.ats.routes["/api.eu.lever.co/v0/postings/hooli?mode=json"] = (200, [
+            lever_job("l3", "Account Executive", workplace="remote")])
+        self.ats.routes["/api.lever.co/v0/postings/broken?mode=json"] = (200, [
+            {**lever_job("l4", "Account Executive"), "lists": "not a list"}])
+        self.ats.routes["/page/lever/jobs.lever.co/initech"] = (200, "<html><title>Initech</title></html>")
+        self.ats.routes["/page/lever/jobs.eu.lever.co/hooli"] = (200, "<html><title>Hooli Europe</title></html>")
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "4"))
+        text = Path(path).read_text()
+        self.assertIn("## Initech — Account Executive · London / Manchester\n"
+                      "https://jobs.lever.co/acme/l1 · Lever · first seen", text)
+        self.assertIn("## Hooli Europe — Account Executive · London / Remote\n"
+                      "https://jobs.lever.co/acme/l3 · Lever · first seen", text)
+        self.assertIn("## Acme — Account Executive · London", text)  # the other boards still deliver
+        self.assertEqual({path for _, path, _ in self.ats.requests if "/v0/postings/" in path},
+                         {"/api.lever.co/v0/postings/initech?mode=json", "/api.eu.lever.co/v0/postings/hooli?mode=json",
+                          "/api.lever.co/v0/postings/broken?mode=json"})  # each board on its own instance
+        self.assertIn("board_failed company='Broken' board=lever:broken reason='job 0: `lists` is not a list of "
+                      "objects'", (self.home / "runs.log").read_text())
 
     def test_a_sandbox_board_already_discovered_closes_its_postings_without_a_request(self):
         board = Board("gem", "acme-sandbox", "acme-sandbox", f"{self.ats.url}/job_board/v0/acme-sandbox/job_posts/")
