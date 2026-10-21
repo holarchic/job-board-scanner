@@ -18,7 +18,7 @@ every command, flag and help text (`parser()`; `--version` looks the version up 
 
 ### `jobscan/version.py`
 
-`line()`: what `--version` prints and `run_start` logs, `0.4.0 (5aef4aa)`. A checkout (the package's parent holds a `pyproject.toml` naming jobscan) answers from that manifest and `git rev-parse` of HEAD, never a stale `jobscan.egg-info`; an install from its distribution metadata and the commit PEP 610's `direct_url.json` recorded (a git install); a zip or wheel install from the version alone
+`line()`: what `--version` prints and `run_start` logs, `0.4.0 (5aef4aa)`. A checkout (the package's parent holds a `pyproject.toml` naming jobscan) answers from that manifest and `git rev-parse` of HEAD when the repository's top is the checkout itself (a copy inside another repository has no commit), never a stale `jobscan.egg-info`; an install from its distribution metadata and the commit PEP 610's `direct_url.json` recorded (a git install); a zip or wheel install from the version alone
 
 ### `jobscan/cli.py`
 
@@ -90,7 +90,7 @@ Workable adapter, boards file only (`CRAWL_HOSTS` empty: a full sweep draws HTTP
 
 ### `jobscan/lever.py`
 
-Lever adapter, boards file only (`CRAWL_HOSTS` empty: Common Crawl holds no readable captures of jobs.lever.co): `INSTANCES` maps each board host to its API host (jobs.lever.co → api.lever.co, jobs.eu.lever.co → api.eu.lever.co: an EU board 404s on the US host); `API` and `BOARD_PAGE` are host templates composed at call time; `api_board` (`/v0/postings/<slug>`, any host) and `page_board` (either board host; job and apply links too) → `Board` (case kept: `Spotify` 404s); the unpaged `?mode=json` list → postings: location = `allLocations` each once, else `location`, plus `Remote` for a remote `workplaceType`; description = `description` (opening and body), each list's heading and items, then `additional`; every nested field checked, so a malformed job fails its board, and duplicate ids too; `company` = the title of the board page on the instance whose API the board reads (an API URL on another host has none)
+Lever adapter, boards file only (`CRAWL_HOSTS` empty: Common Crawl holds no readable captures of jobs.lever.co): `INSTANCES` maps each board host to its API host (jobs.lever.co → api.lever.co, jobs.eu.lever.co → api.eu.lever.co: an EU board 404s on the US host); `API` and `BOARD_PAGE` are host templates composed at call time; `api_board` (`/v0/postings/<slug>`; an instance's API host written the one way `API` does, so `company` finds its instance; any other host kept) and `page_board` (either board host; job and apply links too) → `Board` (case kept: `Spotify` 404s); the unpaged `?mode=json` list → postings: location = `allLocations` each once, else `location`, plus `Remote` for a remote `workplaceType`; description = `description` (opening and body), each list's heading and items, then `additional`; every nested field checked, so a malformed job fails its board, and duplicate ids too; `company` = the title of the board page on the instance whose API the board reads (an API URL on another host has none)
 
 ### `jobscan/gem.py`
 
