@@ -192,7 +192,8 @@ class RunTest(RunFixture):
 
     def test_the_run_times_its_steps_before_fetching(self):
         self.run_cli()
-        self.assert_logged_in_order(r"run_start profile=ae setup_seconds=\d+\.\d$",
+        self.assert_logged_in_order(r"run_start profile=ae version='\d+\.\d+\.\d+( \([0-9a-f]{7}\))?' "
+                                    r"setup_seconds=\d+\.\d$",
                                     r"prefetch db_open_seconds=\d+\.\d discovery_check_seconds=\d+\.\d$",
                                     r"fetch_start boards=")
 

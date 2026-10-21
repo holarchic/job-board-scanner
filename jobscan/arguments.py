@@ -4,7 +4,7 @@ import argparse
 from datetime import time
 from pathlib import Path
 
-from jobscan import schedule
+from jobscan import schedule, version
 
 DESCRIPTION = """Self-hosted job-board scanner. jobscan finds company job boards itself (Ashby, Greenhouse, Gem,
 Teamtailor, Personio, SmartRecruiters, Rippling, Workday and Oracle sites, from Common Crawl; Workable boards from the
@@ -63,10 +63,22 @@ def parser() -> argparse.ArgumentParser:
     """The commands in the order set-up uses them."""
     root = argparse.ArgumentParser(prog="jobscan", formatter_class=argparse.RawDescriptionHelpFormatter,
                                    description=DESCRIPTION, epilog=SET_UP)
+    root.add_argument("--version", action=_Version, help="print the version and the commit installed, and exit")
     commands = root.add_subparsers(dest="command", required=True)
     for add in (_init, _email, _boards, _check, _run, _preview, _schedule, _ui, _titles, _tags, _discover, _eval):
         add(commands)
     return root
+
+
+class _Version(argparse.Action):
+    """Looks the version up only when asked: from a checkout that runs git."""
+
+    def __init__(self, option_strings, dest, **kwargs):
+        super().__init__(option_strings, dest, nargs=0, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(f"jobscan {version.line()}")
+        parser.exit()
 
 
 def port(text: str) -> int:

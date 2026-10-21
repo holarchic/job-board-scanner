@@ -24,6 +24,7 @@ from jobscan import (
     tag,
     titles,
     ui,
+    version,
 )
 from jobscan.config import (
     EMAIL_FILE,
@@ -87,7 +88,8 @@ def _run(home: Path, notifying: bool) -> int:
         defs = tag.profile_definitions(profile)
         _setup_logging(home)
         with run_lock(home):
-            log.info("run_start profile=%s setup_seconds=%.1f", profile.name, monotonic() - entered)
+            log.info("run_start profile=%s version=%r setup_seconds=%.1f", profile.name, version.line(),
+                     monotonic() - entered)
             outcome = scan.scan(config, profile, defs)
     except ConfigError as e:
         return _refused(str(e), notifying)
