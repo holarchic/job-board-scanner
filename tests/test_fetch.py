@@ -143,7 +143,7 @@ class FetchBoardTest(unittest.TestCase):
         return Board(ats="ashby", slug=slug, company="Acme", api_url=f"{self.server.url}/posting-api/job-board/{slug}")
 
     def serve(self, slug, status, body):
-        self.server.routes[f"/posting-api/job-board/{slug}"] = (status, body)
+        self.server.routes[f"/posting-api/job-board/{slug}?includeCompensation=true"] = (status, body)
 
     def fetch_one(self, slug="acme"):
         fetched, failed = split([self.board(slug)])
@@ -157,6 +157,20 @@ class FetchBoardTest(unittest.TestCase):
         (posting,) = self.fetch_one()
         self.assertEqual((posting.key, posting.ats, posting.board), ("ashby:acme:1", "ashby", "ashby:acme"))
         self.assertEqual(posting.location, "London / Remote - UK")
+
+    def test_pay_is_ashbys_own_summary_and_never_fails_the_board(self):
+        def paid(job_id, compensation):
+            return {**ashby_job(job_id, "AE"), **({} if compensation is ... else {"compensation": compensation})}
+
+        summary = "£85K \u2013 £120K \u2022 Offers Equity"
+        self.serve("acme", 200, {"jobs": [
+            paid("1", {"compensationTierSummary": summary, "compensationTiers": []}),
+            paid("2", {"compensationTierSummary": " £1\n £2\u200b "}), paid("3", {"compensationTierSummary": None}),
+            paid("4", ...), paid("5", None), paid("6", ["£1"]), paid("7", {"compensationTierSummary": 85000}),
+            paid("8", {"compensationTierSummary": "\ud800"})]})
+        self.assertEqual([p.salary for p in self.fetch_one()], [summary, "£1 £2", "", "", "", "", "", ""])
+        self.assertEqual([path for _, path, _ in self.server.requests],
+                         ["/posting-api/job-board/acme?includeCompensation=true"])
 
     def test_html_only_description_keeps_block_breaks_and_entities(self):
         job = ashby_job("1", "AE", description="")
@@ -224,7 +238,7 @@ class FetchBoardTest(unittest.TestCase):
         for statuses, logged in [([429, 200], 1), ([429, 429, 429], 3), ([503, 503, 429], 1)]:
             with self.subTest(statuses=statuses):
                 answers = iter(statuses)
-                self.server.routes["/posting-api/job-board/acme"] = (
+                self.server.routes["/posting-api/job-board/acme?includeCompensation=true"] = (
                     200, lambda _, answers=answers: (s := next(answers), {"jobs": []} if s == 200 else {}))
                 with self.assertLogs("jobscan", "INFO") as logs:
                     split([self.board()])
@@ -313,7 +327,7 @@ class FetchBoardTest(unittest.TestCase):
         postings = self.fetch_one()
         self.assertEqual([p.title for p in postings], ["Account Executive"])
         connections = self.enterContext(Connections(fetch.TIMEOUT))
-        fetch._get(connections, board, f"{self.server.url}/posting-api/job-board/acme", b"{}",
+        fetch._get(connections, board, f"{self.server.url}/posting-api/job-board/acme?includeCompensation=true", b"{}",
                    pauses=fetch.RETRY_PAUSES)
         self.assertEqual(self.server.accept_encodings, ["gzip", "gzip"])
 
@@ -385,7 +399,8 @@ class EndOfFetchReadTest(unittest.TestCase):
         self.server.routes[path] = (200, lambda _: a if isinstance(a := next(answers), tuple) else (200, a))
 
     def test_a_board_cut_short_on_every_try_is_read_at_the_end(self):
-        self.answer("/posting-api/job-board/acme", b"{", b"{", b"{", (200, {"jobs": [ashby_job("1", "AE")]}))
+        self.answer("/posting-api/job-board/acme?includeCompensation=true",
+                    b"{", b"{", b"{", (200, {"jobs": [ashby_job("1", "AE")]}))
         with self.assertLogs("jobscan", "INFO") as logs:
             (fetched,), failed = split([self.board()])
         self.assertEqual(([p.title for p in fetched.postings], failed, len(self.server.requests)), (["AE"], [], 4))
@@ -393,24 +408,26 @@ class EndOfFetchReadTest(unittest.TestCase):
         self.assertIn("fetch_retry_done read=1", "\n".join(logs.output))
 
     def test_a_board_still_cut_short_fails_after_one_more_request(self):
-        self.answer("/posting-api/job-board/acme", *[b"{"] * 4)
+        self.answer("/posting-api/job-board/acme?includeCompensation=true", *[b"{"] * 4)
         _, (failure,) = split([self.board()])
         self.assertEqual((failure.reason, failure.network, len(self.server.requests)),
                          ("network: IncompleteRead", True, 4))
 
     def test_a_board_gone_by_the_end_reports_its_404(self):
-        self.answer("/posting-api/job-board/acme", b"{", b"{", b"{", (404, {"error": "not found"}))
+        self.answer("/posting-api/job-board/acme?includeCompensation=true",
+                    b"{", b"{", b"{", (404, {"error": "not found"}))
         _, (failure,) = split([self.board()])
         self.assertEqual((failure.http_status, failure.network), (404, False))
 
     def test_answers_that_are_not_the_network_are_not_read_again(self):
-        self.server.routes["/posting-api/job-board/busy"] = (503, {"error": "busy"})
-        self.server.routes["/posting-api/job-board/bad"] = (200, "{not json")
+        self.server.routes["/posting-api/job-board/busy?includeCompensation=true"] = (503, {"error": "busy"})
+        self.server.routes["/posting-api/job-board/bad?includeCompensation=true"] = (200, "{not json")
         with self.assertLogs("jobscan", "INFO") as logs:
             _, failed = split([self.board("busy"), self.board("bad")])
         self.assertEqual({f.board.slug: f.network for f in failed}, {"busy": False, "bad": False})
         self.assertEqual(Counter(path for _, path, _ in self.server.requests),
-                         {"/posting-api/job-board/busy": 3, "/posting-api/job-board/bad": 1})
+                         {"/posting-api/job-board/busy?includeCompensation=true": 3,
+                          "/posting-api/job-board/bad?includeCompensation=true": 1})
         self.assertNotIn("fetch_retry", "\n".join(logs.output))
 
     def test_a_paged_board_cut_on_a_later_page_is_read_whole_at_the_end(self):
@@ -484,7 +501,8 @@ class KeptConnectionTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def ashby(self, slug):
-        self.server.routes[f"/posting-api/job-board/{slug}"] = (200, {"jobs": [ashby_job(slug, f"AE {slug}")]})
+        self.server.routes[f"/posting-api/job-board/{slug}?includeCompensation=true"] = (
+            200, {"jobs": [ashby_job(slug, f"AE {slug}")]})
         return Board(ats="ashby", slug=slug, company="x", api_url=f"{self.server.url}/posting-api/job-board/{slug}")
 
     def test_a_cut_answer_is_tried_again_on_a_new_connection(self):
@@ -496,7 +514,8 @@ class KeptConnectionTest(unittest.TestCase):
             with self.subTest(outcome):
                 before = len(self.server.requests)
                 answers = iter(sent)
-                self.server.routes["/posting-api/job-board/acme"] = (200, lambda _, a=answers: (200, next(a)))
+                self.server.routes["/posting-api/job-board/acme?includeCompensation=true"] = (
+                    200, lambda _, a=answers: (200, next(a)))
                 fetched, failed = split([board])
                 self.assertEqual([p.title for f in fetched for p in f.postings] or [f.reason for f in failed],
                                  [outcome])
@@ -510,7 +529,7 @@ class KeptConnectionTest(unittest.TestCase):
         self.assertEqual(sorted((f.board.slug, [p.title for p in f.postings]) for f in fetched),
                          [(b.slug, [f"AE {b.slug}"]) for b in boards])
         self.assertEqual(sorted(path for _, path, _ in self.server.requests),
-                         sorted(f"/posting-api/job-board/{b.slug}" for b in boards))
+                         sorted(f"/posting-api/job-board/{b.slug}?includeCompensation=true" for b in boards))
         self.assertLessEqual(len(set(self.server.client_ports)), fetch.WORKERS)
 
     def test_descriptions_are_read_over_at_most_a_connection_per_worker(self):

@@ -76,6 +76,7 @@ def render(profile: str, date: str, entries: list[DigestEntry], carried_over: in
             f"## {_star(entry)}{p.company} — {p.title} · {p.location or 'location not given'}",
             f"{p.url} · {ADAPTERS[p.ats].DISPLAY_NAME} · first seen {entry.posting.first_seen[:10]} · "
             f"{entry.open_roles} open role{'' if entry.open_roles == 1 else 's'}",
+            *([f"Pay: {p.salary}"] if p.salary else []),
             *([f"Company: {p.company} · {entry.website}"] if entry.website else []),
             *(one_line(f"Your note: {note}") for note in entry.notes),
             *(_tag_line(name + (f" {UNVALIDATED}" if name in unvalidated else ""), result)

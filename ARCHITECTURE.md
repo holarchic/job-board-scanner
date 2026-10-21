@@ -78,7 +78,7 @@ shared by adapters: `http_url` (urlsplit + scheme/host/port checks), `board_slug
 
 ### `jobscan/ashby.py`
 
-Ashby adapter: `api_board` (posting-API URL, any host) and `page_board` (jobs.ashbyhq.com) → `Board` (slug case-folded); payload → postings, all-or-nothing per board; `CRAWL_HOSTS` for discovery; `company` from the board page's `window.__appData` (name and public website; the page URL keeps the slug's %-escapes, as the API URL does)
+Ashby adapter: `api_board` (posting-API URL, any host) and `page_board` (jobs.ashbyhq.com) → `Board` (slug case-folded); payload → postings, all-or-nothing per board; `CRAWL_HOSTS` for discovery; `company` from the board page's `window.__appData` (name and public website; the page URL keeps the slug's %-escapes, as the API URL does); every read asks `?includeCompensation=true` (`COMPENSATION`, added at read time so stored and discovered API URLs stay as they are) and keeps `compensation.compensationTierSummary` as the posting's `salary` through `one_line`, anything else (absent, null, reshaped) no pay, never a failed board
 
 ### `jobscan/greenhouse.py`
 
@@ -162,7 +162,7 @@ the built-in tag definitions (data), and the agency check (`check = true`: asked
 
 ### `jobscan/digest.py`
 
-pure render (entries with `DigestEntry.watched` first, each group in its given order, headed `## ★ …`, ` · N watched` in the header and the ★ legend whenever an entry or left-out line is watched, a watched left-out line `- ★ …`; each of an entry's `notes` a `Your note:` line after the link and `Company:` lines, never on left-out lines; ⓘ on unvalidated tags with a one-line legend, keyed on entries only; `## Left out (N)` after the entries, one `one_line` row each with the failing answers and the URL, and ` · N left out` in the header, after ` · K waiting for later runs` when the run's limits held matches back; `quiet` tags (asked, not named by the profile: the agency check) never on entries or in the legend test; open-role count per entry; a `Company: <name> · <website>` line when the ATS gave a website; with `unread`, a line under the header saying how many boards couldn't be read); publish by hard link (never overwrites, `-2`/`-3` suffixes)
+pure render (entries with `DigestEntry.watched` first, each group in its given order, headed `## ★ …`, ` · N watched` in the header and the ★ legend whenever an entry or left-out line is watched, a watched left-out line `- ★ …`; a `Pay:` line right after the link line when the posting has a `salary`; each of an entry's `notes` a `Your note:` line after the link and `Company:` lines, never on left-out lines; ⓘ on unvalidated tags with a one-line legend, keyed on entries only; `## Left out (N)` after the entries, one `one_line` row each with the failing answers and the URL, and ` · N left out` in the header, after ` · K waiting for later runs` when the run's limits held matches back; `quiet` tags (asked, not named by the profile: the agency check) never on entries or in the legend test; open-role count per entry; a `Company: <name> · <website>` line when the ATS gave a website; with `unread`, a line under the header saying how many boards couldn't be read); publish by hard link (never overwrites, `-2`/`-3` suffixes)
 
 ### `jobscan/mail.py`
 

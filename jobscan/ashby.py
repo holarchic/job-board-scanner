@@ -5,7 +5,7 @@ never closes postings that are still live."""
 import json
 import re
 
-from jobscan.payload import html_to_text, http_url, named_company, text_field
+from jobscan.payload import encodable, html_to_text, http_url, named_company, one_line, text_field
 from jobscan.records import Board, BoardError, Company, Get, Places, Posting
 
 ATS = "ashby"
@@ -15,6 +15,7 @@ describe = None  # the list carries each job's description
 CRAWL_HOSTS = ("jobs.ashbyhq.com",)
 API = "https://api.ashbyhq.com/posting-api/job-board/"
 BOARD_PAGE = "https://jobs.ashbyhq.com/{slug}"
+COMPENSATION = "?includeCompensation=true"  # asked on every read, so stored and discovered API URLs stay as they are
 APP_DATA = re.compile(r"window\.__appData\s*=\s*")  # the board page's embedded JSON
 
 
@@ -56,7 +57,7 @@ def company(board: Board, get: Get) -> Company:
 
 
 def read(board: Board, get: Get, places: Places) -> tuple[Posting, ...]:
-    return parse(board, json.loads(get(board.api_url)))
+    return parse(board, json.loads(get(board.api_url + COMPENSATION)))
 
 
 def parse(board: Board, data) -> tuple[Posting, ...]:
@@ -93,7 +94,16 @@ def _posting(board: Board, index: int, job) -> Posting | None:
         location=" / ".join(loc for loc in locations if loc),
         url=text_field(job, "jobUrl", index) or "",
         description=_description(text_field(job, "descriptionPlain", index), text_field(job, "descriptionHtml", index)),
+        salary=_salary(job),
     )
+
+
+def _salary(job: dict) -> str:
+    """Ashby's own summary of the job's pay (`£85K to £120K • Offers Equity`, with an en dash), as one line. Pay is
+    optional: a job without it, or with it shaped otherwise, has none, and its board still reads."""
+    compensation = job.get("compensation")
+    summary = compensation.get("compensationTierSummary") if isinstance(compensation, dict) else None
+    return one_line(summary) if isinstance(summary, str) and encodable(summary) else ""
 
 
 def _description(plain: str | None, rich: str | None) -> str:

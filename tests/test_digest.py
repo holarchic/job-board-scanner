@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -56,6 +57,14 @@ class RenderTest(unittest.TestCase):
         text = digest.render("pm", "2026-10-12", [entry()], carried_over=0, left_out=[digest.LeftOut(
             entry("2", tags=german, notes=("applied",)), (Requirement("language_required", ("no",)),))])
         self.assertNotIn("Your note", text)
+
+    def test_pay_follows_the_link_line_as_the_site_writes_it(self):
+        plain = entry()
+        stored = replace(plain.posting, posting=replace(plain.posting.posting, salary="£85K to £120K • Offers Equity"))
+        paid = replace(plain, posting=stored, website="https://acme.ai/")
+        lines = digest.render("pm", "2026-10-12", [paid], carried_over=0).splitlines()
+        self.assertEqual(lines[4:6], ["Pay: £85K to £120K • Offers Equity", "Company: Acme AI · https://acme.ai/"])
+        self.assertNotIn("Pay:", digest.render("pm", "2026-10-12", [entry()], carried_over=0))
 
     def test_tag_lines(self):
         tags = {

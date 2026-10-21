@@ -101,10 +101,11 @@ class RunFixture(unittest.TestCase):
             {"company": "Broken", "board_url": f"{self.ats.url}/posting-api/job-board/broken"},
         ]}))
         self.write_config(boards_file=True)
-        self.ats.routes["/posting-api/job-board/broken"] = (500, {"error": "boom"})
+        self.ats.routes["/posting-api/job-board/broken?includeCompensation=true"] = (500, {"error": "boom"})
         self.jobs = [ashby_job("1", "Account Executive"), ashby_job("2", "Enterprise Account Executive"),
                      ashby_job("3", "Account Executive", location="Berlin"), ashby_job("4", "Engineer")]
-        self.ats.routes["/posting-api/job-board/acme"] = (200, lambda _: (200, {"jobs": self.jobs}))
+        self.ats.routes["/posting-api/job-board/acme?includeCompensation=true"] = (
+            200, lambda _: (200, {"jobs": self.jobs}))
         self.model_ok()
         # Board pages answer company lookups; the fake answers 404 until a test routes one.
         pages = [(adapter, "BOARD_PAGE", f"{self.ats.url}/page/{adapter.ATS}/{{slug}}")
@@ -290,7 +291,8 @@ class CompanyRunTest(RunFixture):
         super().setUp()
         self.seed_discovery("initech")
         self.initech = [ashby_job("i1", "Account Executive")]
-        self.ats.routes["/posting-api/job-board/initech"] = (200, lambda _: (200, {"jobs": self.initech}))
+        self.ats.routes["/posting-api/job-board/initech?includeCompensation=true"] = (
+            200, lambda _: (200, {"jobs": self.initech}))
         self.page_answers(200, "Initech Ltd", "https://initech.example/")
 
     def page_answers(self, status, name="", website=None):
@@ -326,7 +328,7 @@ class CompanyRunTest(RunFixture):
                 self.PAGE = f"/page/ashby/{board}"
                 self.seed_discovery(board)
                 jobs = {"jobs": [ashby_job(f"x{n}", "Account Executive")]}
-                self.ats.routes[f"/posting-api/job-board/{board}"] = (200, jobs)
+                self.ats.routes[f"/posting-api/job-board/{board}?includeCompensation=true"] = (200, jobs)
                 self.page_answers(200, "Initech Ltd", website)
                 code, (_, _, path) = self.run_cli()
                 self.assertEqual(code, 0)
@@ -361,7 +363,7 @@ class CompanyRunTest(RunFixture):
             store.apply_fetch(conn, "ashby:acme", (stale,), datetime.now(UTC).isoformat(timespec="microseconds"))
         finally:
             conn.close()
-        self.ats.routes["/posting-api/job-board/acme"] = (500, {"error": "boom"})
+        self.ats.routes["/posting-api/job-board/acme?includeCompensation=true"] = (500, {"error": "boom"})
         code, (_, new, path) = self.run_cli()
         self.assertEqual((code, new), (0, "2"))
         text = Path(path).read_text()
@@ -852,7 +854,7 @@ class UnreadBoardsTest(RunFixture):
                      *(f"gone{n}" for n in range(gone))]:
             answers = iter([b"{"] * 3 if name.startswith("back") else [])
             ok = (200, {"jobs": []}) if not name.startswith("gone") else (404, {})
-            self.ats.routes[f"/posting-api/job-board/{name}"] = (
+            self.ats.routes[f"/posting-api/job-board/{name}?includeCompensation=true"] = (
                 200, lambda _, a=answers, ok=ok: (200, b) if (b := next(a, None)) is not None else ok)
             entries.append({"company": name, "board_url": f"{url}/{name}"})
         (self.home / "listed.json").write_text(json.dumps({"companies": entries}))
@@ -1275,9 +1277,10 @@ class WatchRunTest(RunFixture):
             {"company": "Initech Ltd", "board_url": f"{self.ats.url}/posting-api/job-board/initech"},
             {"company": "Hooli", "board_url": f"{self.ats.url}/posting-api/job-board/hooli-eu"},
         ]}))
-        self.ats.routes["/posting-api/job-board/initech"] = (200, {"jobs": [
+        self.ats.routes["/posting-api/job-board/initech?includeCompensation=true"] = (200, {"jobs": [
             ashby_job("i1", "Account Executive"), ashby_job("i2", "Account Executive - German Speaking")]})
-        self.ats.routes["/posting-api/job-board/hooli-eu"] = (200, {"jobs": [ashby_job("h1", "Account Executive")]})
+        self.ats.routes["/posting-api/job-board/hooli-eu?includeCompensation=true"] = (
+            200, {"jobs": [ashby_job("h1", "Account Executive")]})
 
         def answering(payload):
             tags = tags_quoting_the_posting(payload)
@@ -1309,8 +1312,10 @@ class CompanyNotesRunTest(RunFixture):
             {"company": "Initech Ltd", "board_url": f"{self.ats.url}/posting-api/job-board/initech"},
             {"company": "Hooli", "board_url": f"{self.ats.url}/posting-api/job-board/hooli-eu"},
         ]}))
-        self.ats.routes["/posting-api/job-board/initech"] = (200, {"jobs": [ashby_job("i1", "Account Executive")]})
-        self.ats.routes["/posting-api/job-board/hooli-eu"] = (200, {"jobs": [ashby_job("h1", "Account Executive")]})
+        self.ats.routes["/posting-api/job-board/initech?includeCompensation=true"] = (
+            200, {"jobs": [ashby_job("i1", "Account Executive")]})
+        self.ats.routes["/posting-api/job-board/hooli-eu?includeCompensation=true"] = (
+            200, {"jobs": [ashby_job("h1", "Account Executive")]})
         code, (_, new, path) = self.run_cli()
         self.assertEqual((code, new), (0, "4"))
         blocks = {b.split("\n", 1)[0]: b for b in Path(path).read_text().split("\n\n")}
@@ -1318,6 +1323,21 @@ class CompanyNotesRunTest(RunFixture):
                          "Your note: applied 29 Sep")
         self.assertEqual(blocks["## Hooli — Account Executive · London"].splitlines()[2], "Your note: talking to Sam")
         self.assertNotIn("Your note", blocks["## Acme — Account Executive · London"])
+
+
+class PayRunTest(RunFixture):
+    def test_ashbys_pay_summary_follows_the_link_line_where_it_gives_one(self):
+        summary = "£85K \u2013 £120K \u2022 Offers Equity"
+        self.jobs = [{**ashby_job("1", "Account Executive"), "compensation": {"compensationTierSummary": summary}},
+                     {**ashby_job("2", "Enterprise Account Executive"),
+                      "compensation": {"compensationTierSummary": None}}]
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        blocks = {b.split("\n", 1)[0]: b.splitlines() for b in Path(path).read_text().split("\n\n")}
+        self.assertEqual(blocks["## Acme — Account Executive · London"][2], f"Pay: {summary}")
+        self.assertNotIn("Pay:", "\n".join(blocks["## Acme — Enterprise Account Executive · London"]))
+        self.assertIn(("GET", "/posting-api/job-board/acme?includeCompensation=true", None), self.ats.requests)
+        self.assertNotIn(("GET", "/posting-api/job-board/acme", None), self.ats.requests)
 
 
 class RequireRunTest(RunFixture):
@@ -1446,7 +1466,8 @@ class LimitRunTest(RunFixture):
             {"company": "Beta", "board_url": f"{self.ats.url}/posting-api/job-board/beta"}]}))
         self.jobs = [ashby_job(n, "Account Executive") for n in ("1", "2", "3")]
         self.beta = [ashby_job(n, "Account Executive") for n in ("b1", "b2")]
-        self.ats.routes["/posting-api/job-board/beta"] = (200, lambda _: (200, {"jobs": self.beta}))
+        self.ats.routes["/posting-api/job-board/beta?includeCompensation=true"] = (
+            200, lambda _: (200, {"jobs": self.beta}))
         self.limit(count=2)
 
     def limit(self, count=None, spend=None, extra=""):
@@ -1626,7 +1647,8 @@ class BoardSourcesTest(RunFixture):
             {"company": s.title(), "board_url": f"{self.ats.url}/posting-api/job-board/{s}"} for s in slugs]}))
 
     def requests_to(self, slug):
-        return sum(1 for _, path, _ in self.ats.requests if path == f"/posting-api/job-board/{slug}")
+        return sum(1 for _, path, _ in self.ats.requests
+                   if path == f"/posting-api/job-board/{slug}?includeCompensation=true")
 
     def test_discovered_only_install(self):
         self.write_config(boards_file=False)
@@ -1686,7 +1708,7 @@ class BoardSourcesTest(RunFixture):
                 self.model.routes["/chat/completions"] = (503, {"error": "down"})
                 self.assertEqual(self.run_cli()[0], 1)
                 self.model_ok()
-                self.ats.routes["/posting-api/job-board/acme"] = (status, {"error": "x"})
+                self.ats.routes["/posting-api/job-board/acme?includeCompensation=true"] = (status, {"error": "x"})
                 self.assertEqual(self.run_cli()[1][1], delivered)
 
     def test_board_back_after_a_404_delivers_its_carried_postings(self):
@@ -1694,9 +1716,10 @@ class BoardSourcesTest(RunFixture):
         self.model.routes["/chat/completions"] = (503, {"error": "down"})
         self.run_cli()
         self.model_ok()
-        self.ats.routes["/posting-api/job-board/acme"] = (404, {"error": "x"})
+        self.ats.routes["/posting-api/job-board/acme?includeCompensation=true"] = (404, {"error": "x"})
         self.assertEqual(self.run_cli()[1][1], "0")
-        self.ats.routes["/posting-api/job-board/acme"] = (200, lambda _: (200, {"jobs": self.jobs}))
+        self.ats.routes["/posting-api/job-board/acme?includeCompensation=true"] = (
+            200, lambda _: (200, {"jobs": self.jobs}))
         self.assertEqual(self.run_cli()[1][1], "2")
 
     def test_board_dropped_from_discovery_contributes_nothing_until_listed(self):
@@ -1705,7 +1728,7 @@ class BoardSourcesTest(RunFixture):
         self.model.routes["/chat/completions"] = (503, {"error": "down"})
         self.run_cli()
         self.model_ok()
-        self.ats.routes["/posting-api/job-board/other"] = (200, {"jobs": []})
+        self.ats.routes["/posting-api/job-board/other?includeCompensation=true"] = (200, {"jobs": []})
         self.discover("other")
         self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
         self.write_config(boards_file=True)
