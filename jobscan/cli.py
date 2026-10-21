@@ -265,16 +265,15 @@ def _init_answers(args: argparse.Namespace) -> init.Answers:
 
 
 def _requirements(given: list[str]) -> tuple[Requirement, ...]:
-    """`--require TAG=VALUE`, split at the first `=`; whether the tag can answer VALUE is `tag.check_require`'s."""
-    require = []
+    """`--require TAG=VALUE`, split at the first `=`; a tag given again gains that answer (a repeat kept once).
+    Whether the tag can answer VALUE is `tag.check_require`'s."""
+    answers: dict[str, dict[str, None]] = {}
     for text in given:
         name, equals, value = text.partition("=")
         if not (name and equals and value):
             raise ConfigError(f"--require {text!r}: write it TAG=VALUE, like language_required=no")
-        if name in {r.tag for r in require}:
-            raise ConfigError(f"--require names `{name}` twice")
-        require.append(Requirement(tag=name, value=value))
-    return tuple(require)
+        answers.setdefault(name, {})[value] = None
+    return tuple(Requirement(tag=name, values=tuple(values)) for name, values in answers.items())
 
 
 def _discover(home: Path) -> int:

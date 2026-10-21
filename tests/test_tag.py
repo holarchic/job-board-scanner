@@ -188,18 +188,19 @@ class RequireTest(unittest.TestCase):
                                        "channels": {"value": [], "quote": None},
                                        "agency": {"value": "no", "quote": None}} | cells
         results = tag.parse_reply(json.dumps(cells), self.defs, POSTING)
-        return tag.misses(self.defs, tuple(Requirement(t, v) for t, v in required.items()), results)
+        return tag.misses(self.defs, tuple(Requirement(t, (v,) if isinstance(v, str) else v)
+                                           for t, v in required.items()), results)
 
     def test_listed_values_compare_exactly_and_unknown_never_misses(self):
         quoted = "our first sales hire"
         self.assertEqual(self.missed({"location_eligible": "yes"},
                                      location_eligible={"value": "no", "quote": quoted}),
-                         (Requirement("location_eligible", "yes"),))
+                         (Requirement("location_eligible", ("yes",)),))
         self.assertEqual(self.missed({"location_eligible": "yes"},
                                      location_eligible={"value": "yes", "quote": quoted}), ())
         self.assertEqual(self.missed({"location_eligible": "yes"}), ())  # unknown
         self.assertEqual(self.missed({"motion": "B2B"}, motion={"value": "b2c", "quote": quoted}),
-                         (Requirement("motion", "B2B"),))
+                         (Requirement("motion", ("B2B",)),))
         self.assertEqual(self.missed({"motion": "B2B"}, motion={"value": "B2B", "quote": quoted}), ())
 
     def test_free_text_compares_case_folded(self):
@@ -212,7 +213,7 @@ class RequireTest(unittest.TestCase):
                                      language_required={"value": "Unknown", "quote": quoted}), ())
         self.assertEqual(self.missed({"language_required": "no"},
                                      language_required={"value": "German", "quote": quoted}),
-                         (Requirement("language_required", "no"),))
+                         (Requirement("language_required", ("no",)),))
 
     def test_lists_miss_only_holding_a_known_value_and_not_the_one_required(self):
         quoted = "our first sales hire"
@@ -220,10 +221,29 @@ class RequireTest(unittest.TestCase):
         self.assertEqual(self.missed({"segment": "smb"}, segment={"value": ["mid_market", "smb"], "quote": quoted}),
                          ())
         self.assertEqual(self.missed({"segment": "smb"}, segment={"value": ["mid_market"], "quote": quoted}),
-                         (Requirement("segment", "smb"),))
+                         (Requirement("segment", ("smb",)),))
         self.assertEqual(self.missed({"channels": "web"}, channels={"value": ["unknown"], "quote": quoted}), ())
         self.assertEqual(self.missed({"channels": "web"}, channels={"value": ["store"], "quote": quoted}),
-                         (Requirement("channels", "web"),))
+                         (Requirement("channels", ("web",)),))
+
+    def test_several_answers_keep_a_posting_answering_any_of_them(self):
+        quoted = "our first sales hire"
+        either = ("B2B", "b2c")
+        self.assertEqual(self.missed({"motion": either}, motion={"value": "b2c", "quote": quoted}), ())
+        self.assertEqual(self.missed({"motion": either}, motion={"value": "B2B", "quote": quoted}), ())
+        self.assertEqual(self.missed({"motion": ("B2B",)}, motion={"value": "b2c", "quote": quoted}),
+                         (Requirement("motion", ("B2B",)),))
+        self.assertEqual(self.missed({"language_required": ("no", "French")},
+                                     language_required={"value": "french", "quote": quoted}), ())
+        self.assertEqual(self.missed({"language_required": ("no", "French")},
+                                     language_required={"value": "German", "quote": quoted}),
+                         (Requirement("language_required", ("no", "French")),))
+        self.assertEqual(self.missed({"segment": ("enterprise", "smb")},
+                                     segment={"value": ["mid_market", "smb"], "quote": quoted}), ())
+        self.assertEqual(self.missed({"segment": ("enterprise", "smb")},
+                                     segment={"value": ["mid_market"], "quote": quoted}),
+                         (Requirement("segment", ("enterprise", "smb")),))
+        self.assertEqual(self.missed({"location_eligible": ("yes", "no")}), ())  # unknown
 
     def test_an_answer_shown_with_a_warning_never_misses(self):
         self.assertEqual(self.missed({"location_eligible": "yes"},
@@ -235,15 +255,15 @@ class RequireTest(unittest.TestCase):
                          ())
 
     def test_a_default_answer_without_a_quote_misses(self):
-        self.assertEqual(self.missed({"founding": "yes"}), (Requirement("founding", "yes"),))
+        self.assertEqual(self.missed({"founding": "yes"}), (Requirement("founding", ("yes",)),))
 
     def test_every_miss_is_named_in_file_order(self):
         quoted = "our first sales hire"
         self.assertEqual(self.missed({"location_eligible": "yes", "founding": "yes", "language_required": "no"},
                                      location_eligible={"value": "no", "quote": quoted},
                                      language_required={"value": "German", "quote": quoted}),
-                         (Requirement("location_eligible", "yes"), Requirement("founding", "yes"),
-                          Requirement("language_required", "no")))
+                         (Requirement("location_eligible", ("yes",)), Requirement("founding", ("yes",)),
+                          Requirement("language_required", ("no",))))
 
     def test_requirements_a_tag_cant_answer_are_refused(self):
         for tag_name, value in [("climate", "yes"), ("location_eligible", "unknown"), ("location_eligible", "maybe"),
@@ -251,9 +271,11 @@ class RequireTest(unittest.TestCase):
                                 ("language_required", " no"), ("language_required", "Fr\x00ench"), ("motion", "b2b"),
                                 ("channels", "unknown")]:
             with self.subTest(tag=tag_name, value=value), self.assertRaises(ConfigError):
-                tag.profile_definitions(profile(require=(Requirement(tag_name, value),), custom=(MOTION, CHANNELS)))
+                tag.profile_definitions(profile(require=(Requirement(tag_name, (value,)),), custom=(MOTION, CHANNELS)))
+        with self.assertRaisesRegex(ConfigError, "'maybe' isn't an answer"):
+            tag.profile_definitions(profile(require=(Requirement("founding", ("yes", "maybe")),)))
         self.assertEqual(len(tag.profile_definitions(profile(
-            require=(Requirement("language_required", "French"), Requirement("channels", "web")),
+            require=(Requirement("language_required", ("French",)), Requirement("channels", ("web",))),
             custom=(MOTION, CHANNELS)))), 8)  # the agency check last
 
 
@@ -262,8 +284,8 @@ class AgencyCheckTest(unittest.TestCase):
         self.assertEqual(tag.profile_definitions(profile())[-1], tag.agency_definition())
         self.assertNotIn(tag.AGENCY, [d.name for d in tag.profile_definitions(replace(profile(),
                                                                                       include_agencies=True))])
-        self.assertEqual(tag.requirements((Requirement("founding", "yes"),), False),
-                         (Requirement("founding", "yes"), Requirement(tag.AGENCY, "no")))
+        self.assertEqual(tag.requirements((Requirement("founding", ("yes",)),), False),
+                         (Requirement("founding", ("yes",)), Requirement(tag.AGENCY, ("no",))))
         self.assertEqual(tag.requirements((), True), ())
 
     def test_the_name_is_reserved_whatever_the_flag(self):
@@ -271,7 +293,7 @@ class AgencyCheckTest(unittest.TestCase):
         for include in (False, True):
             for refused, message in [(profile(custom=(own,)), "jobscan's agency check"),
                                      (replace(profile(), tags=(*ALL, "agency")), "unknown tags"),
-                                     (profile(require=(Requirement("agency", "no"),)), "require can't name")]:
+                                     (profile(require=(Requirement("agency", ("no",)),)), "require can't name")]:
                 with self.subTest(include=include, message=message), self.assertRaisesRegex(ConfigError, message):
                     tag.profile_definitions(replace(refused, include_agencies=include))
 
@@ -312,7 +334,7 @@ class RequirableTest(unittest.TestCase):
                           "credential_required": ("no",)})
         for t in tag.builtins():  # every one offered is one the check accepts
             for value in t.requirable:
-                tag.check_require(tag.definitions((t.name,), "the UK"), (Requirement(t.name, value),))
+                tag.check_require(tag.definitions((t.name,), "the UK"), (Requirement(t.name, (value,)),))
 
 
 class CacheIdentityTest(unittest.TestCase):

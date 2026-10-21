@@ -229,7 +229,7 @@ def read_step(step: str, fields: Mapping[str, list[str]], form: Form, offers: Of
             changes["too_many"] = len(changes["custom"]) > MOST_TAGS
             # A built-in's select, in catalogue order; requirements on the person's own tags, which the page has no
             # control for, kept as they are.
-            changes["require"] = tuple(Requirement(name, value) for name in tag.builtin_names()
+            changes["require"] = tuple(Requirement(name, (value,)) for name in tag.builtin_names()
                                        if (value := one(f"require-{name}", "tags"))) \
                 + tuple(r for r in form.require if r.tag not in tag.builtin_names())
             changes["include_agencies"] = one("include_agencies") == "on"
@@ -349,7 +349,8 @@ def _tag_errors(form: Form) -> dict[str, str]:
     custom, errors = _custom_tags(form)
     if form.too_many:
         errors["tags"] = f"More than {MOST_TAGS} custom tags: edit them in your profile file instead."
-    if any(len(r.value) > TEXT_LIMIT for r in form.require):  # checked on the draft: `too_long` lasts one post
+    # Checked on the draft: `too_long` lasts one post.
+    if any(len(v) > TEXT_LIMIT for r in form.require for v in r.values):
         errors["tags"] = f"An answer to hide by is too long: over {TEXT_LIMIT:,} characters."
     if errors:
         return errors
@@ -504,7 +505,7 @@ def _posted_size(form: Form) -> int:
     """Roughly what a browser posts for this form: every value percent-encoded, line breaks as CRLF."""
     values = [form.name, form.titles, form.exclude_titles, form.locations, form.eligible_where,
               *(v for r in form.custom for v in (r.name, r.definition, r.values, r.default)),
-              *(r.value for r in form.require)]
+              *(v for r in form.require for v in r.values)]
     return sum(len(quote_plus(v.replace("\n", "\r\n"))) + 32 for v in values)
 
 
@@ -679,7 +680,7 @@ def _places_body(view: View) -> str:
 
 def _tags_body(view: View) -> str:
     form, e = view.form, view.errors
-    required = {r.tag: r.value for r in form.require}
+    required = {r.tag: r.values[0] for r in form.require}
     rows = []
     for t in view.catalogue:
         checked = " checked" if t.name in form.tags else ""
@@ -688,7 +689,7 @@ def _tags_body(view: View) -> str:
                     "</span></label>" + _hide(t, required.get(t.name, "")))
     own = [r for r in form.require if r.tag not in {t.name for t in view.catalogue}]
     carried = (f'<p class="hint">Also hidden by your profile file\'s <code>require</code>: '
-               f'{_x("; ".join(f"{r.tag} {r.value}" for r in own))}.</p>') if own else ""
+               f'{_x(report.required_text(own))}.</p>') if own else ""
     named = {r.name for r in form.custom}
     offered = [r for r in view.offers.custom if r.name not in named]  # once ticked, a tag is an editable row
     suggested = ("<fieldset><legend>Suggested tags of your own: tick to add</legend>" + "".join(
@@ -853,8 +854,8 @@ def _summary_body(view: View) -> str:
              "exclude": ("Left out", "; ".join(_lines(f.exclude_titles)) or "none"),
              "places": ("Places", "; ".join(_lines(f.locations)) + f" (you can work from: {f.eligible_where})"),
              "tags": ("Tags", (", ".join([*(t.name for t in view.catalogue if t.name in f.tags), *custom]) or "none")
-                      + ("; hides postings a tag definitely answers otherwise than: "
-                         + ", ".join(f"{r.tag} {r.value}" for r in f.require) + " (unknown and ⚠ answers stay)"
+                      + ("; only shows postings answering "
+                         + report.required_text(f.require) + " (unknown and ⚠ answers stay)"
                          if f.require else "")
                       + ("; agency postings kept" if f.include_agencies else "; agency postings left out")),
              "limits": ("Each run", _limits_row(_limits(f))),

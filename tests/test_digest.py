@@ -77,7 +77,7 @@ class RenderTest(unittest.TestCase):
                   "segment": TagResult(value=(), quote=None, verified=False, warn=False),
                   "language_required": TagResult(value="German", quote="German speaker", verified=True, warn=False)}
         left = [digest.LeftOut(entry("2", "Account Executive - German Speaking", tags=german),
-                               (Requirement("founding", "yes"), Requirement("language_required", "no")))]
+                               (Requirement("founding", ("yes",)), Requirement("language_required", ("no",))))]
         text = digest.render("ae", "2026-10-12", [entry()], carried_over=1, unvalidated=frozenset({"segment"}),
                              left_out=left)
         self.assertTrue(text.startswith("# ae — 2026-10-12 · 1 new · 1 untagged, carried over · 1 left out\n\n## "))
@@ -92,7 +92,7 @@ class RenderTest(unittest.TestCase):
                 "agency": TagResult(value="no", quote=None, verified=False, warn=False)}
         agency = {**tags, "agency": TagResult(value="yes", quote="Our client", verified=True, warn=False)}
         text = digest.render("ae", "2026-10-12", [entry(tags=tags)], carried_over=0, unvalidated=frozenset({"agency"}),
-                             left_out=[digest.LeftOut(entry("2", tags=agency), (Requirement("agency", "no"),))],
+                             left_out=[digest.LeftOut(entry("2", tags=agency), (Requirement("agency", ("no",)),))],
                              quiet=frozenset({"agency"}))
         self.assertNotIn("- agency", text)
         self.assertNotIn(digest.LEGEND, text)  # a quiet unvalidated tag shows no ⓘ on entries, so no legend

@@ -309,7 +309,7 @@ class NewInstallTest(UiTest):
                           ("Account Executive Assistant",), ("London", "Remote", "UK")))
         self.assertEqual((profile.tags, [c.name for c in profile.custom_tags], profile.require),
                          (("founding", "location_eligible"), ["salary_stated"],
-                          (Requirement("location_eligible", "yes"),)))
+                          (Requirement("location_eligible", ("yes",)),)))
         self.assertTrue(profile.include_agencies)
         self.assertEqual((profile.max_tag_per_run, profile.max_spend_per_run), (250, 0.555))
         key = self.home / "openrouter.key"
@@ -527,7 +527,7 @@ class ExistingInstallTest(UiTest):
                              '[custom_tags.buyer]\ndefinition = "Who buys.\\nSay smb or '
                              'enterprise."\nvalues = ["smb", "enterprise"]\n')
         before = load_profile(self.home)
-        self.assertEqual(before.require, (Requirement("founding", "yes"), Requirement("buyer", "smb")))
+        self.assertEqual(before.require, (Requirement("founding", ("yes",)), Requirement("buyer", ("smb",))))
         self.open()
         for step in page.EXISTING_STEPS[:-1]:
             self.press(f"goto:{step}")

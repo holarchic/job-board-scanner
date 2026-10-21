@@ -47,10 +47,10 @@ class CustomTag:
 
 @dataclass(frozen=True)
 class Requirement:
-    """A posting whose `tag` definitely answers other than `value` is left out of the digest's entries
+    """A posting whose `tag` definitely answers none of `values` is left out of the digest's entries
     (`tag.misses`)."""
     tag: str
-    value: str
+    values: tuple[str, ...]  # one or more, in file order, none repeated
 
 
 @dataclass(frozen=True)
@@ -282,7 +282,8 @@ def profile_toml(profile: Profile) -> str:
              f"locations = {toml_list(profile.locations)}", f"eligible_where = {toml_string(profile.eligible_where)}",
              f"tags = {toml_list(profile.tags)}"]
     if profile.require:  # tag names are bare keys (CUSTOM_TAG_NAME, and the built-ins' alike)
-        lines.append("require = { " + ", ".join(f"{r.tag} = {toml_string(r.value)}" for r in profile.require) + " }")
+        lines.append("require = { " + ", ".join(f"{r.tag} = {_answers_toml(r.values)}" for r in profile.require)
+                     + " }")
     if profile.include_agencies:
         lines.append("include_agencies = true")
     if profile.max_tag_per_run != MAX_TAG_PER_RUN:
@@ -310,6 +311,11 @@ def toml_list(values) -> str:
     return "[" + ", ".join(toml_string(v) for v in values) + "]"
 
 
+def _answers_toml(values: tuple[str, ...]) -> str:
+    """One answer as a string, so a file written before lists were allowed reads the same; several as a list."""
+    return toml_string(values[0]) if len(values) == 1 else toml_list(values)
+
+
 def _boolean(data: dict, key: str, path: Path) -> bool:
     value = data.get(key, False)
     if not isinstance(value, bool):
@@ -318,11 +324,14 @@ def _boolean(data: dict, key: str, path: Path) -> bool:
 
 
 def _require(data: dict, path: Path) -> tuple[Requirement, ...]:
+    """Each tag's answer, or list of answers; an answer listed twice is kept once."""
     table = data.get("require", {})
-    if not isinstance(table, dict) or not all(isinstance(v, str) and v.strip() for v in table.values()):
-        raise ConfigError(f"{path}: `require` must be a table of tag names to values, like "
-                          '{ language_required = "no" }')
-    return tuple(Requirement(tag=name, value=value) for name, value in table.items())
+    lists = {name: [v] if isinstance(v, str) else v for name, v in table.items()} if isinstance(table, dict) else None
+    if lists is None or not all(isinstance(v, list) and v and all(isinstance(a, str) and a.strip() for a in v)
+                                for v in lists.values()):
+        raise ConfigError(f"{path}: `require` must be a table of tag names to an answer or a list of answers, like "
+                          '{ language_required = "no", segment = ["enterprise", "mid_market"] }')
+    return tuple(Requirement(tag=name, values=tuple(dict.fromkeys(v))) for name, v in lists.items())
 
 
 def _custom_tags(data: dict, path: Path) -> tuple[CustomTag, ...]:

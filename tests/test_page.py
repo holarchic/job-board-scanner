@@ -36,13 +36,13 @@ class ReadStepTest(unittest.TestCase):
         self.assertEqual(typed.titles, "AE")
 
     def test_the_tags_step_reads_each_picked_answer_and_keeps_the_files_own(self):
-        form = replace(DRAFT, require=(Requirement("climate", "no"), Requirement("founding", "yes")))
+        form = replace(DRAFT, require=(Requirement("climate", ("no",)), Requirement("founding", ("yes",))))
         fields = {"tag": ["founding", "language_required"], "require-language_required": ["no"],
                   "require-founding": [""], "require-segment": ["smb"], "require-nope": ["x"],
                   "custom-0-name": ["climate"], "custom-0-definition": ["Cuts emissions."]}
         read, _ = page.read_step("tags", fields, form, page.Offers())
-        self.assertEqual(read.require, (Requirement("segment", "smb"), Requirement("language_required", "no"),
-                                        Requirement("climate", "no")))  # catalogue order, then the file's own
+        self.assertEqual(read.require, (Requirement("segment", ("smb",)), Requirement("language_required", ("no",)),
+                                        Requirement("climate", ("no",))))  # catalogue order, then the file's own
         self.assertIn("Tick segment to hide postings by its answer", checks("tags", read)["tags"])
         self.assertEqual(checks("tags", replace(read, tags=read.tags | {"segment"})), {})
 
@@ -149,9 +149,9 @@ class CheckStepTest(unittest.TestCase):
         self.assertIn("asks the same question", checks("tags", replace(DRAFT, custom=twice))["tags"])
         named = (page.CustomRow(name="a", definition="One?"), page.CustomRow(name="a", definition="Two?"))
         self.assertIn("named twice", checks("tags", replace(DRAFT, custom=named))["tags"])
-        refused = replace(DRAFT, require=(Requirement("founding", "maybe"),))
+        refused = replace(DRAFT, require=(Requirement("founding", ("maybe",)),))
         self.assertIn("isn't an answer it can require", checks("tags", refused)["tags"])
-        gone = replace(DRAFT, custom=DRAFT.custom[1:], require=(Requirement("climate", "no"),))
+        gone = replace(DRAFT, custom=DRAFT.custom[1:], require=(Requirement("climate", ("no",)),))
         self.assertIn("edit `require` in your profile file", checks("tags", gone)["tags"])
         bad = (page.CustomRow(name="ok", definition="Fine."), page.CustomRow(name="x", definition=""))
         self.assertEqual(set(checks("tags", replace(DRAFT, custom=bad))), {"custom-1"})
@@ -204,7 +204,7 @@ class ToProfileTest(unittest.TestCase):
         self.assertIsNotNone(page.unrepresentable(replace(profile, custom_tags=(buyer,))))
 
     def test_require_goes_through_the_page_unchanged(self):
-        required = (Requirement("founding", "yes"),)
+        required = (Requirement("founding", ("yes",)),)
         profile = replace(page.to_profile(DRAFT).profile, require=required)
         self.assertEqual(page.form_from_profile(profile, None).require, required)
         self.assertEqual(page.to_profile(page.form_from_profile(profile, None)).profile, profile)
@@ -214,10 +214,12 @@ class ToProfileTest(unittest.TestCase):
 
     def test_a_profile_too_long_or_too_large_for_the_page_is_not_offered(self):
         profile = page.to_profile(DRAFT).profile
-        long = replace(profile, tags=("language_required",), require=(Requirement("language_required", "x" * 20_001),))
+        long = replace(profile, tags=("language_required",),
+                       require=(Requirement("language_required", ("x" * 20_001,)),))
         self.assertIn("An answer to hide by is too long", page.unrepresentable(long))
         self.assertIn("An answer to hide by is too long", checks("tags", page.form_from_profile(long, None))["tags"])
-        wide = replace(profile, tags=("language_required",), require=(Requirement("language_required", "😀" * 19_000),))
+        wide = replace(profile, tags=("language_required",),
+                       require=(Requirement("language_required", ("😀" * 19_000,)),))
         self.assertIn("Too large for one page", page.unrepresentable(wide))
         self.assertIn("Too long", page.unrepresentable(replace(profile, locations=("x" * 20_001,))))
         defined = replace(profile.custom_tags[0], definition="x" * 19_000)
@@ -311,8 +313,8 @@ class RenderTest(unittest.TestCase):
 
     def test_each_built_in_tag_offers_the_answers_it_can_hide_by(self):
         form = replace(DRAFT, tags=frozenset({"founding", "language_required"}),
-                       require=(Requirement("language_required", "French"), Requirement("founding", "yes"),
-                                Requirement("climate", "no")))
+                       require=(Requirement("language_required", ("French",)), Requirement("founding", ("yes",)),
+                                Requirement("climate", ("no",))))
         html = page.render(self.view("tags", form=form))
         self.assertIn('<select name="require-location_eligible"><option value="">— (hide nothing)</option>'
                       '<option value="yes">yes</option><option value="no">no</option></select>', html)
@@ -321,8 +323,8 @@ class RenderTest(unittest.TestCase):
         self.assertIn('<select name="require-language_required"><option value="">— (hide nothing)</option>'
                       '<option value="no">no</option><option value="French" selected>French</option></select>', html)
         self.assertIn("Also hidden by your profile file's <code>require</code>: climate no.", html)
-        self.assertIn("hides postings a tag definitely answers otherwise than: language_required French, founding yes, "
-                      "climate no (unknown and ⚠ answers stay)", page.render(self.view("summary", form=form)))
+        self.assertIn("only shows postings answering language_required French; founding yes; climate no (unknown and "
+                      "⚠ answers stay)", page.render(self.view("summary", form=form)))
 
     def test_a_tag_with_no_answer_to_hide_by_gets_no_picker(self):
         html = page.render(self.view("tags"))

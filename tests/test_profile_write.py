@@ -30,13 +30,26 @@ class ProfileTomlTest(Home):
         self.assertEqual(load_profile(self.home), PROFILE)
 
     def test_the_writer_and_the_reader_agree_on_require(self):
-        required = Profile(**{**vars(PROFILE), "require": (Requirement("founding", "yes"),
-                                                            Requirement("buyer", "smb"))})
+        required = Profile(**{**vars(PROFILE), "require": (Requirement("founding", ("yes",)),
+                                                            Requirement("buyer", ("smb",)))})
         text = profile_toml(required)
         self.assertIn('require = { founding = "yes", buyer = "smb" }', text)
         (self.home / "profiles" / "ae.toml").write_text(text)
         self.assertEqual(load_profile(self.home), required)
         self.assertNotIn("require", profile_toml(PROFILE))
+
+    def test_several_answers_are_a_list_and_one_stays_a_string(self):
+        required = Profile(**{**vars(PROFILE), "require": (Requirement("buyer", ("smb", "enterprise")),
+                                                            Requirement("founding", ("yes",)))})
+        text = profile_toml(required)
+        self.assertIn('require = { buyer = ["smb", "enterprise"], founding = "yes" }', text)
+        (self.home / "profiles" / "ae.toml").write_text(text)
+        self.assertEqual(load_profile(self.home), required)
+
+    def test_an_answer_listed_twice_is_kept_once(self):
+        (self.home / "profiles" / "ae.toml").write_text(profile_toml(PROFILE).replace(
+            'tags = ["founding"]', 'tags = ["founding"]\nrequire = { buyer = ["smb", "enterprise", "smb"] }'))
+        self.assertEqual(load_profile(self.home).require, (Requirement("buyer", ("smb", "enterprise")),))
 
     def test_include_agencies_is_written_only_when_true_and_read_back(self):
         self.assertNotIn("include_agencies", profile_toml(PROFILE))
@@ -76,7 +89,9 @@ class ProfileTomlTest(Home):
                 init.validate_profile(Profile(**{**vars(PROFILE), **changes}))
 
     def test_a_require_that_isnt_a_table_of_strings_is_refused(self):
-        for line in ['require = "founding"', "require = { founding = true }", 'require = { founding = "" }']:
+        for line in ['require = "founding"', "require = { founding = true }", 'require = { founding = "" }',
+                     "require = { founding = [] }", 'require = { founding = ["yes", 1] }',
+                     'require = { founding = ["yes", " "] }', 'require = { founding = [["yes"]] }']:
             (self.home / "profiles" / "ae.toml").write_text(profile_toml(PROFILE).replace(
                 'tags = ["founding"]', f'tags = ["founding"]\n{line}'))
             with self.subTest(line=line), self.assertRaisesRegex(ConfigError, "`require` must be a table"):
@@ -103,8 +118,8 @@ class ValidateProfileTest(unittest.TestCase):
             "asks the same question": {"custom_tags": (CLIMATE, CustomTag("climate2", CLIMATE.definition,
                                                                          CLIMATE.values, False, None))},
             "profile name": {"name": "../x"},
-            "which the profile doesn't tag": {"require": (Requirement("segment", "smb"),)},
-            "isn't an answer it can require": {"require": (Requirement("founding", "maybe"),)},
+            "which the profile doesn't tag": {"require": (Requirement("segment", ("smb",)),)},
+            "isn't an answer it can require": {"require": (Requirement("founding", ("maybe",)),)},
         }
         for message, change in cases.items():
             with self.assertRaisesRegex(ConfigError, message):

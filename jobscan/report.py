@@ -71,7 +71,8 @@ def install(checked: Install, scheduled: State | ScheduleError | None) -> list[s
         f"  locations: {_items(profile.locations)}",
         f"  where you can work from: {profile.eligible_where}",
         f"  tags: {', '.join(profile.tags) or '(none)'}{custom}",
-        f"  hidden when a tag definitely answers other than: {_required(profile.require)}" if profile.require
+        f"  only shows postings answering {required_text(profile.require)} (unknown and ⚠ answers stay)"
+        if profile.require
         else "  no require: no tag of yours hides a posting",
         "  agency postings: kept (include_agencies = true)" if profile.include_agencies
         else "  agency postings: left out (include_agencies = true keeps them)",
@@ -113,8 +114,10 @@ def schedule_line(state: State | ScheduleError | None) -> str:
     return f"Schedule: every day at {state.at:%H:%M} (launchd)"
 
 
-def _required(require: tuple[Requirement, ...]) -> str:
-    return "; ".join(f"{r.tag} {r.value}" for r in require)
+def required_text(require: tuple[Requirement, ...]) -> str:
+    """`founding yes; sector HealthTech or BioTech`: what `check`, `preview` and the set-up page say a profile
+    keeps."""
+    return "; ".join(f"{r.tag} {' or '.join(r.values)}" for r in require)
 
 
 def _items(values: tuple[str, ...]) -> str:
@@ -165,7 +168,7 @@ def preview_lines(search: str, p: Preview, requirements: tuple[Requirement, ...]
         f"  left out by your excluded titles: {p.excluded:,}",
     ]
     own = tuple(r for r in requirements if r.tag != tag.AGENCY)
-    hidden = [*([f"postings a tag definitely answers other than {_required(own)}"] if own else []),
+    hidden = [*([f"postings not answering {required_text(own)}"] if own else []),
               *(["agency postings"] if len(own) < len(requirements) else [])]
     if hidden:
         lines.append(f"Left out at the digest's end, tagged as usual and not counted here: {' and '.join(hidden)}.")

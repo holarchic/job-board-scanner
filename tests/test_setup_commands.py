@@ -147,7 +147,8 @@ class CheckTest(CliHome):
                                            'require = { location_eligible = "yes", climate = "no" }'))
         code, out, _ = self.cli("check")
         self.assertEqual(code, 0)
-        self.assertIn("  hidden when a tag definitely answers other than: location_eligible yes; climate no\n", out)
+        self.assertIn("  only shows postings answering location_eligible yes; climate no (unknown and ⚠ answers "
+                      "stay)\n", out)
         self.write_profile(PROFILE.replace('tags = ["founding", "location_eligible"]',
                                            'tags = ["founding"]\nrequire = { location_eligible = "yes" }'))
         code, out, err = self.cli("check")
@@ -282,14 +283,18 @@ class InitFlagsTest(CliHome):
         self.assertEqual(load_profile(self.home).tags, tag.default_names())
 
     def test_require_by_flags_reaches_the_profile(self):
-        code, _, err = self.cli("init", *FLAGS, "--require", "language_required=no", "--require",
-                                "location_eligible=yes", "--key-stdin", stdin="sk-or-v1-abc\n")
+        code, _, err = self.cli("init", *FLAGS, "--require", "language_required=no", "--require", "segment=enterprise",
+                                "--require", "location_eligible=yes", "--require", "segment=smb", "--require",
+                                "segment=enterprise", "--key-stdin", stdin="sk-or-v1-abc\n")
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(load_profile(self.home).require,
-                         (Requirement("language_required", "no"), Requirement("location_eligible", "yes")))
+                         (Requirement("language_required", ("no",)), Requirement("segment", ("enterprise", "smb")),
+                          Requirement("location_eligible", ("yes",))))
+        self.assertIn('require = { language_required = "no", segment = ["enterprise", "smb"], location_eligible = '
+                      '"yes" }', (self.home / "profiles" / "my-pm.toml").read_text())
         _, out, _ = self.cli("check")
-        self.assertIn("hidden when a tag definitely answers other than: language_required no; location_eligible yes",
-                      out)
+        self.assertIn("  only shows postings answering language_required no; segment enterprise or smb; "
+                      "location_eligible yes (unknown and ⚠ answers stay)\n", out)
 
     def test_include_agencies_by_flag(self):
         self.assertEqual(self.cli("init", *FLAGS, "--include-agencies", "--key-stdin", stdin="sk-or-v1-abc\n")[0], 0)
@@ -335,7 +340,7 @@ class InitFlagsTest(CliHome):
             (("--tag", "founding", "--tag", "founding", "--key-stdin"), "tags", "sk-or-v1-abc\n"),
             (("--require", "language_required", "--key-stdin"), "write it TAG=VALUE", "sk-or-v1-abc\n"),
             (("--require", "=no", "--key-stdin"), "write it TAG=VALUE", "sk-or-v1-abc\n"),
-            (("--require", "founding=yes", "--require", "founding=no", "--key-stdin"), "names `founding` twice",
+            (("--require", "segment=smb", "--require", "segment=nope", "--key-stdin"), "'nope' isn't an answer",
              "sk-or-v1-abc\n"),
             (("--tag", "founding", "--require", "language_required=no", "--key-stdin"),
              "require names `language_required`, which the profile doesn't tag", "sk-or-v1-abc\n"),
@@ -620,8 +625,8 @@ class PreviewTest(CliHome):
                                            'tags = ["founding", "location_eligible"]\n'
                                            'require = { location_eligible = "yes" }'))
         _, out, _ = self.cli("preview")
-        self.assertIn("Left out at the digest's end, tagged as usual and not counted here: postings a tag definitely "
-                      "answers other than location_eligible yes and agency postings.\n", out)
+        self.assertIn("Left out at the digest's end, tagged as usual and not counted here: postings not answering "
+                      "location_eligible yes and agency postings.\n", out)
         self.write_profile(PROFILE.replace('tags = ["founding", "location_eligible"]',
                                            'tags = ["founding", "location_eligible"]\ninclude_agencies = true'))
         _, out, _ = self.cli("preview")

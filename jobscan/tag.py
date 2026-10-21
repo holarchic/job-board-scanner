@@ -200,8 +200,8 @@ def definitions(tag_names: tuple[str, ...], eligible_where: str, custom: tuple[C
 
 
 def profile_definitions(profile: Profile) -> list[TagDef]:
-    """The profile's tags (`definitions`), its `require` checked against them: each a tag it tags, with one value
-    that tag can answer, other than unknown; then the agency check unless the profile includes agencies."""
+    """The profile's tags (`definitions`), its `require` checked against them: each a tag it tags, with answers
+    that tag can give, other than unknown; then the agency check unless the profile includes agencies."""
     defs = definitions(profile.tags, profile.eligible_where, profile.custom_tags)
     if any(r.tag == AGENCY for r in profile.require):
         raise ConfigError(f"require can't name `{AGENCY}`: agency postings are left out unless the profile sets "
@@ -213,41 +213,43 @@ def profile_definitions(profile: Profile) -> list[TagDef]:
 def requirements(require: tuple[Requirement, ...], include_agencies: bool) -> tuple[Requirement, ...]:
     """What a posting must not definitely contradict: a profile's (or the page's draft's) `require`, then the agency
     check's no unless it includes agencies."""
-    return require + (() if include_agencies else (Requirement(AGENCY, "no"),))
+    return require + (() if include_agencies else (Requirement(AGENCY, ("no",)),))
 
 
 def check_require(defs: list[TagDef], require: tuple[Requirement, ...]) -> None:
-    """Each requirement names one of these tags, with one value that tag can answer, other than unknown; else
+    """Each requirement names one of these tags, with answers that tag can give, other than unknown; else
     ConfigError. The page checks a draft's with it."""
     by_name = {d.name: d for d in defs}
     for r in require:
         d = by_name.get(r.tag)
         if d is None:
             raise ConfigError(f"require names `{r.tag}`, which the profile doesn't tag")
-        # Printable: a control character (NUL) wouldn't come back from the set-up page's select unchanged.
-        if not r.value.isprintable() or r.value.strip() != r.value or r.value.casefold() == UNKNOWN \
-                or (d.values is not None and r.value not in d.values):
-            choices = f": one of {[v for v in d.values if v != UNKNOWN]}" if d.values else ""
-            raise ConfigError(f"require `{r.tag}`: {r.value!r} isn't an answer it can require{choices}")
+        for value in r.values:
+            # Printable: a control character (NUL) wouldn't come back from the set-up page's tick box unchanged.
+            if not value.isprintable() or value.strip() != value or value.casefold() == UNKNOWN \
+                    or (d.values is not None and value not in d.values):
+                choices = f": one of {[v for v in d.values if v != UNKNOWN]}" if d.values else ""
+                raise ConfigError(f"require `{r.tag}`: {value!r} isn't an answer it can require{choices}")
 
 
 def misses(defs: list[TagDef], require: tuple[Requirement, ...],
            results: dict[str, TagResult]) -> tuple[Requirement, ...]:
-    """The requirements these results rule out. Only a definite answer rules one out: never unknown, an empty or
-    unknown-only list, or an answer shown with ⚠ (a needed quote missing, or any quote given and not found). A
-    default answer without a quote is the posting's answer."""
+    """The requirements these results rule out: a definite answer that is none of those required (a list answer
+    holding none of them). Only a definite answer rules one out: never unknown, an empty or unknown-only list, or an
+    answer shown with ⚠ (a needed quote missing, or any quote given and not found). A default answer without a quote
+    is the posting's answer."""
     by_name = {d.name: d for d in defs}
-    return tuple(r for r in require if _misses(by_name[r.tag], r.value, results[r.tag]))
+    return tuple(r for r in require if _misses(by_name[r.tag], r.values, results[r.tag]))
 
 
-def _misses(d: TagDef, wanted: str, result: TagResult) -> bool:
+def _misses(d: TagDef, wanted: tuple[str, ...], result: TagResult) -> bool:
     if result.flagged:
         return False
     if d.multi:
-        return any(v != UNKNOWN for v in result.value) and wanted not in result.value
+        return any(v != UNKNOWN for v in result.value) and not set(wanted) & set(result.value)
     if d.values is None:  # free text, as the model wrote it
-        return result.value.casefold() not in (wanted.casefold(), UNKNOWN)
-    return result.value not in (wanted, UNKNOWN)
+        return result.value.casefold() not in {w.casefold() for w in wanted} | {UNKNOWN}
+    return result.value not in (*wanted, UNKNOWN)
 
 
 def _builtin(name: str, spec: dict, eligible_where: str) -> TagDef:
