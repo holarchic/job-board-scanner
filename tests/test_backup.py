@@ -8,6 +8,7 @@ from unittest import mock
 
 from jobscan import backup, store
 from jobscan.config import ConfigError
+from tests.fakes import POSTINGS_V1
 
 REAL_IDENTITY = backup.code_identity  # setUp patches it
 
@@ -94,8 +95,9 @@ class BackupTest(unittest.TestCase):
 
     def test_the_copy_holds_the_database_as_it_was_before_a_migration(self):
         with self.connect() as conn:
-            conn.execute("INSERT INTO postings VALUES ('ashby:Clerk:1', 'ashby', 'ashby:Clerk', 'Clerk', 'AE',"
-                         " 'London', 'u', '', 'h', 't', 't', 0)")
+            conn.execute("INSERT INTO postings (key, ats, board, company, title, location, url, description, "
+                         "input_hash, first_seen, last_seen) VALUES ('ashby:Clerk:1', 'ashby', 'ashby:Clerk', 'Clerk', "
+                         "'AE', 'London', 'u', '', 'h', 't', 't')")
             conn.execute("PRAGMA user_version = 0")
         self.code("new")
         self.open()
@@ -105,6 +107,24 @@ class BackupTest(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT key FROM postings").fetchall(), [("ashby:Clerk:1",)])
         with self.connect() as conn:
             self.assertEqual(conn.execute("SELECT key FROM postings").fetchall(), [("ashby:clerk:1",)])
+
+    def test_the_copy_of_a_schema_1_database_keeps_its_old_table(self):
+        with self.connect() as conn:
+            conn.executescript("DROP TABLE postings;" + POSTINGS_V1)
+            conn.execute("INSERT INTO postings VALUES ('ashby:clerk:1', 'ashby', 'ashby:clerk', 'Clerk', 'AE',"
+                         " 'London', 'u', '', 'h', 't', 't', 0)")
+            conn.execute("INSERT INTO tag_results VALUES ('ashby:clerk:1', 'h', 'def', 'model', '\"yes\"', 'q', 1, 0)")
+            conn.execute("PRAGMA user_version = 1")
+        self.code("new")
+        self.open()
+        (copy,) = self.copies()
+        with self.connect(self.folder / copy) as conn:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone(), (1,))
+            self.assertNotIn("salary", [r[1] for r in conn.execute("PRAGMA table_info(postings)")])
+            self.assertEqual(conn.execute("SELECT posting_key FROM deliveries").fetchall(), [("k1",)])
+            self.assertEqual(conn.execute("SELECT posting_key FROM tag_results").fetchall(), [("ashby:clerk:1",)])
+        with self.connect() as conn:
+            self.assertEqual(conn.execute("SELECT salary FROM postings").fetchall(), [("",)])
 
     def test_the_identity_changes_with_any_one_package_file(self):
         identity = REAL_IDENTITY.__wrapped__()

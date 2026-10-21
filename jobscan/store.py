@@ -16,7 +16,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS postings (
     key TEXT PRIMARY KEY, ats TEXT NOT NULL, board TEXT NOT NULL, company TEXT NOT NULL, title TEXT NOT NULL,
     location TEXT NOT NULL, url TEXT NOT NULL, description TEXT NOT NULL, input_hash TEXT NOT NULL,
-    first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, closed INTEGER NOT NULL DEFAULT 0
+    first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, closed INTEGER NOT NULL DEFAULT 0,
+    salary TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS postings_board ON postings (board);
 CREATE TABLE IF NOT EXISTS tag_results (
@@ -41,7 +42,7 @@ CREATE TABLE IF NOT EXISTS runs (
     cost_complete INTEGER NOT NULL  -- 0 when some model reply reported no cost: `cost` is then a lower bound
 );
 """
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEAD_AFTER = 3
 
 
@@ -100,15 +101,21 @@ def open_db(home: Path) -> sqlite3.Connection:
 
 
 def _migrate(conn: sqlite3.Connection, version: int) -> None:
-    """Version 1: Ashby slugs are case-folded in board ids and posting keys (`ashby:Clerk:1` → `ashby:clerk:1`), so
-    deliveries and cached tags follow their postings. One transaction; a key collision rolls it all back."""
+    """Each step the file is behind, in one transaction; any failure (a key collision) rolls it all back. Version 1:
+    Ashby slugs are case-folded in board ids and posting keys (`ashby:Clerk:1` → `ashby:clerk:1`), so deliveries and
+    cached tags follow their postings. Version 2: postings gain `salary`, unless `SCHEMA` just made the table with
+    it."""
     if version == SCHEMA_VERSION:
         return
     conn.create_function("fold_slug", 1, _fold_slug, deterministic=True)
     with conn:
-        conn.execute("UPDATE postings SET key = fold_slug(key), board = fold_slug(board) WHERE ats = 'ashby'")
-        conn.execute("UPDATE deliveries SET posting_key = fold_slug(posting_key) WHERE posting_key LIKE 'ashby:%'")
-        conn.execute("UPDATE tag_results SET posting_key = fold_slug(posting_key) WHERE posting_key LIKE 'ashby:%'")
+        conn.execute("BEGIN")  # explicit: the connection opens no transaction by itself for ALTER TABLE
+        if version < 1:
+            conn.execute("UPDATE postings SET key = fold_slug(key), board = fold_slug(board) WHERE ats = 'ashby'")
+            conn.execute("UPDATE deliveries SET posting_key = fold_slug(posting_key) WHERE posting_key LIKE 'ashby:%'")
+            conn.execute("UPDATE tag_results SET posting_key = fold_slug(posting_key) WHERE posting_key LIKE 'ashby:%'")
+        if version < 2 and "salary" not in {r["name"] for r in conn.execute("PRAGMA table_info(postings)")}:
+            conn.execute("ALTER TABLE postings ADD COLUMN salary TEXT NOT NULL DEFAULT ''")
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
@@ -131,13 +138,13 @@ def apply_fetch(conn: sqlite3.Connection, board: str, postings: tuple[Posting, .
         conn.execute("UPDATE postings SET closed = 1 WHERE board = ?", (board,))
         conn.executemany(
             """INSERT INTO postings (key, ats, board, company, title, location, url, description, input_hash,
-                                     first_seen, last_seen, closed)
+                                     first_seen, last_seen, closed, salary)
                VALUES (:key, :ats, :board, :company, :title, :location, :url, :description, :input_hash,
-                       :now, :now, 0)
+                       :now, :now, 0, :salary)
                ON CONFLICT (key) DO UPDATE SET
                    company = excluded.company, title = excluded.title, location = excluded.location,
                    url = excluded.url, description = excluded.description, input_hash = excluded.input_hash,
-                   last_seen = excluded.last_seen, closed = 0""",
+                   last_seen = excluded.last_seen, closed = 0, salary = excluded.salary""",
             [{**vars(p), "input_hash": input_hash(p), "now": now} for p in postings],
         )
 
@@ -156,7 +163,8 @@ def pending(conn: sqlite3.Connection, profile: str, boards: set[str]) -> Iterato
             continue
         yield StoredPosting(
             posting=Posting(key=r["key"], ats=r["ats"], board=r["board"], company=r["company"], title=r["title"],
-                            location=r["location"], url=r["url"], description=r["description"]),
+                            location=r["location"], url=r["url"], description=r["description"],
+                            salary=r["salary"]),
             input_hash=r["input_hash"],
             first_seen=r["first_seen"],
         )

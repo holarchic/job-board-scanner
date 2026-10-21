@@ -199,6 +199,16 @@ def crawl_list(*crawls):
     return {"/cc-index/collections/index.html": f"<table>{rows}</table>".encode()}
 
 
+# The postings table as schema versions 0 and 1 made it, before `salary`: old databases for the migration tests.
+POSTINGS_V1 = """
+CREATE TABLE postings (
+    key TEXT PRIMARY KEY, ats TEXT NOT NULL, board TEXT NOT NULL, company TEXT NOT NULL, title TEXT NOT NULL,
+    location TEXT NOT NULL, url TEXT NOT NULL, description TEXT NOT NULL, input_hash TEXT NOT NULL,
+    first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, closed INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+
 def ashby_job(job_id, title, location="London", description=None, **extra):
     return {"id": job_id, "title": title, "location": location, "isListed": True,
             "jobUrl": f"https://jobs.ashbyhq.com/acme/{job_id}",

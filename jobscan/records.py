@@ -38,6 +38,7 @@ class Posting:
     location: str
     url: str
     description: str
+    salary: str = ""  # the job site's own pay summary, as it writes it (Ashby's); never sent to the model
 
 
 @dataclass(frozen=True)

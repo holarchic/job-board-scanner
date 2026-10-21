@@ -50,7 +50,7 @@ The install's files, the database and its upgrade backup.
 
 ### `jobscan/store.py`
 
-SQLite (`DB_FILE`; `exists` checks without creating; opened only through `open_db`, which calls `backup.before_open` first; `delivered_keys` per profile): postings (closed by fetched keys per successful board), tag-result cache, deliveries, discovered boards (with a consecutive-404 count; dead at `DEAD_AFTER`), companies (by board id, apart from `boards` so a lookup survives rediscovery; a plain `IF NOT EXISTS` table, no version step), runs (with `cost_complete`); `pending` reads lazily, scoped to the run's boards; `open_counts` per board; `discovered_at` = the list's replacement time; `PRAGMA user_version` migrations
+SQLite (`DB_FILE`; `exists` checks without creating; opened only through `open_db`, which calls `backup.before_open` first; `delivered_keys` per profile): postings (closed by fetched keys per successful board), tag-result cache, deliveries, discovered boards (with a consecutive-404 count; dead at `DEAD_AFTER`), companies (by board id, apart from `boards` so a lookup survives rediscovery; a plain `IF NOT EXISTS` table, no version step), runs (with `cost_complete`); `pending` reads lazily, scoped to the run's boards; `open_counts` per board; `discovered_at` = the list's replacement time; `PRAGMA user_version` migrations, each step the file is behind in one explicit transaction (1: Ashby slugs case-folded; 2: postings gain `salary`, unless `SCHEMA` just made it); `apply_fetch` updates each posting's `salary` with every read, outside the input hash
 
 ### `jobscan/backup.py`
 
@@ -62,7 +62,7 @@ One adapter file per ATS, the shared request and parsing code, and the registry 
 
 ### `jobscan/records.py`
 
-`Board`, `Posting` (both carry their ATS), `Company` (name, website or None), `BoardError`, `Get` (an adapter's view of fetch's request: URL, and a JSON body to POST if any → body), `Places` (the profile's location test, `prefilter.in_places`)
+`Board`, `Posting` (both carry their ATS; `salary`, the job site's own pay summary, empty unless an adapter fills it), `Company` (name, website or None), `BoardError`, `Get` (an adapter's view of fetch's request: URL, and a JSON body to POST if any → body), `Places` (the profile's location test, `prefilter.in_places`)
 
 ### `jobscan/fetch.py`
 

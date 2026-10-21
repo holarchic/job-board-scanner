@@ -6,6 +6,7 @@ from pathlib import Path
 from jobscan import store
 from jobscan.config import ConfigError
 from jobscan.records import Board, Company, Posting
+from tests.fakes import POSTINGS_V1
 
 
 def posting(job_id, board="acme", title="Account Executive"):
@@ -87,6 +88,20 @@ class ApplyFetchTest(unittest.TestCase):
         self.assertEqual(row["input_hash"], store.input_hash(moved))
         self.assertNotEqual(store.input_hash(moved), store.input_hash(posting("1")))
 
+    def test_pay_follows_each_read_without_changing_the_hash_or_redelivering(self):
+        paid = [Posting(**{**vars(posting(n)), "salary": "£85K to £120K"}) for n in ("1", "2")]
+        store.apply_fetch(self.conn, "ashby:acme", tuple(paid), T0)
+        store.deliver(self.conn, "ae", ["ashby:acme:2"], Path("d.md"))
+        before = {s.posting.key: s.input_hash for s in store.pending(self.conn, "pm", {"ashby:acme"})}
+        for salary in ["£90K to £125K", ""]:
+            store.apply_fetch(self.conn, "ashby:acme", tuple(Posting(**{**vars(p), "salary": salary}) for p in paid),
+                              T0)
+            pending = list(store.pending(self.conn, "pm", {"ashby:acme"}))
+            self.assertEqual([s.posting.salary for s in pending], [salary, salary])
+            self.assertEqual({s.posting.key: s.input_hash for s in pending}, before)  # nothing to tag again
+            self.assertEqual([s.posting.key for s in store.pending(self.conn, "ae", {"ashby:acme"})],
+                             ["ashby:acme:1"])  # delivered once, whatever its pay does
+
 
 
 T0 = "2026-10-11T10:00:00.000000+00:00"
@@ -100,15 +115,16 @@ class MigrationTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name)
 
-    def version_0(self, keys):
+    def version_0(self, keys, version=0):
         conn = sqlite3.connect(self.home / "jobscan.sqlite")
-        conn.executescript(store.SCHEMA)
+        conn.executescript(POSTINGS_V1 + store.SCHEMA)  # the other tables as now: only postings changed since
         for key in keys:
             board = key.rsplit(":", 1)[0]
             conn.execute("INSERT INTO postings VALUES (?, 'ashby', ?, 'Clerk', 'AE', 'London', 'u', 'd', 'h', ?, ?, 0)",
                          (key, board, T0, T0))
             conn.execute("INSERT INTO tag_results VALUES (?, 'h', 'def', 'model', '\"yes\"', 'q', 1, 0)", (key,))
         conn.execute("INSERT INTO deliveries VALUES ('david', ?, 'digest.md')", (keys[0],))
+        conn.execute(f"PRAGMA user_version = {version}")
         conn.commit()
         conn.close()
 
@@ -132,6 +148,24 @@ class MigrationTest(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT closed FROM postings WHERE key = 'ashby:clerk:3'").fetchone()[0], 1)
         pending = [s.posting.key for s in store.pending(conn, "david", {"ashby:clerk"})]
         self.assertEqual(pending, ["ashby:clerk:2"])
+
+    def test_version_0_and_version_1_both_gain_an_empty_salary_and_keep_the_rest(self):
+        for version, keys, folded in [(0, ["ashby:Clerk:1"], "ashby:clerk:1"), (1, ["ashby:clerk:1"], "ashby:clerk:1")]:
+            (self.home / "jobscan.sqlite").unlink(missing_ok=True)
+            self.version_0(keys, version)
+            conn = store.open_db(self.home)
+            try:
+                self.assertEqual([tuple(r) for r in conn.execute("SELECT key, salary FROM postings")], [(folded, "")])
+                self.assertEqual([r[0] for r in conn.execute("SELECT posting_key FROM deliveries")], [folded])
+                self.assertEqual([r[0] for r in conn.execute("SELECT posting_key FROM tag_results")], [folded])
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2, version)
+            finally:
+                conn.close()
+
+    def test_a_fresh_database_starts_at_the_current_schema(self):
+        conn = self.open()
+        self.assertIn("salary", [r["name"] for r in conn.execute("PRAGMA table_info(postings)")])
+        self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], store.SCHEMA_VERSION)
 
     def test_reopening_is_a_no_op(self):
         self.version_0(["ashby:Clerk:1"])
