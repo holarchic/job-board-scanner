@@ -1266,6 +1266,40 @@ class CustomTagsTest(RunFixture):
         self.assertEqual(text.count('- motion ⓘ: **b2b** — "We sell software."'), 2)
 
 
+class WatchRunTest(RunFixture):
+    def test_watched_companies_lead_the_digest_and_a_ruled_out_one_is_starred(self):
+        (self.home / "profiles" / "ae.toml").write_text(
+            PROFILE + 'require = { language_required = "no" }\nwatch = ["Initech", "hooli-eu"]\n')
+        (self.home / "listed.json").write_text(json.dumps({"companies": [
+            {"company": "Acme", "board_url": f"{self.ats.url}/posting-api/job-board/acme"},
+            {"company": "Initech Ltd", "board_url": f"{self.ats.url}/posting-api/job-board/initech"},
+            {"company": "Hooli", "board_url": f"{self.ats.url}/posting-api/job-board/hooli-eu"},
+        ]}))
+        self.ats.routes["/posting-api/job-board/initech"] = (200, {"jobs": [
+            ashby_job("i1", "Account Executive"), ashby_job("i2", "Account Executive - German Speaking")]})
+        self.ats.routes["/posting-api/job-board/hooli-eu"] = (200, {"jobs": [ashby_job("h1", "Account Executive")]})
+
+        def answering(payload):
+            tags = tags_quoting_the_posting(payload)
+            if "German" in tags["founding"]["quote"]:
+                tags["language_required"] = {"value": "German", "quote": tags["founding"]["quote"]}
+            return model_reply(tags)
+
+        self.model.routes["/chat/completions"] = (200, answering)
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "4"))
+        text = Path(path).read_text()
+        self.assertTrue(text.startswith(f"# ae — {Path(path).stem} · 4 new · 2 watched · 1 left out\n\n"
+                                        f"{digest.WATCH_LEGEND}\n"), text[:200])
+        headings = [line for line in text.splitlines() if line.startswith("## ")]
+        self.assertEqual(sorted(headings[:2]), ["## ★ Hooli — Account Executive · London",
+                                                "## ★ Initech Ltd — Account Executive · London"])
+        self.assertEqual(headings[2:], ["## Acme — Account Executive · London",
+                                        "## Acme — Enterprise Account Executive · London", "## Left out (1)"])
+        self.assertIn("\n- ★ Initech Ltd — Account Executive - German Speaking · London · language_required: German",
+                      text)
+
+
 class RequireRunTest(RunFixture):
     """`require`: a posting a required tag definitely rules out is listed under Left out, never as an entry, and
     delivered only with a digest that lists it."""

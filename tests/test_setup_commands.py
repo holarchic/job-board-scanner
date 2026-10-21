@@ -135,10 +135,18 @@ class CheckTest(CliHome):
                      "  no require: no tag of yours hides a posting",
                      "  agency postings: left out (include_agencies = true keeps them)",
                      "  tagging per run: at most 500 postings, stopping at $1.00 spent",
-                     "OK: `jobscan run` can start."]:
+                     "  watchlist: (none)", "OK: `jobscan run` can start."]:
             self.assertIn(line, out)
         self.assertNotIn("Warning", out)
         self.assertEqual(self.files(), before)
+
+    def test_the_watchlist_is_shown(self):
+        self.write_install()
+        self.write_profile(PROFILE.replace('tags = ["founding", "location_eligible"]',
+                                           'tags = ["founding", "location_eligible"]\nwatch = ["Acme", "hooli-eu"]'))
+        code, out, _ = self.cli("check")
+        self.assertEqual(code, 0)
+        self.assertIn("  watchlist: Acme; hooli-eu\n", out)
 
     def test_require_is_shown_and_one_the_tags_cant_answer_is_exit_2(self):
         self.write_install()

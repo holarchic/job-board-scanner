@@ -11,12 +11,12 @@ from jobscan.store import StoredPosting
 from jobscan.tag import TagResult
 
 
-def entry(job_id="1", title="Founding Account Executive", tags=None, open_roles=14):
+def entry(job_id="1", title="Founding Account Executive", tags=None, open_roles=14, watched=False):
     p = Posting(key=f"ashby:acme:{job_id}", ats="ashby", board="ashby:acme", company="Acme AI", title=title,
                 location="London", url=f"https://jobs.ashbyhq.com/acme/{job_id}", description="")
     return digest.DigestEntry(posting=StoredPosting(posting=p, input_hash="h",
                                                     first_seen="2026-10-12T08:00:00.000000+00:00"), tags=tags or {},
-                              open_roles=open_roles)
+                              open_roles=open_roles, watched=watched)
 
 
 class RenderTest(unittest.TestCase):
@@ -26,6 +26,23 @@ class RenderTest(unittest.TestCase):
                                "## Acme AI — Founding Account Executive · London\n"
                                "https://jobs.ashbyhq.com/acme/1 · Ashby · first seen 2026-10-12 · 14 open roles\n")
         self.assertIn("· first seen 2026-10-12 · 1 open role\n", digest.render("a", "d", [entry(open_roles=1)], 0))
+
+    def test_watched_entries_lead_in_their_own_order_marked_with_one_legend(self):
+        entries = [entry("1"), entry("2", watched=True), entry("3"), entry("4", watched=True)]
+        text = digest.render("pm", "2026-10-12", entries, carried_over=0)
+        self.assertTrue(text.startswith("# pm — 2026-10-12 · 4 new · 2 watched\n\n" + digest.WATCH_LEGEND + "\n\n"))
+        self.assertEqual([line.split("/")[-1].split(" ")[0] for line in text.splitlines() if line.startswith("https://")],
+                         ["2", "4", "1", "3"])
+        self.assertEqual(text.count("## ★ Acme AI — "), 2)
+        self.assertNotIn("★", digest.render("pm", "2026-10-12", [entry()], carried_over=0))
+
+    def test_a_watched_left_out_posting_is_starred_and_explained_but_not_counted(self):
+        german = {"language_required": TagResult(value="German", quote="German", verified=True, warn=False)}
+        text = digest.render("pm", "2026-10-12", [entry()], carried_over=0, left_out=[digest.LeftOut(
+            entry("2", tags=german, watched=True), (Requirement("language_required", ("no",)),))])
+        self.assertTrue(text.startswith("# pm — 2026-10-12 · 1 new · 1 left out\n\n" + digest.WATCH_LEGEND))
+        self.assertIn("\n- ★ Acme AI — Founding Account Executive · London · language_required: German · ", text)
+        self.assertIn("\n## Acme AI — ", text)
 
     def test_tag_lines(self):
         tags = {

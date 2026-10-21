@@ -66,6 +66,7 @@ class Profile:
     include_agencies: bool = False  # False: the agency check is asked and its yes leaves a posting out
     max_tag_per_run: int = 500  # postings a run sends to the model at most; the rest wait for later runs
     max_spend_per_run: float = 1.0  # dollars: once a run's known tagging spend reaches it, no posting starts
+    watch: tuple[str, ...] = ()  # company names or board slugs whose postings lead the digest (`watch.watched`)
 
 
 MAX_TAG_PER_RUN, MAX_SPEND_PER_RUN = Profile.max_tag_per_run, Profile.max_spend_per_run
@@ -250,6 +251,7 @@ def load_profile(home: Path) -> Profile:
         require=_require(data, path),
         include_agencies=_boolean(data, "include_agencies", path),
         **_limits(data, path),
+        watch=_watch(data, path),
     )
 
 
@@ -288,6 +290,8 @@ def profile_toml(profile: Profile) -> str:
             for r in profile.require) + " }")
     if profile.include_agencies:
         lines.append("include_agencies = true")
+    if profile.watch:
+        lines.append(f"watch = {toml_list(profile.watch)}")
     if profile.max_tag_per_run != MAX_TAG_PER_RUN:
         lines.append(f"max_tag_per_run = {profile.max_tag_per_run}")
     if profile.max_spend_per_run != MAX_SPEND_PER_RUN:
@@ -399,6 +403,15 @@ def _strings(data: dict, key: str, path: Path, required: bool = True) -> tuple[s
             or not all(isinstance(v, str) and v.strip() for v in value):
         raise ConfigError(f"{path}: `{key}` must be a {'non-empty ' if required else ''}list of strings")
     return tuple(value)
+
+
+def _watch(data: dict, path: Path) -> tuple[str, ...]:
+    """`[]` is no watchlist. A name twice, case-folded, is refused: `watch.watched` folds case, so one of them does
+    nothing."""
+    names = _strings(data, "watch", path, required=False)
+    if len({n.casefold() for n in names}) != len(names):
+        raise ConfigError(f"{path}: `watch` lists a company twice")
+    return names
 
 
 def _unique(values: tuple[str, ...], key: str, path: Path) -> tuple[str, ...]:

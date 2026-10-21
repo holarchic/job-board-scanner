@@ -61,6 +61,23 @@ class ProfileTomlTest(Home):
         with self.assertRaisesRegex(ConfigError, "`include_agencies` must be true or false"):
             load_profile(self.home)
 
+    def test_the_watchlist_is_written_only_when_set_and_read_back(self):
+        self.assertNotIn("watch", profile_toml(PROFILE))
+        watching = Profile(**{**vars(PROFILE), "watch": ("Acme", "Acme AI", "hooli-eu", 'Q "quoted"')})
+        self.assertIn('watch = ["Acme", "Acme AI", "hooli-eu", "Q \\"quoted\\""]', profile_toml(watching))
+        (self.home / "profiles" / "ae.toml").write_text(profile_toml(watching))
+        self.assertEqual(load_profile(self.home), watching)
+        (self.home / "profiles" / "ae.toml").write_text("watch = []\n" + profile_toml(PROFILE))
+        self.assertEqual(load_profile(self.home), PROFILE)
+
+    def test_a_watchlist_that_isnt_names_or_names_one_twice_is_refused(self):
+        for value, message in [('[""]', "`watch` must be a list of strings"), ("[1]", "`watch` must be a list"),
+                               ('"Acme"', "`watch` must be a list"),
+                               ('["Acme", "ACME"]', "`watch` lists a company twice")]:
+            (self.home / "profiles" / "ae.toml").write_text(f"watch = {value}\n" + profile_toml(PROFILE))
+            with self.assertRaisesRegex(ConfigError, message, msg=value):
+                load_profile(self.home)
+
     def test_tagging_limits_are_written_only_when_not_the_defaults_and_read_back(self):
         self.assertNotIn("max_", profile_toml(PROFILE))
         (self.home / "profiles" / "ae.toml").write_text(profile_toml(PROFILE))

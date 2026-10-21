@@ -18,6 +18,7 @@ class DigestEntry:
     tags: dict[str, TagResult]  # in the profile's tag order
     open_roles: int  # open postings on the posting's board, all roles
     website: str | None = None  # the company's site, when its ATS gives one
+    watched: bool = False  # the company is on the profile's watchlist: the entry leads the digest, marked WATCHED
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,8 @@ class LeftOut:
 
 UNVALIDATED = "ⓘ"
 LEGEND = f"{UNVALIDATED} marks a tag that hasn't been validated against labelled postings."
+WATCHED = "★"
+WATCH_LEGEND = f"{WATCHED} marks a company on your watchlist (`watch` in your profile)."
 LEFT_OUT_NOTE = ("A required tag answers otherwise for these (`require` in your profile), or the agency check "
                  "says an agency posted them for a client (`include_agencies = true` keeps those).")
 
@@ -45,8 +48,13 @@ def render(profile: str, date: str, entries: list[DigestEntry], carried_over: in
            quiet: frozenset[str] = frozenset(), waiting: int = 0, unread: Unread | None = None) -> str:
     """`unvalidated` names the tags shown with ⓘ; the legend appears only when one of them does on an entry. `quiet`
     names tags asked but not shown on entries (the agency check): only a left-out row names one. `waiting`: matches
-    the profile's tagging limits held back for later runs; `unread`, a line under the header."""
+    the profile's tagging limits held back for later runs; `unread`, a line under the header. Watched entries come
+    first, each group in the order given."""
+    entries = [e for e in entries if e.watched] + [e for e in entries if not e.watched]
+    watched = sum(e.watched for e in entries)
     header = f"# {profile} — {date} · {len(entries)} new"
+    if watched:
+        header += f" · {watched} watched"
     if carried_over:
         header += f" · {carried_over} untagged, carried over"
     if waiting:
@@ -57,12 +65,14 @@ def render(profile: str, date: str, entries: list[DigestEntry], carried_over: in
     if unread:
         blocks.append(f"{unread.boards:,} of {unread.of:,} boards couldn't be read this run, most often the network "
                       "down or the Mac asleep; the next run reads them.")
+    if watched or any(left.entry.watched for left in left_out):
+        blocks.append(WATCH_LEGEND)
     if any(name in unvalidated and name not in quiet for entry in entries for name in entry.tags):
         blocks.append(LEGEND)
     for entry in entries:
         p = entry.posting.posting
         blocks.append("\n".join([
-            f"## {p.company} — {p.title} · {p.location or 'location not given'}",
+            f"## {_star(entry)}{p.company} — {p.title} · {p.location or 'location not given'}",
             f"{p.url} · {ADAPTERS[p.ats].DISPLAY_NAME} · first seen {entry.posting.first_seen[:10]} · "
             f"{entry.open_roles} open role{'' if entry.open_roles == 1 else 's'}",
             *([f"Company: {p.company} · {entry.website}"] if entry.website else []),
@@ -79,7 +89,12 @@ def _left_out_line(left: LeftOut) -> str:
     """One physical line however its parts read: a free-text answer or a title can hold line breaks."""
     p = left.entry.posting.posting
     answers = " · ".join(f"{r.tag}: {_shown(left.entry.tags[r.tag])}" for r in left.misses)
-    return one_line(f"- {p.company} — {p.title} · {p.location or 'location not given'} · {answers} · {p.url}")
+    return one_line(f"- {_star(left.entry)}{p.company} — {p.title} · {p.location or 'location not given'} · "
+                    f"{answers} · {p.url}")
+
+
+def _star(entry: DigestEntry) -> str:
+    return f"{WATCHED} " if entry.watched else ""
 
 
 def _shown(result: TagResult) -> str:

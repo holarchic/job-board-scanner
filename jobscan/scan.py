@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime
 from functools import partial
 from pathlib import Path
 
-from jobscan import digest, discover, fetch, prefilter, store, tag
+from jobscan import digest, discover, fetch, prefilter, store, tag, watch
 from jobscan.config import Config, ConfigError, Profile, Requirement
 from jobscan.records import Board, Company, Places
 
@@ -251,7 +251,8 @@ def _tag(conn: sqlite3.Connection, matched: list[store.StoredPosting], defs: lis
              len(attempts) - tagged, usage.cost, usage.cost_reported, usage.reasoning_tokens)
     open_roles = store.open_counts(conn, {s.posting.board for s in matched})
     entries = [digest.DigestEntry(posting=s, tags={d.name: results[s.posting.key][d.name] for d in defs},
-                                  open_roles=open_roles[s.posting.board], website=websites.get(s.posting.board))
+                                  open_roles=open_roles[s.posting.board], website=websites.get(s.posting.board),
+                                  watched=watch.watched(profile.watch, s.posting.company, s.posting.board))
                for s in matched if len(results[s.posting.key]) == len(defs)]
     return Tagging(entries, tagged, usage, waiting)
 
