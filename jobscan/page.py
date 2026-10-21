@@ -232,11 +232,11 @@ def read_step(step: str, fields: Mapping[str, list[str]], form: Form, offers: Of
             changes["custom"] = _rows(fields, one, offers)
             changes["too_many"] = len(changes["custom"]) > MOST_TAGS
             # A row given a built-in's name (refused) keeps its ticks to itself, never adding them to the built-in's.
+            names = tag.builtin_names()
             builtin = ((name, tuple(dict.fromkeys(t for t in fields.get(f"require-{name}", []) if t)))
-                       for name in tag.builtin_names())
+                       for name in names)
             ticked = [*(Requirement(name, values) for name, values in builtin if values),
-                      *(Requirement(r.name, r.require) for r in changes["custom"]
-                        if r.require and r.name not in tag.builtin_names())]
+                      *(Requirement(r.name, r.require) for r in changes["custom"] if r.require and r.name not in names)]
             if any(len(v) > TEXT_LIMIT for r in ticked for v in r.values):
                 long.add("tags")
             changes["require"] = _required(form.require, ticked)

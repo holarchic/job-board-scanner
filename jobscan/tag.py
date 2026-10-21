@@ -249,11 +249,12 @@ def misses(defs: list[TagDef], require: tuple[Requirement, ...],
 def _misses(d: TagDef, wanted: tuple[str, ...], result: TagResult) -> bool:
     if result.flagged:
         return False
+    # Unknown in any case is no answer, as `can_require` reads it: a custom tag may list "Unknown".
     if d.multi:
-        return any(v != UNKNOWN for v in result.value) and not set(wanted) & set(result.value)
+        return any(v.casefold() != UNKNOWN for v in result.value) and not set(wanted) & set(result.value)
     if d.values is None:  # free text, as the model wrote it
         return result.value.casefold() not in {w.casefold() for w in wanted} | {UNKNOWN}
-    return result.value not in (*wanted, UNKNOWN)
+    return result.value.casefold() != UNKNOWN and result.value not in wanted
 
 
 def _builtin(name: str, spec: dict, eligible_where: str) -> TagDef:

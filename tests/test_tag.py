@@ -175,6 +175,8 @@ def profile(require=(), custom=()):
 
 MOTION = CustomTag(name="motion", definition="Who it sells to.", values=("B2B", "b2c", "unknown"), multi=False,
                    default=None)
+SHOUTED = CustomTag(name="sector", definition="The sector.", values=("HealthTech", "other", "Unknown"), multi=False,
+                    default=None)
 CHANNELS = CustomTag(name="channels", definition="Where it sells.", values=("web", "store", "unknown"), multi=True,
                      default=None)
 
@@ -244,6 +246,14 @@ class RequireTest(unittest.TestCase):
                                      segment={"value": ["mid_market"], "quote": quoted}),
                          (Requirement("segment", ("enterprise", "smb")),))
         self.assertEqual(self.missed({"location_eligible": ("yes", "no")}), ())  # unknown
+
+    def test_unknown_in_any_case_never_misses(self):
+        defs = tag.profile_definitions(profile(custom=(SHOUTED,)))
+        cells = json.loads(reply()) | {"agency": {"value": "no", "quote": None}}
+        results = tag.parse_reply(json.dumps(cells | {"sector": {"value": "Unknown", "quote": "our first sales hire"}}),
+                                  defs, POSTING)
+        self.assertFalse(results["sector"].flagged)
+        self.assertEqual(tag.misses(defs, (Requirement("sector", ("HealthTech",)),), results), ())
 
     def test_an_answer_shown_with_a_warning_never_misses(self):
         self.assertEqual(self.missed({"location_eligible": "yes"},
