@@ -625,8 +625,8 @@ class PreviewTest(CliHome):
                                            'tags = ["founding", "location_eligible"]\n'
                                            'require = { location_eligible = "yes" }'))
         _, out, _ = self.cli("preview")
-        self.assertIn("Left out at the digest's end, tagged as usual and not counted here: postings not answering "
-                      "location_eligible yes and agency postings.\n", out)
+        self.assertIn("Left out at the digest's end, tagged as usual and not counted here: postings a tag definitely "
+                      "answers otherwise than location_eligible yes and agency postings.\n", out)
         self.write_profile(PROFILE.replace('tags = ["founding", "location_eligible"]',
                                            'tags = ["founding", "location_eligible"]\ninclude_agencies = true'))
         _, out, _ = self.cli("preview")

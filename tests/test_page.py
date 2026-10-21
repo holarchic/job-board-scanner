@@ -72,6 +72,13 @@ class ReadStepTest(unittest.TestCase):
         renamed, _ = page.read_step("tags", {**fields, "custom-1-name": ["bee"]}, form, page.Offers())
         self.assertEqual(renamed.require, (Requirement("c", ("yes",)), Requirement("bee", ("no",))))
 
+    def test_a_row_given_a_built_in_name_never_adds_its_ticks_to_the_built_in(self):
+        fields = {"tag": ["founding"], "require-founding": ["yes"], "custom-0-name": ["founding"],
+                  "custom-0-definition": ["Mine?"], "custom-0-require": ["no"]}
+        read, _ = page.read_step("tags", fields, DRAFT, page.Offers())
+        self.assertEqual(read.require, (Requirement("founding", ("yes",)),))
+        self.assertEqual(read.custom[0].require, ("no",))
+
     def test_a_ticked_answer_too_long_is_noted(self):
         read, _ = page.read_step("tags", {"tag": ["founding"], "require-founding": ["x" * 20_001]}, DRAFT,
                                  page.Offers())
@@ -314,6 +321,30 @@ class RenderTest(unittest.TestCase):
                             "catalogue": tag.builtins(), "fresh": True, "key_held": False, "password_held": False,
                             "email": None, "home": "/h o'me", "launchd": True, "saved": SAVED, **changes})
 
+    def test_two_rows_given_one_name_keep_their_own_ticks_until_it_is_corrected(self):
+        rows = (page.CustomRow(name="a", definition="A?", require=("yes",)),
+                page.CustomRow(name="b", definition="B?", require=("no",)))
+        form = replace(DRAFT, custom=rows, require=(Requirement("a", ("yes",)), Requirement("b", ("no",))))
+        fields = {"tag": ["founding"], "custom-0-name": ["a"], "custom-0-definition": ["A?"],
+                  "custom-0-require": ["yes"], "custom-1-name": ["a"], "custom-1-definition": ["B?"],
+                  "custom-1-require": ["no"]}
+        twice, _ = page.read_step("tags", fields, form, page.Offers())
+        self.assertIn("named twice", checks("tags", twice)["tags"])
+        html = page.render(self.view("tags", form=twice))
+        self.assertIn('name="custom-0-require" value="yes" checked> yes</label><label><input type="checkbox" '
+                      'name="custom-0-require" value="no"> no', html)
+        self.assertIn('name="custom-1-require" value="yes"> yes</label><label><input type="checkbox" '
+                      'name="custom-1-require" value="no" checked> no', html)
+        fixed, _ = page.read_step("tags", {**fields, "custom-1-name": ["b"]}, twice, page.Offers())
+        self.assertEqual(fixed.require, (Requirement("a", ("yes",)), Requirement("b", ("no",))))
+
+    def test_an_answer_the_profile_cant_require_is_not_offered(self):
+        form = replace(DRAFT, custom=(page.CustomRow(name="sector", definition="Sector?",
+                                                     values="Health\tTech\nBioTech\nUnknown"),))
+        html = page.render(self.view("tags", form=form))
+        self.assertIn('name="custom-0-require" value="BioTech"> BioTech</label></div>', html)
+        self.assertNotIn("Health\tTech</label>", html)
+
     def test_text_is_escaped_and_secrets_never_shown(self):
         for step in ALL_STEPS:
             html = page.render(self.view(step))
@@ -351,6 +382,7 @@ class RenderTest(unittest.TestCase):
 
     def test_each_built_in_tag_offers_the_answers_it_can_hide_by(self):
         form = replace(DRAFT, tags=frozenset({"founding", "language_required"}),
+                       custom=(replace(DRAFT.custom[0], require=("no",)), DRAFT.custom[1]),
                        require=(Requirement("language_required", ("French",)), Requirement("founding", ("yes",)),
                                 Requirement("climate", ("no",))))
         html = page.render(self.view("tags", form=form))

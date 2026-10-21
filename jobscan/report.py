@@ -168,7 +168,7 @@ def preview_lines(search: str, p: Preview, requirements: tuple[Requirement, ...]
         f"  left out by your excluded titles: {p.excluded:,}",
     ]
     own = tuple(r for r in requirements if r.tag != tag.AGENCY)
-    hidden = [*([f"postings not answering {required_text(own)}"] if own else []),
+    hidden = [*([f"postings a tag definitely answers otherwise than {required_text(own)}"] if own else []),
               *(["agency postings"] if len(own) < len(requirements) else [])]
     if hidden:
         lines.append(f"Left out at the digest's end, tagged as usual and not counted here: {' and '.join(hidden)}.")

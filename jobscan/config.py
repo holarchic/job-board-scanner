@@ -282,8 +282,10 @@ def profile_toml(profile: Profile) -> str:
              f"locations = {toml_list(profile.locations)}", f"eligible_where = {toml_string(profile.eligible_where)}",
              f"tags = {toml_list(profile.tags)}"]
     if profile.require:  # tag names are bare keys (CUSTOM_TAG_NAME, and the built-ins' alike)
-        lines.append("require = { " + ", ".join(f"{r.tag} = {_answers_toml(r.values)}" for r in profile.require)
-                     + " }")
+        # One answer as a string, as files read before lists were allowed; several as a list.
+        lines.append("require = { " + ", ".join(
+            f"{r.tag} = {toml_string(r.values[0]) if len(r.values) == 1 else toml_list(r.values)}"
+            for r in profile.require) + " }")
     if profile.include_agencies:
         lines.append("include_agencies = true")
     if profile.max_tag_per_run != MAX_TAG_PER_RUN:
@@ -309,11 +311,6 @@ def toml_string(value: str) -> str:
 
 def toml_list(values) -> str:
     return "[" + ", ".join(toml_string(v) for v in values) + "]"
-
-
-def _answers_toml(values: tuple[str, ...]) -> str:
-    """One answer as a string, so a file written before lists were allowed reads the same; several as a list."""
-    return toml_string(values[0]) if len(values) == 1 else toml_list(values)
 
 
 def _boolean(data: dict, key: str, path: Path) -> bool:

@@ -4,7 +4,7 @@ on its own (`check_step`), the whole draft checked into a profile (`to_profile`)
 pure). Secrets typed into the page are read but never rendered."""
 import html
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from urllib.parse import quote_plus
@@ -61,6 +61,9 @@ class CustomRow:
     values: str = ""  # one answer per line; empty: yes, no, unknown
     multi: bool = False
     default: str = ""
+    # The answers ticked under it, as shown: the row's own, so two rows given one name keep theirs apart until the
+    # name is corrected. `Form.require` holds them by name, the profile's order kept.
+    require: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -155,7 +158,9 @@ def steps(fresh: bool) -> tuple[str, ...]:
 def form_from_profile(profile: Profile, email: EmailConfig | None) -> Form:
     return Form(name=profile.name, titles="\n".join(profile.titles), exclude_titles="\n".join(profile.exclude_titles),
                 locations="\n".join(profile.locations), eligible_where=profile.eligible_where,
-                tags=frozenset(profile.tags), custom=tuple(row(c) for c in profile.custom_tags),
+                tags=frozenset(profile.tags),
+                custom=tuple(replace(row(c), require=next((r.values for r in profile.require if r.tag == c.name), ()))
+                             for c in profile.custom_tags),
                 require=profile.require, include_agencies=profile.include_agencies,
                 max_tag=str(profile.max_tag_per_run) if str(profile.max_tag_per_run) in COUNTS else "other",
                 max_tag_other="" if str(profile.max_tag_per_run) in COUNTS else str(profile.max_tag_per_run),
@@ -224,9 +229,11 @@ def read_step(step: str, fields: Mapping[str, list[str]], form: Form, offers: Of
             offers = replace(offers, places=_union(offers.places, added))
         case "tags":
             changes["tags"] = frozenset(fields.get("tag", []))
-            changes["custom"], own = _rows(fields, one, offers)
+            changes["custom"] = _rows(fields, one, offers)
             changes["too_many"] = len(changes["custom"]) > MOST_TAGS
-            ticked = [(name, fields.get(f"require-{name}", [])) for name in tag.builtin_names()] + own
+            # A row given a built-in's name (refused) keeps its ticks to itself, never adding them to the built-in's.
+            ticked = [*((name, fields.get(f"require-{name}", [])) for name in tag.builtin_names()),
+                      *((r.name, r.require) for r in changes["custom"] if r.name not in tag.builtin_names())]
             if any(len(t) > TEXT_LIMIT for _, ticks in ticked for t in ticks):
                 long.add("tags")
             changes["require"] = _required(form.require, ticked)
@@ -248,31 +255,28 @@ def read_step(step: str, fields: Mapping[str, list[str]], form: Form, offers: Of
     return new, offers
 
 
-def _rows(fields: Mapping[str, list[str]], one,
-          offers: Offers) -> tuple[tuple[CustomRow, ...], list[tuple[str, list[str]]]]:
-    """The custom rows as posted (a row with no name is removed, and nothing in it is checked), then each ticked
-    offered tag no row is named like, as a row of its own from then on; a name typed twice stays for the check to
-    refuse. Beside them, each posted row's name with the answers ticked under it, read by the row's posted index so a
-    removed row can't pass its ticks to the next."""
+def _rows(fields: Mapping[str, list[str]], one, offers: Offers) -> tuple[CustomRow, ...]:
+    """The custom rows as posted (a row with no name is removed, and nothing in it is checked), each with the answers
+    ticked under it, read by its posted index so a removed row can't pass them to the next; then each ticked offered
+    tag no row is named like, as a row of its own from then on; a name typed twice stays for the check to refuse."""
     # Sorted as numbers without converting them (a 5,000-digit index would overflow int()); "1" and "01" kept apart.
     indexes = sorted({m.group(1) for name in fields if (m := re.fullmatch(r"custom-(\d+)-\w+", name))},
                      key=lambda i: (len(i.lstrip("0")), i.lstrip("0"), i))
     rows: list[CustomRow] = []
-    ticks = []
     for i in indexes:
         if not (fields.get(f"custom-{i}-name") or [""])[0].strip():
             continue
         at = f"custom-{len(rows)}"  # the row's place on the page, where its error shows
         rows.append(CustomRow(name=one(f"custom-{i}-name", at).strip(), definition=one(f"custom-{i}-definition", at),
                               values=one(f"custom-{i}-values", at), multi=(fields.get(f"custom-{i}-multi") or [""])[0]
-                              == "on", default=one(f"custom-{i}-default", at).strip()))
-        ticks.append((rows[-1].name, fields.get(f"custom-{i}-require", [])))
+                              == "on", default=one(f"custom-{i}-default", at).strip(),
+                              require=tuple(dict.fromkeys(t for t in fields.get(f"custom-{i}-require", []) if t))))
     ticked = set(fields.get("add_custom", []))
     rows += [r for r in offers.custom if r.name in ticked and r.name not in {row.name for row in rows}]
-    return tuple(rows), ticks
+    return tuple(rows)
 
 
-def _required(draft: tuple[Requirement, ...], ticked: list[tuple[str, list[str]]]) -> tuple[Requirement, ...]:
+def _required(draft: tuple[Requirement, ...], ticked: list[tuple[str, Sequence[str]]]) -> tuple[Requirement, ...]:
     """The requirements the tags step's ticks make, in the draft's order so an unchanged step changes nothing: each
     the draft holds keeps its place and its answers' order while still ticked, answers newly ticked after them; a tag
     left with none goes (a removed or renamed row's among them); tags newly given ticks follow, in the page's order."""
@@ -536,11 +540,6 @@ def row(c: CustomTag) -> CustomRow:
                      default=c.default or "")
 
 
-def _requirable(row: CustomRow) -> tuple[str, ...]:
-    """A custom row's answers as the tags step offers them to require: its lines (else yes and no), not unknown."""
-    return tuple(v for v in (_lines(row.values) or CUSTOM_TAG_VALUES) if v.casefold() != tag.UNKNOWN)
-
-
 def _tag_order(name: str) -> tuple[int, str]:
     """Built-in tags in the catalogue's order; an unknown name last, for the check to refuse."""
     names = tag.builtin_names()
@@ -724,7 +723,7 @@ def _tags_body(view: View) -> str:
             + (" checked" if form.include_agencies else "") + "> <span><b>Include jobs posted by recruitment and "
             "staffing agencies</b> for their clients <i>(unticked: jobscan asks of every posting, and lists those at "
             "the digest's end)</i></span></label></fieldset>"
-            + suggested + _custom(form, required, e))
+            + suggested + _custom(form, e))
 
 
 def _only(field: str, offered: tuple[str, ...], current: tuple[str, ...]) -> str:
@@ -739,7 +738,7 @@ def _only(field: str, offered: tuple[str, ...], current: tuple[str, ...]) -> str
     return f'<div class="hide" role="group">Only show postings where the answer is: {boxes}</div>'
 
 
-def _custom(form: Form, required: Mapping[str, tuple[str, ...]], e: Mapping[str, str]) -> str:
+def _custom(form: Form, e: Mapping[str, str]) -> str:
     rows = [*form.custom, CustomRow()]
     opened = " open" if form.custom or any(n.startswith("custom-") for n in e) else ""
     out = [f"<details{opened}><summary>Tags of your own</summary><fieldset><p class=\"hint\">Say what each answer "
@@ -754,7 +753,8 @@ def _custom(form: Form, required: Mapping[str, tuple[str, ...]], e: Mapping[str,
             f'<label>Definition<br><textarea name="custom-{i}-definition" rows="3">{_x(row.definition)}</textarea>'
             f'</label><br><label>Answers, one per line (empty: yes, no, unknown)<br>'
             f'<textarea name="custom-{i}-values" rows="2">{_x(row.values)}</textarea></label>'
-            + (_only(f"custom-{i}-require", _requirable(row), required.get(row.name, ())) if row.name else "")
+            + (_only(f"custom-{i}-require", tuple(v for v in _lines(row.values) or CUSTOM_TAG_VALUES
+                                                  if tag.can_require(v)), row.require) if row.name else "")
             + "</div>")
     return "".join(out) + "</fieldset></details>"
 

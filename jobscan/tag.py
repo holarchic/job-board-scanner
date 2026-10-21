@@ -225,11 +225,15 @@ def check_require(defs: list[TagDef], require: tuple[Requirement, ...]) -> None:
         if d is None:
             raise ConfigError(f"require names `{r.tag}`, which the profile doesn't tag")
         for value in r.values:
-            # Printable: a control character (NUL) wouldn't come back from the set-up page's tick box unchanged.
-            if not value.isprintable() or value.strip() != value or value.casefold() == UNKNOWN \
-                    or (d.values is not None and value not in d.values):
+            if not can_require(value) or (d.values is not None and value not in d.values):
                 choices = f": one of {[v for v in d.values if v != UNKNOWN]}" if d.values else ""
                 raise ConfigError(f"require `{r.tag}`: {value!r} isn't an answer it can require{choices}")
+
+
+def can_require(value: str) -> bool:
+    """An answer `require` can ask of any tag: printable (a control character, NUL say, wouldn't come back from the
+    set-up page's tick box unchanged), no space at either end, and not unknown. The page offers only these."""
+    return value.isprintable() and value.strip() == value and value.casefold() != UNKNOWN
 
 
 def misses(defs: list[TagDef], require: tuple[Requirement, ...],
