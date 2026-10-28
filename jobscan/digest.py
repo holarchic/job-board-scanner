@@ -9,7 +9,7 @@ from jobscan.config import Requirement
 from jobscan.fetch import ADAPTERS
 from jobscan.payload import one_line
 from jobscan.store import StoredPosting
-from jobscan.tag import TagResult
+from jobscan.tag import ABOUT, UNKNOWN, TagResult
 
 
 @dataclass(frozen=True)
@@ -68,24 +68,40 @@ def render(profile: str, date: str, entries: list[DigestEntry], carried_over: in
                       "down or the Mac asleep; the next run reads them.")
     if watched or any(left.entry.watched for left in left_out):
         blocks.append(WATCH_LEGEND)
-    if any(name in unvalidated and name not in quiet for entry in entries for name in entry.tags):
+    if any(name in unvalidated for entry in entries for name in _shown_tags(entry, quiet)):
         blocks.append(LEGEND)
-    for entry in entries:
-        p = entry.posting.posting
-        blocks.append("\n".join([
-            f"## {_star(entry)}{p.company} — {p.title} · {p.location or 'location not given'}",
-            f"{p.url} · {ADAPTERS[p.ats].DISPLAY_NAME} · first seen {entry.posting.first_seen[:10]} · "
-            f"{entry.open_roles} open role{'' if entry.open_roles == 1 else 's'}",
-            *([f"Pay: {p.salary}"] if p.salary else []),
-            *([f"Company: {p.company} · {entry.website}"] if entry.website else []),
-            *(one_line(f"Your note: {note}") for note in entry.notes),
-            *(_tag_line(name + (f" {UNVALIDATED}" if name in unvalidated else ""), result)
-              for name, result in entry.tags.items() if name not in quiet),
-        ]))
+    blocks.extend(_entry(entry, unvalidated, quiet) for entry in entries)
     if left_out:
         blocks.append("\n".join([f"## Left out ({len(left_out)})", LEFT_OUT_NOTE,
                                  *map(_left_out_line, left_out)]))
     return "\n\n".join(blocks) + "\n"
+
+
+def _entry(entry: DigestEntry, unvalidated: frozenset[str], quiet: frozenset[str]) -> str:
+    p = entry.posting.posting
+    tags = _shown_tags(entry, quiet)
+    about = tags.pop(ABOUT, None)
+
+    def mark(name: str) -> str:
+        return f" {UNVALIDATED}" if name in unvalidated else ""
+
+    return "\n".join([
+        f"## {_star(entry)}{p.company} — {p.title} · {p.location or 'location not given'}",
+        f"{p.url} · {ADAPTERS[p.ats].DISPLAY_NAME} · first seen {entry.posting.first_seen[:10]} · "
+        f"{entry.open_roles} open role{'' if entry.open_roles == 1 else 's'}",
+        *([f"Pay: {p.salary}"] if p.salary else []),
+        *([f"Company: {p.company} · {entry.website}"] if entry.website else []),
+        # A free-text answer can hold line breaks; the About line stays one line.
+        *([one_line(f"About{mark(ABOUT)}: {_answer(about)}")] if about else []),
+        *(one_line(f"Your note: {note}") for note in entry.notes),
+        *(f"- {name}{mark(name)}: {_answer(result)}" for name, result in tags.items()),
+    ])
+
+
+def _shown_tags(entry: DigestEntry, quiet: frozenset[str]) -> dict[str, TagResult]:
+    """The tags an entry shows, in its order: not the quiet ones, and `about` only when the posting says."""
+    return {name: result for name, result in entry.tags.items()
+            if name not in quiet and not (name == ABOUT and result.value == UNKNOWN)}
 
 
 def _left_out_line(left: LeftOut) -> str:
@@ -104,13 +120,14 @@ def _shown(result: TagResult) -> str:
     return (", ".join(result.value) or "unknown") if isinstance(result.value, tuple) else result.value
 
 
-def _tag_line(label: str, result: TagResult) -> str:
+def _answer(result: TagResult) -> str:
+    """A tag's answer as an entry shows it, after its label."""
     shown = _shown(result)
     if result.quote is None and not result.warn:  # unknown, empty or the tag's default: nothing to cite
-        return f"- {label}: {shown}"
+        return shown
     if result.quote is None:
-        return f"- {label}: **{shown}** ⚠ no quote"
-    return f'- {label}: **{shown}** — "{result.quote}"' + (" ⚠ quote not in posting" if result.flagged else "")
+        return f"**{shown}** ⚠ no quote"
+    return f'**{shown}** — "{result.quote}"' + (" ⚠ quote not in posting" if result.flagged else "")
 
 
 def publish(directory: Path, date: str, text: str) -> Path:

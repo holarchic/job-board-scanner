@@ -66,6 +66,31 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(lines[4:6], ["Pay: £85K to £120K • Offers Equity", "Company: Acme AI · https://acme.ai/"])
         self.assertNotIn("Pay:", digest.render("pm", "2026-10-12", [entry()], carried_over=0))
 
+    def test_about_is_a_line_after_company_and_pay_before_notes_and_bullets(self):
+        founding = TagResult(value="yes", quote="first", verified=True, warn=False)
+        about = TagResult(value="Call-recording software\nfor sales teams", quote="records every sales call",
+                          verified=True, warn=False)
+        plain = entry(tags={"founding": founding, "about": about}, notes=("applied",))
+        stored = replace(plain.posting, posting=replace(plain.posting.posting, salary="£85K"))
+        lines = digest.render("pm", "2026-10-12", [replace(plain, posting=stored, website="https://acme.ai/")],
+                              carried_over=0, unvalidated=frozenset({"about"})).splitlines()
+        self.assertEqual(lines[0:3], ["# pm — 2026-10-12 · 1 new", "", digest.LEGEND])
+        self.assertEqual(lines[6:11], [
+            "Pay: £85K", "Company: Acme AI · https://acme.ai/",
+            'About ⓘ: **Call-recording software for sales teams** — "records every sales call"',
+            "Your note: applied", '- founding: **yes** — "first"'])
+        self.assertEqual(len(lines), 11)  # about is no bullet
+
+    def test_about_shows_its_warning_and_no_line_when_unknown(self):
+        flagged = TagResult(value="Ads for brands", quote="not there", verified=False, warn=True)
+        self.assertIn('\nAbout: **Ads for brands** — "not there" ⚠ quote not in posting\n',
+                      digest.render("pm", "d", [entry(tags={"about": flagged})], 0))
+        unknown = TagResult(value="unknown", quote=None, verified=False, warn=False)
+        text = digest.render("pm", "d", [entry(tags={"about": unknown})], 0, unvalidated=frozenset({"about"}))
+        self.assertNotIn("About", text)
+        self.assertNotIn("unknown", text)
+        self.assertNotIn(digest.LEGEND, text)  # nothing unvalidated shown
+
     def test_tag_lines(self):
         tags = {
             "founding": TagResult(value="yes", quote="our first sales hire", verified=True, warn=False),
