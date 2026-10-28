@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jobscan"
-version = "0.8.0"
+version = "0.9.0"
 description = "Self-hosted job-board scanner for tech jobs: Ashby boards, title and location filter, LLM tags with verified quotes, markdown digest"
 requires-python = ">=3.11"
 dependencies = []

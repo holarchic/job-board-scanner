@@ -38,10 +38,11 @@ It finds the job boards itself, reads them directly and has a language model tag
 | `reports_to` | Who the role reports to, by title (and name, if the posting gives one), or `unknown` |
 | `visa_sponsorship` | Does the employer sponsor a work visa? `unknown` when the posting doesn't say |
 | `credential_required` | A required specialist degree, licence or lab/clinical background outside the role's own craft, or `no` |
+| `about` | What the company sells and to whom, in one sentence from the posting; shown as an `About:` line on the entry, and no line when the posting doesn't say |
 
-`reports_to`, `visa_sponsorship` and `credential_required` are opt-in: asked only when you pick them, so a search that doesn't need them pays nothing for them.
+`reports_to`, `visa_sponsorship`, `credential_required` and `about` are opt-in: asked only when you pick them, so a search that doesn't need them pays nothing for them.
 
-ⓘ marks the tags no labelled set has checked: `segment`, `tech_company`, `reports_to`, `visa_sponsorship`, `credential_required`, `location_eligible` outside the UK, and your own.
+ⓘ marks the tags no labelled set has checked: `segment`, `tech_company`, `reports_to`, `visa_sponsorship`, `credential_required`, `about`, `location_eligible` outside the UK, and your own.
 
 It works best where a few titles narrow the field and the posting answers the rest. My first runs: AE, 233 postings, 47 minutes, at least $0.11; PM, 169 postings, 7 minutes, $0.08, then 118 more from Greenhouse for $0.05.
 
