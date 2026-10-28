@@ -1268,6 +1268,36 @@ class CustomTagsTest(RunFixture):
         self.assertEqual(text.count('- motion ⓘ: **b2b** — "We sell software."'), 2)
 
 
+class AboutRunTest(RunFixture):
+    def test_about_is_an_entrys_line_shown_only_when_the_posting_says(self):
+        (self.home / "profiles" / "ae.toml").write_text(
+            'titles = ["Account Executive"]\nlocations = ["London"]\neligible_where = "the UK"\n'
+            'tags = ["founding", "about"]\nrequire = { founding = "yes" }\n')
+        self.jobs.append(ashby_job("5", "Founding Account Executive"))
+        answers = {"Account Executive": ("yes", {"value": "Software for sales teams", "quote": "We sell software."}),
+                   "Enterprise Account Executive": ("yes", {"value": "unknown", "quote": None}),
+                   "Founding Account Executive": ("no", {"value": "Ads for brands", "quote": "We sell software."})}
+
+        def answering(payload):
+            tags = tags_quoting_the_posting(payload)
+            founding, about = answers[payload["messages"][0]["content"].split("<title>", 1)[1].split("</title>")[0]]
+            return model_reply({"founding": tags["founding"] if founding == "yes" else {"value": "no", "quote": None},
+                                "about": about, "agency": tags["agency"]})
+
+        self.model.routes["/chat/completions"] = (200, answering)
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        text = Path(path).read_text()
+        self.assertIn("· 2 new · 1 left out\n", text)
+        self.assertIn('/acme/1 · Ashby · first seen ', text)
+        first = text.split("/acme/1 · Ashby", 1)[1].splitlines()
+        self.assertEqual(first[1:3], ['About ⓘ: **Software for sales teams** — "We sell software."',
+                                      '- founding: **yes** — "Account Executive"'])
+        self.assertEqual(text.count("About"), 1)  # the unknown one has none; the left-out row names only founding
+        self.assertNotIn("- about", text)
+        self.assertIn("Founding Account Executive · London · founding: no · ", text)
+
+
 class WatchRunTest(RunFixture):
     def test_watched_companies_lead_the_digest_and_a_ruled_out_one_is_starred(self):
         (self.home / "profiles" / "ae.toml").write_text(
