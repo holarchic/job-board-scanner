@@ -284,6 +284,10 @@ class RequireTest(unittest.TestCase):
                 tag.profile_definitions(profile(require=(Requirement(tag_name, (value,)),), custom=(MOTION, CHANNELS)))
         with self.assertRaisesRegex(ConfigError, "'maybe' isn't an answer"):
             tag.profile_definitions(profile(require=(Requirement("founding", ("yes", "maybe")),)))
+        about = replace(profile(), tags=(*ALL, tag.ABOUT))
+        for value in ["Software for finance teams", "unknown"]:
+            with self.subTest(about=value), self.assertRaisesRegex(ConfigError, "require can't name `about`"):
+                tag.profile_definitions(replace(about, require=(Requirement(tag.ABOUT, (value,)),)))
         self.assertEqual(len(tag.profile_definitions(profile(
             require=(Requirement("language_required", ("French",)), Requirement("channels", ("web",))),
             custom=(MOTION, CHANNELS)))), 8)  # the agency check last
@@ -329,7 +333,7 @@ class OptInTest(unittest.TestCase):
     def test_opt_in_tags_are_asked_only_when_chosen(self):
         self.assertEqual(tag.default_names(), ALL)  # init's default and eval's prompt stay the G2 five
         self.assertEqual({t.name for t in tag.builtins() if t.opt_in},
-                         {"reports_to", "visa_sponsorship", "credential_required"})
+                         {"reports_to", "visa_sponsorship", "credential_required", "about"})
         self.assertEqual(set(tag.builtin_names()) - set(tag.default_names()),
                          {t.name for t in tag.builtins() if t.opt_in})
 
@@ -341,7 +345,7 @@ class RequirableTest(unittest.TestCase):
                           "segment": ("enterprise", "mid_market", "smb"), "language_required": ("no",),
                           "tech_company": ("yes", "no"), "reports_to": (),
                           "visa_sponsorship": ("yes", "no"),
-                          "credential_required": ("no",)})
+                          "credential_required": ("no",), "about": ()})
         for t in tag.builtins():  # every one offered is one the check accepts
             for value in t.requirable:
                 tag.check_require(tag.definitions((t.name,), "the UK"), (Requirement(t.name, (value,)),))

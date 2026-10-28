@@ -31,6 +31,7 @@ WORKERS = 4
 STOP_AFTER_FAILURES = 3  # consecutive failed postings → treat the model as unavailable
 UNKNOWN = "unknown"
 AGENCY = "agency"  # the check jobscan asks itself (tags.toml `check = true`): a reserved name, never a tag to pick
+ABOUT = "about"  # the built-in summary of the company: the digest shows it as an entry's About line, never required
 # G2 validated `location_eligible` for UK eligibility only.
 UK = re.compile(r"(?<!\w)(UK|U\.K\.|United Kingdom|Britain|England|Scotland|Wales|Northern Ireland|London)(?!\w)",
                 re.IGNORECASE)
@@ -218,9 +219,11 @@ def requirements(require: tuple[Requirement, ...], include_agencies: bool) -> tu
 
 def check_require(defs: list[TagDef], require: tuple[Requirement, ...]) -> None:
     """Each requirement names one of these tags, with answers that tag can give, other than unknown; else
-    ConfigError. The page checks a draft's with it."""
+    ConfigError. The page checks a draft's with it. `about` is never one: a summary is no answer to require."""
     by_name = {d.name: d for d in defs}
     for r in require:
+        if r.tag == ABOUT:
+            raise ConfigError(f"require can't name `{ABOUT}`: its answer is a summary of the company, not a choice")
         d = by_name.get(r.tag)
         if d is None:
             raise ConfigError(f"require names `{r.tag}`, which the profile doesn't tag")
