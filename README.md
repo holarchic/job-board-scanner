@@ -25,8 +25,8 @@ It finds the job boards itself, reads them directly and has a language model tag
 
 - **Finds boards** in the three newest [Common Crawl](https://commoncrawl.org) crawls: about 4,000 on Ashby, 4,800 on Greenhouse, 1,100 on Gem, 1,000 on Teamtailor, 2,800 on Personio, 1,250 on SmartRecruiters, 1,700 on Rippling, 4,200 Workday sites and 1,500 Oracle Recruiting Cloud sites. About 8,000 of the Ashby and Greenhouse ones answer. Of my hand-built list it finds 111 of 114 Ashby boards, 33 of 37 Greenhouse ones and all 4 on Gem.
 - **Reads Workable and Lever boards you list** in a boards file. Discovery would find about 5,300 Workable boards, but Workable rate-limits a full daily sweep, so it doesn't attempt one; Common Crawl barely holds Lever's. Lever boards on jobs.lever.co and its EU twin, jobs.eu.lever.co, both work.
-- **Filters** postings by your titles and locations, then **tags** each match with the model. Answers that need evidence quote the posting; a missing or unmatched quote shows ⚠. A quote that's there doesn't prove the answer right.
-- **Writes a markdown digest** of what's new, and can email it and raise a Mac notification. Where Ashby, Greenhouse or Lever publishes a posting's pay, the digest shows it on a `Pay:` line: Ashby's summary as Ashby writes it, Greenhouse's ranges with their own titles (`Zone 1 Pay Range: USD 145,700 to 200,300`), Lever's with its period (`USD 52 to 64 an hour`). Other sites' pay stays inside the description.
+- **Filters** postings by your titles and locations, then **tags** each match with the model. Answers that need evidence quote the posting and the quote is checked; the digest doesn't print quotes, but an answer whose quote is missing or not in the posting shows ⚠. A quote that's there doesn't prove the answer right.
+- **Writes a markdown digest** of what's new, and can email it and raise a Mac notification. Where Ashby, Greenhouse or Lever publishes a posting's pay, the digest shows it on a `Pay:` line: Ashby's summary as Ashby writes it, Greenhouse's ranges with their own titles (`Zone 1 Pay Range: USD 145,700 to 200,300`), Lever's with its period (`USD 52 to 64 an hour`). Other sites' pay stays inside the description. Under each posting, one line lists only the answers worth reading: `✅ founding` for a yes, `❌ tech_company` for a no, `segment: enterprise` for anything else, and `❓ location_eligible` when a tag you `require` is unknown. A tag's usual answer (`founding`: no), the one answer you require, and other unknowns go unsaid.
 
 | Tag | Answers |
 |-----|---------|
@@ -38,11 +38,11 @@ It finds the job boards itself, reads them directly and has a language model tag
 | `reports_to` | Who the role reports to, by title (and name, if the posting gives one), or `unknown` |
 | `visa_sponsorship` | Does the employer sponsor a work visa? `unknown` when the posting doesn't say |
 | `credential_required` | A required specialist degree, licence or lab/clinical background outside the role's own craft, or `no` |
-| `about` | What the company sells and to whom, in one sentence from the posting; shown as an `About:` line on the entry, and no line when the posting doesn't say |
+| `about` | What the company sells and to whom, one sentence in the model's own words from what the posting says; shown as an `About:` line on the entry, and no line when the posting doesn't say |
 
 `reports_to`, `visa_sponsorship`, `credential_required` and `about` are opt-in: asked only when you pick them, so a search that doesn't need them pays nothing for them.
 
-ⓘ marks the tags no labelled set has checked: `segment`, `tech_company`, `reports_to`, `visa_sponsorship`, `credential_required`, `about`, `location_eligible` outside the UK, and your own.
+Some tags no labelled set has checked: `segment`, `tech_company`, `reports_to`, `visa_sponsorship`, `credential_required`, `about`, `location_eligible` outside the UK, and your own. A line under the digest's header names the ones it shows.
 
 It works best where a few titles narrow the field and the posting answers the rest. My first runs: AE, 233 postings, 47 minutes, at least $0.11; PM, 169 postings, 7 minutes, $0.08, then 118 more from Greenhouse for $0.05.
 
@@ -61,7 +61,7 @@ It works best where a few titles narrow the field and the posting answers the re
 - **Big backlogs take a few runs.** A run tags at most 500 matches and starts no more once it has spent $1.00; both are yours to change. It takes the newest first; on a first run, where every match is new, it takes one per company in turn. The rest wait for later runs (a run still exits 0), and the digest's first line and the notification say how many. Postings already being tagged when the dollar limit is reached finish, so a run can end a little past it.
 - **A run that can't reach many boards says so.** A board that fails on the network (DNS down, the Mac asleep mid-run) is tried once more at the end of the fetch. When over 5% of the boards (and at least 50) still couldn't be read, the digest says how many, and so does the notification, even on a run with nothing new and so no digest. They're read again next run, and nothing is lost.
 - **No new matches, no file.** A second digest on the same day gets `-2`, `-3`.
-- **Company names** come from each job site, looked up once per board the first time it has a match. Ashby also gives the company's website, shown under the posting. Some Personio boards name no company and show the board name (`ddock`). A company you list in a boards file keeps your name.
+- **Company names** come from each job site, looked up once per board the first time it has a match. Ashby also gives the company's website, shown at the end of the posting's link line. Some Personio boards name no company and show the board name (`ddock`). A company you list in a boards file keeps your name.
 - **Demo jobs** on Gem's trial and sandbox boards are skipped.
 - **Workday** sites with location filters are read through them, so only jobs in your locations are fetched and the open-role count covers just those; a site without them is read whole. The company shows as Workday's account name (`autodesk`). A job a company lists on several of its Workday sites appears once.
 - **Oracle** sites are read whole. The company shows as the site's title (`Uber`, `Akamai Career Site`). A job listed on several sites of one Oracle account appears once.
