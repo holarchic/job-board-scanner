@@ -120,7 +120,8 @@ validated = false
 default = "unknown"
 definition = """
 What the company sells and who buys it, as the posting describes the company, in one plain sentence of at most 20 words: the product or service, then its customers (`Expense-management software for finance teams at mid-sized companies`, `Paid search and social campaigns for consumer brands`).
-- Describe the company, not this role. Leave out the company's name, slogans and praise ("leading", "world-class").
+- Describe the company, not this role. Leave out the company's name, slogans and praise ("leading", "world-class", "trusted").
+- Write the value in your own words. Never copy the posting's sentence into it: the quote holds the posting's words, the value says plainly what they mean. A value that repeats the quote is wrong.
 - Quote the posting's sentence that says what the company does.
 - **Default `unknown`:** the posting doesn't say what the company sells. Don't fill it in from what you know of the company.
 """
