@@ -71,6 +71,16 @@ class ParseReplyTest(unittest.TestCase):
         self.assertFalse(any(r.warn for r in results.values()))
         self.assertEqual(results["segment"].value, ())
 
+    def test_a_custom_unknown_in_any_case_needs_no_quote(self):
+        custom = (CustomTag("stage", "How established.", ("startup", "Unknown"), multi=False, default=None),
+                  CustomTag("buyer", "Who buys.", ("developers", "unknown"), multi=True, default=None))
+        defs = tag.definitions(ALL, "the UK", custom)
+        content = json.loads(reply())
+        content |= {"stage": {"value": "Unknown", "quote": None}, "buyer": {"value": ["unknown"], "quote": None}}
+        results = tag.parse_reply(json.dumps(content), defs, POSTING)
+        self.assertEqual([(results[n].value, results[n].warn) for n in ("stage", "buyer")],
+                         [("Unknown", False), (("unknown",), False)])
+
     def test_multi_value_canonical_order_without_duplicates(self):
         r = self.parse(reply(segment={"value": ["enterprise", "mid_market", "enterprise"],
                                       "quote": "mid-market teams"}))["segment"]

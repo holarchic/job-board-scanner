@@ -47,8 +47,8 @@ provider = "parasail"
 quantization = "fp8"
 """
 CUSTOM_TAGS_EXAMPLE = """
-# Your own tags: uncomment and edit. Each one is asked of every matching posting and listed in the digest as not
-# yet validated, since no labelled set has checked it.
+# Your own tags: uncomment and edit. Each one is asked of every matching posting; when an entry shows its answer,
+# the digest names it as not yet validated, since no labelled set has checked it.
 # [custom_tags.b2b]
 # definition = "The company sells to businesses, not consumers."
 # values = ["yes", "no", "unknown"]

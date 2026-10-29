@@ -5,12 +5,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from types import MappingProxyType
 
 from jobscan.config import Requirement
 from jobscan.fetch import ADAPTERS
 from jobscan.payload import one_line
 from jobscan.store import StoredPosting
-from jobscan.tag import ABOUT, UNKNOWN, TagResult
+from jobscan.tag import ABOUT, TagResult, is_unknown
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,9 @@ class TagView:
     # Required single-valued tags whose requirement names one answer: an entry's definite answer can only be that one.
     settled: frozenset[str] = frozenset()
     defaults: Mapping[str, str] = field(default_factory=dict)  # by tag: an answer equal to its default is unsaid
+
+    def __post_init__(self):
+        object.__setattr__(self, "defaults", MappingProxyType(dict(self.defaults)))  # frozen, and no caller's alias
 
 
 @dataclass(frozen=True)
@@ -96,7 +100,7 @@ def _entry(entry: DigestEntry, date: str, view: TagView) -> str:
     # Stored in UTC; the digest's date is the machine's: a posting new today must not read as yesterday's.
     first_seen = datetime.fromisoformat(entry.posting.first_seen).astimezone().date().isoformat()
     link = [p.url, ADAPTERS[p.ats].DISPLAY_NAME, f"{entry.open_roles} open role{'' if entry.open_roles == 1 else 's'}",
-            *([f"first seen {first_seen}"] if first_seen != date else []), *([entry.website] if entry.website else [])]
+            *([f"first seen {first_seen}"] if first_seen < date else []), *([entry.website] if entry.website else [])]
     return "\n".join([
         f"## {_star(entry)}{p.company} — {p.title} · {p.location or 'location not given'}",
         " · ".join(link),
@@ -109,27 +113,21 @@ def _entry(entry: DigestEntry, date: str, view: TagView) -> str:
 
 
 def _said(entry: DigestEntry, view: TagView) -> dict[str, TagResult]:
-    """The answers an entry shows, in its tag order. One marked ⚠ always shows: it may be why a contrary answer
-    survived `require`. An unknown shows only for a required tag, whatever the tag's default; a settled or default
-    answer never does, nor a quiet tag's."""
+    """The answers an entry shows, in its tag order. An unknown shows only for a required tag, whatever the tag's
+    default (no `About:` line for one). A definite answer marked ⚠ always shows: it may be why a contrary answer
+    survived `require`. Otherwise a settled or default answer never does, nor a quiet tag's."""
     def worth_saying(name: str, result: TagResult) -> bool:
+        if is_unknown(result.value):
+            return name in view.required
         if result.flagged:
             return True
-        if _unknown(result):
-            return name in view.required
         return name not in view.settled and result.value != view.defaults.get(name)
     return {name: result for name, result in entry.tags.items()
             if name not in view.quiet and worth_saying(name, result)}
 
 
-def _unknown(result: TagResult) -> bool:
-    """No answer: `unknown` in any case (a custom tag may list "Unknown"), or a list empty or holding only that."""
-    values = result.value if isinstance(result.value, tuple) else (result.value,)
-    return all(v.casefold() == UNKNOWN for v in values)
-
-
 def _item(name: str, result: TagResult) -> str:
-    if _unknown(result):
+    if is_unknown(result.value):
         text = f"❓ {name}"
     elif result.value == "yes":
         text = f"✅ {name}"

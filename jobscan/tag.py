@@ -239,6 +239,11 @@ def can_require(value: str) -> bool:
     return value.isprintable() and value.strip() == value and value.casefold() != UNKNOWN
 
 
+def is_unknown(value: str | tuple[str, ...]) -> bool:
+    """No answer: `unknown` in any case (a custom tag may list "Unknown"), or a list empty or holding only that."""
+    return all(v.casefold() == UNKNOWN for v in (value if isinstance(value, tuple) else (value,)))
+
+
 def misses(defs: list[TagDef], require: tuple[Requirement, ...],
            results: dict[str, TagResult]) -> tuple[Requirement, ...]:
     """The requirements these results rule out: a definite answer that is none of those required (a list answer
@@ -252,12 +257,13 @@ def misses(defs: list[TagDef], require: tuple[Requirement, ...],
 def _misses(d: TagDef, wanted: tuple[str, ...], result: TagResult) -> bool:
     if result.flagged:
         return False
-    # Unknown in any case is no answer, as `can_require` reads it: a custom tag may list "Unknown".
+    if is_unknown(result.value):
+        return False
     if d.multi:
-        return any(v.casefold() != UNKNOWN for v in result.value) and not set(wanted) & set(result.value)
+        return not set(wanted) & set(result.value)
     if d.values is None:  # free text, as the model wrote it
-        return result.value.casefold() not in {w.casefold() for w in wanted} | {UNKNOWN}
-    return result.value.casefold() != UNKNOWN and result.value not in wanted
+        return result.value.casefold() not in {w.casefold() for w in wanted}
+    return result.value not in wanted
 
 
 def _builtin(name: str, spec: dict, eligible_where: str) -> TagDef:
@@ -466,7 +472,7 @@ def _value(d: TagDef, raw):
 
 
 def _needs_quote(d: TagDef, value) -> bool:
-    return value not in (UNKNOWN, (), d.default)
+    return not is_unknown(value) and value != d.default
 
 
 PUNCT = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',

@@ -155,6 +155,21 @@ class RenderTest(unittest.TestCase):
         self.assertTrue(text.endswith("/2 · Ashby · 14 open roles\n❓ segment\n"), text)
         self.assertTrue(digest.render("ae", "2026-10-12", [empty], 0).endswith(" · 14 open roles\n"))
 
+    def test_an_unknown_with_an_unfound_quote_goes_unsaid_unless_required(self):
+        bogus = said("unknown", "not there", verified=False)
+        tags = {"stage": bogus, "about": bogus, "location_eligible": bogus}
+        text = digest.render("pm", "2026-10-12", [entry(tags=tags)], 0,
+                             view=digest.TagView(required=frozenset({"location_eligible"})))
+        self.assertTrue(text.endswith("· 14 open roles\n❓ location_eligible ⚠ quote not in posting\n"), text)
+
+    def test_a_views_defaults_are_its_own_and_frozen(self):
+        defaults = {"founding": "no"}
+        view = digest.TagView(defaults=defaults)
+        defaults["founding"] = "yes"
+        self.assertEqual(view.defaults["founding"], "no")
+        with self.assertRaises(TypeError):
+            view.defaults["founding"] = "yes"  # type: ignore[index]
+
     def test_a_custom_unknown_in_any_case_goes_unsaid_with_no_empty_line(self):
         text = digest.render("pm", "2026-10-12", [entry(tags={"stage": said("Unknown")})], 0)
         self.assertTrue(text.endswith("· 14 open roles\n"), text)
