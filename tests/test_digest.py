@@ -29,6 +29,14 @@ UNKNOWN = said("unknown", verified=False)
 
 
 class RenderTest(unittest.TestCase):
+    def setUp(self):
+        # First seen renders in the machine's zone: pin it, so the fixtures' 08:00 UTC stays 12 October.
+        zone = mock.patch.dict(os.environ, {"TZ": "UTC"})
+        zone.start()
+        self.addCleanup(time.tzset)
+        self.addCleanup(zone.stop)
+        time.tzset()
+
     def test_header_and_entry(self):
         text = digest.render("david-ae", "2026-10-12", [entry()], carried_over=0)
         self.assertEqual(text, "# david-ae — 2026-10-12 · 1 new\n\n"
@@ -48,7 +56,6 @@ class RenderTest(unittest.TestCase):
         def seen(stamp):
             plain = entry()
             return replace(plain, posting=replace(plain.posting, first_seen=stamp))
-        self.addCleanup(time.tzset)
         for zone, stamp, shown in [("Australia/Sydney", "2026-10-11T22:00:00.000000+00:00", None),
                                    ("America/Los_Angeles", "2026-10-12T05:00:00.000000+00:00", "2026-10-11")]:
             with self.subTest(zone), mock.patch.dict(os.environ, {"TZ": zone}):
