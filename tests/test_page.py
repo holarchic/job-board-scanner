@@ -371,8 +371,8 @@ class RenderTest(unittest.TestCase):
                       'show postings where the answer is": postings with a different answer move to a short "Left '
                       'out" list at the end of the digest. "Unknown" answers, and answers marked ⚠, never move a '
                       "posting there. Each posting lists only the answers worth reading: ✅ for yes, ❌ for no, ❓ "
-                      "where an answer you ticked is unknown, and any answer marked ⚠. A tag's usual answer goes "
-                      "unsaid, as does the one answer you ticked for a tag that gives a single answer.", html)
+                      "where an answer you ticked is unknown, and any definite answer marked ⚠. A tag's usual answer "
+                      "goes unsaid, as does the one answer you ticked for a tag that gives a single answer.", html)
         self.assertIn("jobscan checks the quote is there; an answer whose quote isn't is marked ⚠.", html)
         self.assertNotIn("definitely answers other than", html)
 

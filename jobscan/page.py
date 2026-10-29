@@ -727,8 +727,8 @@ def _tags_body(view: View) -> str:
             '"Only show postings where the answer is": postings with a different answer move to a short "Left out" '
             'list at the end of the digest. "Unknown" answers, and answers marked ⚠, never move a posting there. '
             "Each posting lists only the answers worth reading: ✅ for yes, ❌ for no, ❓ where an answer you ticked "
-            "is unknown, and any answer marked ⚠. A tag's usual answer goes unsaid, as does the one answer you ticked "
-            "for a tag that gives a single answer.</p>"
+            "is unknown, and any definite answer marked ⚠. A tag's usual answer goes unsaid, as does the one answer "
+            "you ticked for a tag that gives a single answer.</p>"
             + "<fieldset><legend>Built-in tags</legend>" + "".join(rows) + "</fieldset>" + _err("tags", e)
             + '<fieldset><legend>Agencies</legend><label class="choice"><input type="checkbox" name="include_agencies"'
             + (" checked" if form.include_agencies else "") + "> <span><b>Include jobs posted by recruitment and "
