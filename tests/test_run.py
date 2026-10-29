@@ -168,7 +168,7 @@ class RunTest(RunFixture):
         self.assertEqual((code, new), (0, "2"))
         text = Path(path).read_text()
         self.assertIn("## Acme — Enterprise Account Executive · London", text)
-        self.assertIn('- founding: **yes** — "Account Executive"', text)
+        self.assertIn("✅ founding", text)
         self.assertEqual(text.count("· 4 open roles\n"), 2)  # the Berlin and Engineer roles count too
         self.assertNotIn("Berlin", text)
         self.assertEqual(self.run_cli(), (0, ["ae", "0", "-"]))
@@ -226,8 +226,7 @@ class RunTest(RunFixture):
         self.model.routes["/chat/completions"] = (200, fabricating)
         code, (_, new, path) = self.run_cli()
         self.assertEqual((code, new), (0, "2"))
-        self.assertIn('- founding: **yes** — "you will be our very first seller" ⚠ quote not in posting',
-                      Path(path).read_text())
+        self.assertIn("✅ founding ⚠ quote not in posting", Path(path).read_text())
 
     def test_cached_tags_are_not_requested_again(self):
         self.run_cli()
@@ -306,9 +305,8 @@ class CompanyRunTest(RunFixture):
         code, (_, new, path) = self.run_cli()
         self.assertEqual((code, new), (0, "3"))
         text = Path(path).read_text()
-        self.assertIn("## Initech Ltd — Account Executive · London\nhttps://jobs.ashbyhq.com/acme/i1 · Ashby · first "
-                      "seen", text)
-        self.assertIn("· 1 open role\nCompany: Initech Ltd · https://initech.example/\n- founding", text)
+        self.assertIn("## Initech Ltd — Account Executive · London\nhttps://jobs.ashbyhq.com/acme/i1 · Ashby · "
+                      "1 open role · https://initech.example/\n✅ founding", text)
         self.assertNotIn("## initech", text)
 
     def test_a_board_is_looked_up_once_and_its_company_kept_across_rediscovery(self):
@@ -319,7 +317,7 @@ class CompanyRunTest(RunFixture):
         code, (_, new, path) = self.run_cli()
         self.assertEqual((code, new, self.page_requests()), (0, "1", 1))
         self.assertIn("## Initech Ltd — Enterprise Account Executive · London", Path(path).read_text())
-        self.assertIn("Company: Initech Ltd · https://initech.example/", Path(path).read_text())
+        self.assertIn("· 2 open roles · https://initech.example/\n", Path(path).read_text())
 
     def test_a_website_unfit_for_the_digest_is_dropped_and_the_name_kept(self):
         for n, website in enumerate(["https://initech.example/\ud800", "https://initech.example/\nCompany: Fake"]):
@@ -334,7 +332,7 @@ class CompanyRunTest(RunFixture):
                 self.assertEqual(code, 0)
                 text = Path(path).read_text()
                 self.assertIn(f"## Initech Ltd — Account Executive · London\nhttps://jobs.ashbyhq.com/acme/x{n}", text)
-                self.assertNotIn("Company:", text)
+                self.assertNotIn("initech.example", text)
 
     def test_a_failed_lookup_shows_the_slug_and_is_tried_again_with_the_next_match(self):
         self.page_answers(500)
@@ -342,7 +340,7 @@ class CompanyRunTest(RunFixture):
         self.assertEqual((code, new), (0, "3"))
         text = Path(path).read_text()
         self.assertIn("## initech — Account Executive", text)
-        self.assertNotIn("Company: initech", text)
+        self.assertNotIn("https://initech", text)
         self.assertIn("company_failed board=ashby:initech reason='HTTP 500'", (self.home / "runs.log").read_text())
         self.page_answers(200, "Initech Ltd")
         self.initech.append(ashby_job("i2", "Enterprise Account Executive"))
@@ -368,7 +366,7 @@ class CompanyRunTest(RunFixture):
         self.assertEqual((code, new), (0, "2"))
         text = Path(path).read_text()
         self.assertIn("## Acme — Account Executive · London\nhttps://jobs.ashbyhq.com/acme/9", text)
-        self.assertIn("Company: Acme · https://acme.example/", text)
+        self.assertIn(" · https://acme.example/\n", text)
         self.assertNotIn("Old Acme", text)
         self.assertNotIn("Acme Corporation", text)
 
@@ -394,8 +392,8 @@ class GreenhouseRunTest(RunFixture):
         self.assertEqual((code, new), (0, "3"))
         text = Path(path).read_text()
         self.assertIn("## Globex — Account Executive · London, UK\n"
-                      "https://job-boards.greenhouse.io/acme/jobs/7 · Greenhouse · first seen", text)
-        self.assertIn('- founding: **yes** — "our first Account Executive"\n', text)  # verified: no ⚠
+                      "https://job-boards.greenhouse.io/acme/jobs/7 · Greenhouse · ", text)
+        self.assertIn("\n✅ founding · ✅ location_eligible\n", text)  # verified: no ⚠
         self.assertIn("· 2 open roles", text)
 
 
@@ -427,8 +425,8 @@ class WorkableGemRunTest(RunFixture):
         self.assertEqual((code, new), (0, "4"))
         text = Path(path).read_text()
         self.assertIn("## Initech — Account Executive · London, United Kingdom / Manchester, United Kingdom\n"
-                      "https://apply.workable.com/j/AB12 · Workable · first seen", text)
-        self.assertIn("## Hooli — Account Executive · London, UK\nhttps://jobs.gem.com/acme/g1 · Gem · first seen",
+                      "https://apply.workable.com/j/AB12 · Workable · ", text)
+        self.assertIn("## Hooli — Account Executive · London, UK\nhttps://jobs.gem.com/acme/g1 · Gem · ",
                       text)
         self.assertEqual(text.count("· 2 open roles"), 2)  # one per new board: jobs, not Workable's entries
         self.assertEqual(self.run_cli()[1][1:], ["0", "-"])
@@ -458,9 +456,9 @@ class WorkableGemRunTest(RunFixture):
         self.assertEqual((code, new), (0, "4"))
         text = Path(path).read_text()
         self.assertIn("## Initech — Account Executive · London / Manchester\n"
-                      "https://jobs.lever.co/acme/l1 · Lever · first seen", text)
+                      "https://jobs.lever.co/acme/l1 · Lever · ", text)
         self.assertIn("## Hooli Europe — Account Executive · London / Remote\n"
-                      "https://jobs.lever.co/acme/l3 · Lever · first seen", text)
+                      "https://jobs.lever.co/acme/l3 · Lever · ", text)
         self.assertIn("## Acme — Account Executive · London", text)  # the other boards still deliver
         self.assertEqual({path for _, path, _ in self.ats.requests if "/v0/postings/" in path},
                          {"/api.lever.co/v0/postings/initech?mode=json", "/api.eu.lever.co/v0/postings/hooli?mode=json",
@@ -518,10 +516,10 @@ class TeamtailorPersonioRunTest(RunFixture):
         self.assertEqual((code, new), (0, "2"))
         text = Path(path).read_text()
         self.assertIn("## Initech — Account Executive · London, United Kingdom\n"
-                      "https://acme.teamtailor.com/jobs/tt1-job · Teamtailor · first seen", text)
+                      "https://acme.teamtailor.com/jobs/tt1-job · Teamtailor · ", text)
         self.assertIn("## Hooli — Account Executive · London / Berlin\n"
-                      "https://hooli.jobs.personio.com/job/p1 · Personio · first seen", text)
-        self.assertEqual(text.count('- tech_company ⓘ: **yes** — "We sell software."\n'), 2)
+                      "https://hooli.jobs.personio.com/job/p1 · Personio · ", text)
+        self.assertEqual(text.count("· ✅ tech_company\n"), 2)
         self.assertNotIn("⚠", text)
         self.assertEqual(self.run_cli()[1][1:], ["0", "-"])
 
@@ -541,8 +539,8 @@ class TeamtailorPersonioRunTest(RunFixture):
         code, (_, new, path) = self.run_cli()
         self.assertEqual((code, new), (0, "2"))
         self.assertIn('## Hooli — Account Executive · London\nhttps://hooli.jobs.personio.com/job/p1 · Personio · '
-                      'first seen', Path(path).read_text())
-        self.assertIn('- tech_company ⓘ: **yes** — "Du verkaufst Software."\n', Path(path).read_text())
+                      '', Path(path).read_text())
+        self.assertIn("· ✅ tech_company\n", Path(path).read_text())
         self.assertNotIn("⚠", Path(path).read_text())
         self.assertEqual(sum("Deine Rolle\\nDu verkaufst Software." in json.dumps(payload, ensure_ascii=False)
                              for _, _, payload in self.model.requests), 1)  # the prompt, as the request's JSON
@@ -647,8 +645,8 @@ class SmartRecruitersRunTest(RunFixture):
         self.assertEqual((code, new), (0, "1"))
         text = Path(path).read_text()
         self.assertIn("## Initrode — Account Executive · London, United Kingdom\n"
-                      "https://jobs.smartrecruiters.com/initrode/sr1 · SmartRecruiters · first seen", text)
-        self.assertIn('- tech_company ⓘ: **yes** — "We sell software."\n', text)
+                      "https://jobs.smartrecruiters.com/initrode/sr1 · SmartRecruiters · ", text)
+        self.assertIn("· ✅ tech_company\n", text)
         self.assertNotIn("⚠", text)
         self.assertEqual([self.asked(f"{self.LIST}/{key}") for key in ("sr1", "sr2", "sr3")], [1, 0, 0])
         self.assertEqual(self.stored_description(), "")
@@ -686,7 +684,8 @@ class SmartRecruitersRunTest(RunFixture):
         self.detail(["We sell hardware."])
         code, (_, new, path) = self.run_cli()
         self.assertEqual((code, new, self.asked(f"{self.LIST}/sr1"), self.model_calls()), (0, "1", 3, 2))
-        self.assertIn('- tech_company ⓘ: **yes** — "We sell hardware."\n', Path(path).read_text())
+        self.assertIn("· ✅ tech_company\n", Path(path).read_text())
+        self.assertNotIn("⚠", Path(path).read_text())  # the quote is the new text's
         self.assertIn(self.described_hash("About Initrode\nWe sell hardware."), self.tag_hashes())
 
     def test_a_list_that_shifts_while_paging_fails_the_board_and_keeps_its_postings_open(self):
@@ -741,10 +740,9 @@ class RipplingRunTest(RunFixture):
         self.assertEqual((code, new), (0, "1"))
         text = Path(path).read_text()
         self.assertIn("## Initrode — Account Executive · London, United Kingdom / Hybrid (Manchester, England, GB), "
-                      "United Kingdom\nhttps://ats.rippling.com/initrode/jobs/r1 · Rippling · first seen", text)
+                      "United Kingdom\nhttps://ats.rippling.com/initrode/jobs/r1 · Rippling · ", text)
         self.assertIn("· 2 open roles", text)  # jobs, not rows
-        self.assertIn('- founding: **yes** — "You will be our first sales hire."\n', text)
-        self.assertIn('- tech_company ⓘ: **yes** — "We sell software."\n', text)
+        self.assertIn("\n✅ founding · ✅ location_eligible · ✅ tech_company\n", text)
         self.assertNotIn("⚠", text)
         self.assertEqual([path for _, path, _ in self.ats.requests if "/jobs/" in path], [f"{self.LIST}/r1"])
 
@@ -964,10 +962,10 @@ class WorkdayRunTest(RunFixture):
         self.assertEqual(self.details_asked(), ["AE_R1", "AE_R3"])
         text = Path(path).read_text()
         self.assertIn(f"## acme — Account Executive · London\n{self.ats.url}/workday/acme.wd3/careers/job/Somewhere/"
-                      "AE_R1 · Workday · first seen", text)
+                      "AE_R1 · Workday · ", text)
         self.assertIn("/careers/job/Somewhere/AE_R3 · Workday", text)  # `2 Locations`, placed by its filter value
         self.assertNotIn("⚠", text)
-        self.assertEqual(text.count('tech_company ⓘ: **yes** — "We sell software."'), 2)
+        self.assertEqual(text.count("· ✅ tech_company\n"), 2)
         self.assertTrue(all("We sell software." in body["messages"][0]["content"]
                             for _, _, body in self.model.requests))
         self.assertIn("describe_done described=2 failed=0", (self.home / "runs.log").read_text())
@@ -1252,8 +1250,8 @@ class CustomTagsTest(RunFixture):
         self.assertEqual((code, new), (0, "2"))
         text = Path(path).read_text()
         self.assertEqual(text.count(digest.LEGEND), 1)
-        self.assertEqual(text.count('- motion ⓘ: **b2b** — "We sell software."'), 2)
-        self.assertIn('- founding: **yes**', text)
+        self.assertIn(f"\n{digest.LEGEND} motion.\n", text)
+        self.assertEqual(text.count("\n✅ founding · ✅ location_eligible · motion: b2b\n"), 2)
 
     def test_cached_custom_tags_render_the_same(self):
         (self.home / "digests").mkdir()
@@ -1265,7 +1263,7 @@ class CustomTagsTest(RunFixture):
         self.assertEqual((code, new, len(self.model.requests)), (0, "2", calls))
         text = Path(path).read_text()
         self.assertEqual(text.count(digest.LEGEND), 1)
-        self.assertEqual(text.count('- motion ⓘ: **b2b** — "We sell software."'), 2)
+        self.assertEqual(text.count("\n✅ founding · ✅ location_eligible · motion: b2b\n"), 2)
 
 
 class AboutRunTest(RunFixture):
@@ -1289,13 +1287,64 @@ class AboutRunTest(RunFixture):
         self.assertEqual((code, new), (0, "2"))
         text = Path(path).read_text()
         self.assertIn("· 2 new · 1 left out\n", text)
-        self.assertIn('/acme/1 · Ashby · first seen ', text)
+        self.assertNotIn("first seen", text)
         first = text.split("/acme/1 · Ashby", 1)[1].splitlines()
-        self.assertEqual(first[1:3], ['About ⓘ: **Software for sales teams** — "We sell software."',
-                                      '- founding: **yes** — "Account Executive"'])
+        self.assertEqual(first[1:3], ["About: Software for sales teams", ""])  # founding is settled by `require`
         self.assertEqual(text.count("About"), 1)  # the unknown one has none; the left-out row names only founding
-        self.assertNotIn("- about", text)
+        self.assertNotIn("about:", text)
         self.assertIn("Founding Account Executive · London · founding: no · ", text)
+
+
+class CompactRunTest(RunFixture):
+    """An entry says only what is worth reading: required answers it must have, defaults and unknowns go unsaid."""
+
+    def test_an_entry_lists_only_its_exceptions_and_no_quotes(self):
+        (self.home / "profiles" / "ae.toml").write_text(
+            PROFILE + 'require = { location_eligible = "yes", language_required = "no" }\n\n[custom_tags.stage]\n'
+            'definition = "How established the company is."\nvalues = ["startup", "mature", "unknown"]\n')
+        self.jobs = [ashby_job("1", "Account Executive"), ashby_job("2", "Founding Account Executive"),
+                     ashby_job("3", "Account Executive - Quiet")]
+
+        def answering(payload):
+            tags = tags_quoting_the_posting(payload)
+            title = tags["founding"]["quote"]
+            tags["stage"] = {"value": "unknown", "quote": None}
+            if title == "Account Executive":
+                tags["founding"] = {"value": "no", "quote": title}
+                tags["tech_company"] = {"value": "yes", "quote": title}
+            if title.startswith("Founding"):
+                tags["location_eligible"] = {"value": "unknown", "quote": None}
+                tags["tech_company"] = {"value": "no", "quote": title}
+            if title.endswith("Quiet"):
+                tags["founding"] = {"value": "no", "quote": "not in the ad"}
+            return model_reply(tags)
+
+        self.model.routes["/chat/completions"] = (200, answering)
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "3"))
+        text = Path(path).read_text()
+        self.assertIn(f"\n{digest.LEGEND} tech_company.\n", text)
+        said = {block.splitlines()[0].removeprefix("## Acme — "): block.splitlines()[2:]
+                for block in text.split("\n\n") if block.startswith("## ")}
+        self.assertEqual(said, {"Account Executive · London": ["✅ tech_company"],
+                                "Founding Account Executive · London":
+                                    ["✅ founding · ❓ location_eligible · ❌ tech_company"],
+                                "Account Executive - Quiet · London": ["❌ founding ⚠ quote not in posting"]})
+        self.assertNotIn('"', text)
+
+    def test_a_list_answer_to_a_single_requirement_shows_whole(self):
+        (self.home / "profiles" / "ae.toml").write_text(PROFILE + 'require = { segment = "enterprise" }\n')
+
+        def answering(payload):
+            tags = tags_quoting_the_posting(payload)
+            segment = {"value": ["enterprise", "smb"], "quote": tags["founding"]["quote"]}
+            return model_reply({**tags, "segment": segment})
+
+        self.model.routes["/chat/completions"] = (200, answering)
+        code, (_, new, path) = self.run_cli()
+        self.assertEqual((code, new), (0, "2"))
+        text = Path(path).read_text()
+        self.assertEqual(text.count("\n✅ founding · ✅ location_eligible · segment: enterprise, smb\n"), 2)
 
 
 class WatchRunTest(RunFixture):
@@ -1422,7 +1471,7 @@ class RequireRunTest(RunFixture):
         text = Path(path).read_text()
         self.assertTrue(text.startswith(f"# ae — {Path(path).stem} · 2 new · 1 left out\n"))
         self.assertIn("## Acme — Account Executive · London\n", text)
-        self.assertIn('- language_required: **Dutch** — "Fluent Dutch required" ⚠ quote not in posting', text)
+        self.assertIn("· language_required: Dutch ⚠ quote not in posting\n", text)  # flagged: shown though settled
         self.assertNotIn("## Acme — Account Executive - German Speaking", text)
         self.assertTrue(text.endswith(
             "## Left out (1)\n" + digest.LEFT_OUT_NOTE + "\n- Acme — Account Executive - German Speaking · London · "

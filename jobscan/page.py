@@ -720,12 +720,14 @@ def _tags_body(view: View) -> str:
         f"{_x(r.name)}</b>: {_x(r.definition)} <i>({_x(', '.join(_lines(r.values)) or 'yes, no, unknown')})</i>"
         "</span></label>"
         for r in offered) + "</fieldset>") if offered else ""
-    return ("<p>Tags are questions about each posting, answered beside it in your digest with a quote from the ad: "
-            "is it a founding role? can you work it from where you are?</p>"
+    return ("<p>Tags are questions about each posting, answered under it in your digest: is it a founding role? can "
+            "you work it from where you are? An answer that needs evidence must quote the ad, and jobscan checks the "
+            "quote is there; an answer whose quote isn't is marked ⚠.</p>"
             '<p class="notice">Tags label postings; they don\'t hide them. To see only some answers, tick them under '
             '"Only show postings where the answer is": postings with a different answer move to a short "Left out" '
-            'list at the end of the digest. "Unknown" answers, and answers marked ⚠, are always shown; with nothing '
-            "ticked, every answer is.</p>"
+            'list at the end of the digest. "Unknown" answers, and answers marked ⚠, never move a posting there. '
+            "Each posting lists only the answers worth reading: ✅ for yes, ❌ for no, ❓ where an answer you ticked "
+            "is unknown; a tag's usual answer, and the one answer you ticked, go unsaid.</p>"
             + "<fieldset><legend>Built-in tags</legend>" + "".join(rows) + "</fieldset>" + _err("tags", e)
             + '<fieldset><legend>Agencies</legend><label class="choice"><input type="checkbox" name="include_agencies"'
             + (" checked" if form.include_agencies else "") + "> <span><b>Include jobs posted by recruitment and "

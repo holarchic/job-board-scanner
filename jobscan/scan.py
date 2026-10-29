@@ -53,14 +53,11 @@ def scan(config: Config, profile: Profile, defs: list[tag.TagDef]) -> ScanOutcom
         matched = [_named(s, fetched.eligible[s.posting.board], companies.get(s.posting.board)) for s in matched]
         tagging = _tag(conn, matched, defs, config, profile, {b: c.website for b, c in companies.items()})
         shown, left_out = _select(tagging.entries, defs, tag.requirements(profile.require, profile.include_agencies))
-        named = {*profile.tags, *(c.name for c in profile.custom_tags)}
         tried = fetched.read + fetched.failed
         unread = digest.Unread(fetched.unread, tried) if many_unread(fetched.unread, tried) else None
         outcome = _digest(conn, config, profile, shown, left_out,
                           carried_over=len(matched) - len(tagging.entries) - tagging.waiting, waiting=tagging.waiting,
-                          unread=unread,
-                          unvalidated=frozenset(d.name for d in defs if not d.validated),
-                          quiet=frozenset(d.name for d in defs if d.name not in named))
+                          unread=unread, view=_view(defs, profile))
         store.record_run(conn, store.RunRecord(
             started=started, finished=_now(), boards_read=fetched.read, boards_failed=fetched.failed,
             new=outcome.new, tagged=tagging.tagged, carried_over=outcome.carried_over, cost=tagging.usage.cost,
@@ -285,9 +282,22 @@ def _select(entries: list[digest.DigestEntry], defs: list[tag.TagDef],
     return shown, left_out
 
 
+def _view(defs: list[tag.TagDef], profile: Profile) -> digest.TagView:
+    """How the digest shows the profile's tags. A single answer `require` names of a single-valued tag is settled: an
+    entry's definite answer can only be that one (`tag.misses`); a list answer may hold more, so it still shows."""
+    named = {*profile.tags, *(c.name for c in profile.custom_tags)}
+    multi = {d.name for d in defs if d.multi}
+    return digest.TagView(
+        unvalidated=frozenset(d.name for d in defs if not d.validated),
+        quiet=frozenset(d.name for d in defs if d.name not in named),
+        required=frozenset(r.tag for r in profile.require),
+        settled=frozenset(r.tag for r in profile.require if len(r.values) == 1 and r.tag not in multi),
+        defaults={d.name: d.default for d in defs if d.default is not None})
+
+
 def _digest(conn: sqlite3.Connection, config: Config, profile: Profile, entries: list[digest.DigestEntry],
             left_out: list[digest.LeftOut], carried_over: int, waiting: int, unread: digest.Unread | None,
-            unvalidated: frozenset[str], quiet: frozenset[str]) -> ScanOutcome:
+            view: digest.TagView) -> ScanOutcome:
     """Left-out postings are delivered with the digest that lists them. Alone they publish nothing: they stay pending,
     their tags cached, until a digest has an entry or a carried-over count to report. Waiting postings and unread
     boards alone publish nothing either; the outcome still counts them."""
@@ -297,8 +307,7 @@ def _digest(conn: sqlite3.Connection, config: Config, profile: Profile, entries:
         return ScanOutcome(profile.name, new=0, carried_over=0, digest_path=None, digest_failed=False, waiting=waiting,
                            unread=unread)
     today = date.today().isoformat()
-    text = digest.render(profile.name, today, entries, carried_over, unvalidated, left_out, quiet, waiting=waiting,
-                         unread=unread)
+    text = digest.render(profile.name, today, entries, carried_over, view, left_out, waiting=waiting, unread=unread)
     try:
         path = digest.publish(config.home / "digests" / profile.name, today, text)
     except OSError as e:

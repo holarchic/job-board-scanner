@@ -369,8 +369,11 @@ class RenderTest(unittest.TestCase):
         html = page.render(self.view("tags"))
         self.assertIn('Tags label postings; they don\'t hide them. To see only some answers, tick them under "Only '
                       'show postings where the answer is": postings with a different answer move to a short "Left '
-                      'out" list at the end of the digest. "Unknown" answers, and answers marked ⚠, are always shown; '
-                      "with nothing ticked, every answer is.", html)
+                      'out" list at the end of the digest. "Unknown" answers, and answers marked ⚠, never move a '
+                      "posting there. Each posting lists only the answers worth reading: ✅ for yes, ❌ for no, ❓ "
+                      "where an answer you ticked is unknown; a tag's usual answer, and the one answer you ticked, go "
+                      "unsaid.", html)
+        self.assertIn("jobscan checks the quote is there; an answer whose quote isn't is marked ⚠.", html)
         self.assertNotIn("definitely answers other than", html)
 
     def test_the_agency_tick_and_the_summary_say_which(self):
